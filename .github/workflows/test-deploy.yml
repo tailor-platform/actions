@@ -1,0 +1,67 @@
+name: Test Deploy Action
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: test-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # Secrets are not available for PRs from forks
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+    env:
+      WORKSPACE_NAME: actions-test-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 10
+
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: tests/deploy/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: tests/deploy
+        run: pnpm install
+
+      - name: Run deploy action
+        id: deploy
+        uses: ./deploy
+        with:
+          workspace-name: ${{ env.WORKSPACE_NAME }}
+          workspace-region: ${{ vars.TEST_WORKSPACE_REGION }}
+          organization-id: ${{ vars.TEST_ORGANIZATION_ID }}
+          folder-id: ${{ vars.TEST_FOLDER_ID }}
+          working-directory: tests/deploy
+          platform-client-id: ${{ secrets.PLATFORM_MACHINE_USER_CLIENT_ID }}
+          platform-client-secret: ${{ secrets.PLATFORM_MACHINE_USER_CLIENT_SECRET }}
+
+      - name: Verify outputs
+        env:
+          WORKSPACE_ID: ${{ steps.deploy.outputs.workspace-id }}
+        run: |
+          if [ -z "$WORKSPACE_ID" ]; then
+            echo "::error::workspace-id output is empty"
+            exit 1
+          fi
+          echo "Deploy succeeded. workspace-id=$WORKSPACE_ID"
+
+      - name: Cleanup workspace
+        if: always() && steps.deploy.outputs.workspace-id != ''
+        working-directory: tests/deploy
+        env:
+          WORKSPACE_ID: ${{ steps.deploy.outputs.workspace-id }}
+        run: npx tailor-sdk workspace delete --workspace-id "$WORKSPACE_ID" --yes
