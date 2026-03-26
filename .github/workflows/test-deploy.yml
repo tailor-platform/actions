@@ -42,9 +42,9 @@ jobs:
         uses: ./deploy
         with:
           workspace-name: ${{ env.WORKSPACE_NAME }}
-          workspace-region: ${{ vars.TEST_WORKSPACE_REGION }}
-          organization-id: ${{ vars.TEST_ORGANIZATION_ID }}
-          folder-id: ${{ vars.TEST_FOLDER_ID }}
+          workspace-region: asia-northeast
+          organization-id: ${{ vars.TAILOR_PLATFORM_ORGANIZATION_ID }}
+          folder-id: ${{ vars.TAILOR_PLATFORM_FOLDER_ID }}
           working-directory: tests/deploy
           platform-client-id: ${{ secrets.PLATFORM_MACHINE_USER_CLIENT_ID }}
           platform-client-secret: ${{ secrets.PLATFORM_MACHINE_USER_CLIENT_SECRET }}
