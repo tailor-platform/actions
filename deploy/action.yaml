@@ -1,5 +1,7 @@
 name: Deploy to Tailor Platform
-description: Deploy application to Tailor Platform
+description: >-
+  Deploy application to Tailor Platform.
+  Requires Node.js and dependencies to be installed by the caller.
 
 inputs:
   workspace-name:
@@ -18,14 +20,6 @@ inputs:
     description: Working directory for the project (for monorepo setups)
     required: false
     default: "."
-  node-version:
-    description: Node.js version to install
-    required: false
-    default: "22"
-  pnpm-version:
-    description: pnpm version to install
-    required: false
-    default: "10"
   platform-client-id:
     description: OAuth2 client ID for Tailor Platform machine user
     required: true
@@ -49,23 +43,6 @@ runs:
       env:
         CLIENT_ID: ${{ inputs.platform-client-id }}
         CLIENT_SECRET: ${{ inputs.platform-client-secret }}
-
-    - name: Install pnpm
-      uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061 # v4.2.0
-      with:
-        version: ${{ inputs.pnpm-version }}
-
-    - name: Setup Node.js
-      uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
-      with:
-        node-version: ${{ inputs.node-version }}
-        cache: pnpm
-        cache-dependency-path: ${{ inputs.working-directory }}/pnpm-lock.yaml
-
-    - name: Install dependencies
-      shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      run: pnpm install --frozen-lockfile
 
     - name: Fetch Tailor Platform token
       shell: bash
@@ -100,11 +77,11 @@ runs:
         TAILOR_PLATFORM_ORGANIZATION_ID: ${{ inputs.organization-id }}
         TAILOR_PLATFORM_FOLDER_ID: ${{ inputs.folder-id }}
       run: |
-        WORKSPACE_ID=$(pnpm exec tailor-sdk workspace list -j | jq -r --arg name "$WORKSPACE_NAME" --arg region "$WORKSPACE_REGION" '.[] | select(.name == $name and .region == $region) | .id')
+        WORKSPACE_ID=$(npx tailor-sdk workspace list -j | jq -r --arg name "$WORKSPACE_NAME" --arg region "$WORKSPACE_REGION" '.[] | select(.name == $name and .region == $region) | .id')
 
         if [ -z "$WORKSPACE_ID" ]; then
           echo "Workspace '$WORKSPACE_NAME' not found, creating..."
-          WORKSPACE_ID=$(pnpm exec tailor-sdk workspace create -j --name "$WORKSPACE_NAME" --region "$WORKSPACE_REGION" --organization-id "$TAILOR_PLATFORM_ORGANIZATION_ID" --folder-id "$TAILOR_PLATFORM_FOLDER_ID" | jq -r '.id')
+          WORKSPACE_ID=$(npx tailor-sdk workspace create -j --name "$WORKSPACE_NAME" --region "$WORKSPACE_REGION" --organization-id "$TAILOR_PLATFORM_ORGANIZATION_ID" --folder-id "$TAILOR_PLATFORM_FOLDER_ID" | jq -r '.id')
           echo "Created workspace: $WORKSPACE_ID"
         else
           echo "Found existing workspace: $WORKSPACE_ID"
@@ -116,16 +93,16 @@ runs:
     - name: Generate types
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-      run: pnpm exec tailor-sdk generate
+      run: npx tailor-sdk generate
 
     - name: Deploy
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-      run: pnpm exec tailor-sdk apply --yes
+      run: npx tailor-sdk apply --yes
 
     - name: Show application info
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
         WORKSPACE_ID: ${{ env.TAILOR_PLATFORM_WORKSPACE_ID }}
-      run: pnpm exec tailor-sdk show -j -w "$WORKSPACE_ID"
+      run: npx tailor-sdk show -j -w "$WORKSPACE_ID"
