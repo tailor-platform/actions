@@ -99,10 +99,3 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: npx tailor-sdk apply --yes
-
-    - name: Show application info
-      shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      env:
-        WORKSPACE_ID: ${{ env.TAILOR_PLATFORM_WORKSPACE_ID }}
-      run: npx tailor-sdk show -j -w "$WORKSPACE_ID"
