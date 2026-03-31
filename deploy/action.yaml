@@ -15,7 +15,7 @@ inputs:
     required: true
   folder-id:
     description: Tailor Platform folder ID
-    required: true
+    required: false
   working-directory:
     description: Working directory for the project (for monorepo setups)
     required: false
@@ -81,7 +81,11 @@ runs:
 
         if [ -z "$WORKSPACE_ID" ]; then
           echo "Workspace '$WORKSPACE_NAME' not found, creating..."
-          WORKSPACE_ID=$(npx tailor-sdk workspace create -j --name "$WORKSPACE_NAME" --region "$WORKSPACE_REGION" --organization-id "$TAILOR_PLATFORM_ORGANIZATION_ID" --folder-id "$TAILOR_PLATFORM_FOLDER_ID" | jq -r '.id')
+          CREATE_ARGS=(--name "$WORKSPACE_NAME" --region "$WORKSPACE_REGION" --organization-id "$TAILOR_PLATFORM_ORGANIZATION_ID")
+          if [ -n "$TAILOR_PLATFORM_FOLDER_ID" ]; then
+            CREATE_ARGS+=(--folder-id "$TAILOR_PLATFORM_FOLDER_ID")
+          fi
+          WORKSPACE_ID=$(npx tailor-sdk workspace create -j "${CREATE_ARGS[@]}" | jq -r '.id')
           echo "Created workspace: $WORKSPACE_ID"
         else
           echo "Found existing workspace: $WORKSPACE_ID"
