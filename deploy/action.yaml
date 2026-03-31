@@ -44,28 +44,13 @@ runs:
         CLIENT_ID: ${{ inputs.platform-client-id }}
         CLIENT_SECRET: ${{ inputs.platform-client-secret }}
 
-    - name: Fetch Tailor Platform token
+    - name: Login to Tailor Platform
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       env:
-        CLIENT_ID: ${{ inputs.platform-client-id }}
-        CLIENT_SECRET: ${{ inputs.platform-client-secret }}
-      run: |
-        RESPONSE=$(curl -s -X POST "https://api.tailor.tech/oauth2/platform/token" \
-          -H "Content-Type: application/x-www-form-urlencoded" \
-          -d "grant_type=client_credentials" \
-          --data-urlencode "client_id=$CLIENT_ID" \
-          --data-urlencode "client_secret=$CLIENT_SECRET")
-
-        TOKEN=$(echo "$RESPONSE" | jq -r '.access_token')
-
-        if [ "$TOKEN" = "null" ] || [ -z "$TOKEN" ]; then
-          echo "::error::Failed to fetch access token"
-          echo "$RESPONSE" | jq .
-          exit 1
-        fi
-
-        echo "::add-mask::$TOKEN"
-        echo "TAILOR_PLATFORM_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+        TAILOR_PLATFORM_MACHINE_USER_CLIENT_ID: ${{ inputs.platform-client-id }}
+        TAILOR_PLATFORM_MACHINE_USER_CLIENT_SECRET: ${{ inputs.platform-client-secret }}
+      run: npx tailor-sdk login --machineuser
 
     - name: Ensure workspace exists
       id: ensure-workspace
