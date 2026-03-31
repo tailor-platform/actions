@@ -1,0 +1,11 @@
+{
+  "private": true,
+  "scripts": {
+    "lint": "actionlint",
+    "test": "actrun workflow run .github/workflows/test-deploy.yaml --dry-run",
+    "test:run": "actrun workflow run .github/workflows/test-deploy.yaml"
+  },
+  "devDependencies": {
+    "@mizchi/actrun": "0.17.0"
+  }
+}

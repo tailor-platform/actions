@@ -1,0 +1,8 @@
+{
+  "name": "deploy-action-test",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@tailor-platform/sdk": "latest"
+  }
+}
