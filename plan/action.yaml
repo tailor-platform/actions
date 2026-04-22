@@ -1,0 +1,118 @@
+name: Plan Tailor Platform Changes
+description: >-
+  Show planned changes by running dry-run against the target workspace.
+  Merges base branch and runs tailor-sdk apply --dry-run, then comments the result on the PR.
+  Requires Node.js and dependencies to be installed by the caller.
+
+inputs:
+  workspace-id:
+    description: Tailor Platform workspace ID to run dry-run against
+    required: true
+  working-directory:
+    description: Working directory for the project (for monorepo setups)
+    required: false
+    default: "."
+  platform-client-id:
+    description: OAuth2 client ID for Tailor Platform machine user
+    required: true
+  platform-client-secret:
+    description: OAuth2 client secret for Tailor Platform machine user
+    required: true
+  github-token:
+    description: GitHub token for commenting on PR
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Mask credentials
+      shell: bash
+      run: |
+        echo "::add-mask::$CLIENT_ID"
+        echo "::add-mask::$CLIENT_SECRET"
+      env:
+        CLIENT_ID: ${{ inputs.platform-client-id }}
+        CLIENT_SECRET: ${{ inputs.platform-client-secret }}
+
+    - name: Merge base branch
+      shell: bash
+      run: |
+        git fetch origin ${{ github.base_ref }}
+        git merge --no-commit --no-ff origin/${{ github.base_ref }} || true
+
+    - name: Login to Tailor Platform
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        TAILOR_PLATFORM_MACHINE_USER_CLIENT_ID: ${{ inputs.platform-client-id }}
+        TAILOR_PLATFORM_MACHINE_USER_CLIENT_SECRET: ${{ inputs.platform-client-secret }}
+      run: npx tailor-sdk login --machineuser
+
+    - name: Run dry-run
+      id: dry-run
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        TAILOR_PLATFORM_WORKSPACE_ID: ${{ inputs.workspace-id }}
+      run: |
+        set +e
+        OUTPUT=$(npx tailor-sdk apply --dry-run --yes 2>&1)
+        EXIT_CODE=$?
+        set -e
+
+        echo "exit-code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+
+        EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+        echo "output<<$EOF" >> "$GITHUB_OUTPUT"
+        echo "$OUTPUT" >> "$GITHUB_OUTPUT"
+        echo "$EOF" >> "$GITHUB_OUTPUT"
+
+    - name: Comment on PR
+      uses: actions/github-script@v7
+      env:
+        DRY_RUN_OUTPUT: ${{ steps.dry-run.outputs.output }}
+        DRY_RUN_EXIT_CODE: ${{ steps.dry-run.outputs.exit-code }}
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const marker = '<!-- tailor-plan-comment -->';
+          const exitCode = process.env.DRY_RUN_EXIT_CODE;
+          const output = process.env.DRY_RUN_OUTPUT;
+
+          const status = exitCode === '0' ? '✅' : '❌';
+          const body = `${marker}
+          ## ${status} Tailor Platform Plan
+
+          <details>
+          <summary>Plan output (exit code: ${exitCode})</summary>
+
+          \`\`\`
+          ${output}
+          \`\`\`
+
+          </details>
+          `;
+
+          const { data: comments } = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+          });
+
+          const existingComment = comments.find(comment => comment.body.includes(marker));
+
+          if (existingComment) {
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: existingComment.id,
+              body: body,
+            });
+          } else {
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body,
+            });
+          }
