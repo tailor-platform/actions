@@ -13,6 +13,11 @@
       "description": "Enable major updates without dashboard approval (dashboard is disabled)",
       "matchUpdateTypes": ["major"],
       "dependencyDashboardApproval": false
+    },
+    {
+      "description": "Enable renovate for tests directory",
+      "matchPaths": ["tests/**"],
+      "enabled": true
     }
   ]
 }
