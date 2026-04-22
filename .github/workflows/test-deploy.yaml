@@ -2,6 +2,10 @@ name: Test Deploy Action
 
 on:
   pull_request:
+    paths:
+      - "deploy/**"
+      - "tests/deploy/**"
+      - ".github/workflows/test-deploy.yaml"
   push:
     branches:
       - main
