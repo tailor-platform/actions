@@ -4,5 +4,10 @@
   "type": "module",
   "dependencies": {
     "@tailor-platform/sdk": "latest"
+  },
+  "pnpm": {
+    "overrides": {
+      "valibot": ">=1.2.0"
+    }
   }
 }
