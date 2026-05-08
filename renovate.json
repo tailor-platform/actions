@@ -16,7 +16,9 @@
     },
     {
       "description": "Enable renovate for tests directory",
-      "matchPaths": ["tests/**"],
+      "matchFileNames": [
+        "tests/**"
+      ],
       "enabled": true
     }
   ]
