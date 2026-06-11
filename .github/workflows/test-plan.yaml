@@ -23,8 +23,6 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-    env:
-      WORKSPACE_NAME: actions-plan-test-${{ github.run_id }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -55,7 +53,7 @@ jobs:
         run: |
           npx tailor-sdk login --machineuser
 
-          CREATE_ARGS=(--name "$WORKSPACE_NAME" --region asia-northeast --organization-id "$TAILOR_PLATFORM_ORGANIZATION_ID")
+          CREATE_ARGS=(--name "actions-plan-test-${{ github.run_id }}" --region asia-northeast --organization-id "$TAILOR_PLATFORM_ORGANIZATION_ID")
           if [ -n "$TAILOR_PLATFORM_FOLDER_ID" ]; then
             CREATE_ARGS+=(--folder-id "$TAILOR_PLATFORM_FOLDER_ID")
           fi
@@ -63,7 +61,7 @@ jobs:
           echo "workspace-id=$WORKSPACE_ID" >> "$GITHUB_OUTPUT"
           echo "Created test workspace: $WORKSPACE_ID"
 
-      - name: Run plan action
+      - name: Run plan action (with workspace-id)
         uses: ./plan
         with:
           workspace-id: ${{ steps.setup.outputs.workspace-id }}
@@ -71,6 +69,18 @@ jobs:
           platform-client-id: ${{ secrets.PLATFORM_MACHINE_USER_CLIENT_ID }}
           platform-client-secret: ${{ secrets.PLATFORM_MACHINE_USER_CLIENT_SECRET }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Empty workspace-id: a plan for a workspace that is not provisioned yet must
+      # succeed (chicken-and-egg for plans on PRs before the first deploy). The
+      # action reports "not provisioned" instead of running a dry-run. No
+      # github-token is passed here, so no PR comment is posted (summary only).
+      - name: Run plan action (empty workspace-id, not provisioned)
+        uses: ./plan
+        with:
+          workspace-id: ""
+          working-directory: tests/deploy
+          platform-client-id: ${{ secrets.PLATFORM_MACHINE_USER_CLIENT_ID }}
+          platform-client-secret: ${{ secrets.PLATFORM_MACHINE_USER_CLIENT_SECRET }}
 
       - name: Cleanup workspace
         if: always() && steps.setup.outputs.workspace-id != ''

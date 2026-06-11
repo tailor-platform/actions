@@ -4,18 +4,11 @@ description: >-
   Requires Node.js and dependencies to be installed by the caller.
 
 inputs:
-  workspace-name:
-    description: Tailor Platform workspace name
+  workspace-id:
+    description: >-
+      Tailor Platform workspace ID to deploy to.
+      Set this from a GitHub Environment variable (e.g. vars.TAILOR_PLATFORM_WORKSPACE_ID).
     required: true
-  workspace-region:
-    description: Tailor Platform workspace region
-    required: true
-  organization-id:
-    description: Tailor Platform organization ID
-    required: true
-  folder-id:
-    description: Tailor Platform folder ID
-    required: false
   working-directory:
     description: Working directory for the project (for monorepo setups)
     required: false
@@ -29,8 +22,8 @@ inputs:
 
 outputs:
   workspace-id:
-    description: Tailor Platform workspace ID (created or existing)
-    value: ${{ steps.ensure-workspace.outputs.workspace-id }}
+    description: Tailor Platform workspace ID
+    value: ${{ inputs.workspace-id }}
 
 runs:
   using: composite
@@ -52,39 +45,26 @@ runs:
         TAILOR_PLATFORM_MACHINE_USER_CLIENT_SECRET: ${{ inputs.platform-client-secret }}
       run: npx tailor-sdk login --machineuser
 
-    - name: Ensure workspace exists
-      id: ensure-workspace
+    - name: Validate workspace-id
       shell: bash
-      working-directory: ${{ inputs.working-directory }}
       env:
-        WORKSPACE_NAME: ${{ inputs.workspace-name }}
-        WORKSPACE_REGION: ${{ inputs.workspace-region }}
-        TAILOR_PLATFORM_ORGANIZATION_ID: ${{ inputs.organization-id }}
-        TAILOR_PLATFORM_FOLDER_ID: ${{ inputs.folder-id }}
+        WORKSPACE_ID: ${{ inputs.workspace-id }}
       run: |
-        WORKSPACE_ID=$(npx tailor-sdk workspace list -j | jq -r --arg name "$WORKSPACE_NAME" --arg region "$WORKSPACE_REGION" '.[] | select(.name == $name and .region == $region) | .id')
-
         if [ -z "$WORKSPACE_ID" ]; then
-          echo "Workspace '$WORKSPACE_NAME' not found, creating..."
-          CREATE_ARGS=(--name "$WORKSPACE_NAME" --region "$WORKSPACE_REGION" --organization-id "$TAILOR_PLATFORM_ORGANIZATION_ID")
-          if [ -n "$TAILOR_PLATFORM_FOLDER_ID" ]; then
-            CREATE_ARGS+=(--folder-id "$TAILOR_PLATFORM_FOLDER_ID")
-          fi
-          WORKSPACE_ID=$(npx tailor-sdk workspace create -j "${CREATE_ARGS[@]}" | jq -r '.id')
-          echo "Created workspace: $WORKSPACE_ID"
-        else
-          echo "Found existing workspace: $WORKSPACE_ID"
+          echo "::error::Workspace is not provisioned: TAILOR_PLATFORM_WORKSPACE_ID is empty. Provision the workspace and set the variable."
+          exit 1
         fi
-
-        echo "TAILOR_PLATFORM_WORKSPACE_ID=$WORKSPACE_ID" >> "$GITHUB_ENV"
-        echo "workspace-id=$WORKSPACE_ID" >> "$GITHUB_OUTPUT"
 
     - name: Generate types
       shell: bash
       working-directory: ${{ inputs.working-directory }}
+      env:
+        TAILOR_PLATFORM_WORKSPACE_ID: ${{ inputs.workspace-id }}
       run: npx tailor-sdk generate
 
     - name: Deploy
       shell: bash
       working-directory: ${{ inputs.working-directory }}
+      env:
+        TAILOR_PLATFORM_WORKSPACE_ID: ${{ inputs.workspace-id }}
       run: npx tailor-sdk apply --yes

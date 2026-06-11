@@ -6,8 +6,17 @@ description: >-
 
 inputs:
   workspace-id:
-    description: Tailor Platform workspace ID to run dry-run against
-    required: true
+    description: >-
+      Tailor Platform workspace ID to run dry-run against.
+      Set this from a GitHub Environment variable (e.g. vars.TAILOR_PLATFORM_WORKSPACE_ID).
+      When empty, the action skips the dry-run and reports that the workspace is not provisioned yet.
+    required: false
+  label:
+    description: >-
+      Human-readable label for this workspace (e.g. the workspace name).
+      Used only for the PR comment marker and heading.
+      When omitted, the comment marker falls back to workspace-id, then "workspace".
+    required: false
   working-directory:
     description: Working directory for the project (for monorepo setups)
     required: false
@@ -19,8 +28,18 @@ inputs:
     description: OAuth2 client secret for Tailor Platform machine user
     required: true
   github-token:
-    description: GitHub token for commenting on PR
-    required: true
+    description: >-
+      GitHub token for commenting on PR.
+      When omitted, no PR comment is posted (step summary only).
+    required: false
+
+outputs:
+  workspace-id:
+    description: Tailor Platform workspace ID (empty when the workspace is not provisioned yet)
+    value: ${{ inputs.workspace-id }}
+  exit-code:
+    description: Exit code of the dry-run (empty when skipped)
+    value: ${{ steps.dry-run.outputs.exit-code }}
 
 runs:
   using: composite
@@ -34,12 +53,6 @@ runs:
         CLIENT_ID: ${{ inputs.platform-client-id }}
         CLIENT_SECRET: ${{ inputs.platform-client-secret }}
 
-    - name: Merge base branch
-      shell: bash
-      run: |
-        git fetch origin ${{ github.base_ref }}
-        git merge --no-commit --no-ff origin/${{ github.base_ref }} || true
-
     - name: Login to Tailor Platform
       shell: bash
       working-directory: ${{ inputs.working-directory }}
@@ -48,8 +61,18 @@ runs:
         TAILOR_PLATFORM_MACHINE_USER_CLIENT_SECRET: ${{ inputs.platform-client-secret }}
       run: npx tailor-sdk login --machineuser
 
+    - name: Merge base branch
+      if: github.event_name == 'pull_request'
+      shell: bash
+      env:
+        BASE_REF: ${{ github.base_ref }}
+      run: |
+        git fetch origin "$BASE_REF"
+        git merge --no-commit --no-ff "origin/$BASE_REF" || true
+
     - name: Run dry-run
       id: dry-run
+      if: inputs.workspace-id != ''
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
@@ -67,21 +90,93 @@ runs:
         echo "$OUTPUT" >> "$GITHUB_OUTPUT"
         echo "$EOF" >> "$GITHUB_OUTPUT"
 
+    - name: Write step summary
+      shell: bash
+      env:
+        WORKSPACE_ID: ${{ inputs.workspace-id }}
+        LABEL: ${{ inputs.label }}
+        DRY_RUN_OUTPUT: ${{ steps.dry-run.outputs.output }}
+        DRY_RUN_EXIT_CODE: ${{ steps.dry-run.outputs.exit-code }}
+      run: |
+        # Compute the display key: label > workspace-id > "workspace"
+        if [ -n "$LABEL" ]; then
+          KEY="$LABEL"
+        elif [ -n "$WORKSPACE_ID" ]; then
+          KEY="$WORKSPACE_ID"
+        else
+          KEY="workspace"
+        fi
+
+        if [ -z "$WORKSPACE_ID" ]; then
+          {
+            echo "## ℹ️ Tailor Platform Plan ($KEY)"
+            echo ""
+            echo "Workspace is not provisioned yet — set TAILOR_PLATFORM_WORKSPACE_ID after provisioning the workspace."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
+
+        if [ "$DRY_RUN_EXIT_CODE" = "0" ]; then
+          STATUS="✅"
+        else
+          STATUS="❌"
+        fi
+
+        {
+          echo "## $STATUS Tailor Platform Plan ($KEY)"
+          echo ""
+          echo "<details>"
+          echo "<summary>Plan output (exit code: $DRY_RUN_EXIT_CODE)</summary>"
+          echo ""
+          echo '```'
+          echo "$DRY_RUN_OUTPUT"
+          echo '```'
+          echo ""
+          echo "</details>"
+        } >> "$GITHUB_STEP_SUMMARY"
+
     - name: Comment on PR
+      if: github.event_name == 'pull_request' && inputs.github-token != ''
       uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
       env:
+        WORKSPACE_ID: ${{ inputs.workspace-id }}
+        LABEL: ${{ inputs.label }}
         DRY_RUN_OUTPUT: ${{ steps.dry-run.outputs.output }}
         DRY_RUN_EXIT_CODE: ${{ steps.dry-run.outputs.exit-code }}
       with:
         github-token: ${{ inputs.github-token }}
         script: |
-          const marker = '<!-- tailor-plan-comment -->';
-          const exitCode = process.env.DRY_RUN_EXIT_CODE;
-          const output = process.env.DRY_RUN_OUTPUT;
+          const workspaceId = process.env.WORKSPACE_ID;
+          const label = process.env.LABEL;
 
-          const status = exitCode === '0' ? '✅' : '❌';
-          const body = `${marker}
-          ## ${status} Tailor Platform Plan
+          // Marker key: label > workspace-id > "workspace"
+          const key = label || workspaceId || 'workspace';
+          const marker = `<!-- tailor-plan: ${key} -->`;
+
+          let body;
+          if (!workspaceId) {
+            // Workspace not provisioned yet; report it instead of running a dry-run.
+            body = `${marker}
+          ## ℹ️ Tailor Platform Plan (${key})
+
+          Workspace is not provisioned yet — set TAILOR_PLATFORM_WORKSPACE_ID after provisioning the workspace.
+          `;
+          } else {
+            const exitCode = process.env.DRY_RUN_EXIT_CODE;
+            let output = process.env.DRY_RUN_OUTPUT;
+
+            // GitHub rejects issue comment bodies over 65536 chars. Truncate the
+            // (potentially large) plan output, keeping the tail where the summary
+            // and errors usually are, and point readers to the full step summary.
+            const MAX_OUTPUT = 60000;
+            if (output.length > MAX_OUTPUT) {
+              const note = `[output truncated to the last ${MAX_OUTPUT} characters — see the job's step summary for the full plan]\n\n`;
+              output = note + output.slice(output.length - MAX_OUTPUT);
+            }
+
+            const status = exitCode === '0' ? '✅' : '❌';
+            body = `${marker}
+          ## ${status} Tailor Platform Plan (${key})
 
           <details>
           <summary>Plan output (exit code: ${exitCode})</summary>
@@ -92,6 +187,7 @@ runs:
 
           </details>
           `;
+          }
 
           const { data: comments } = await github.rest.issues.listComments({
             owner: context.repo.owner,
@@ -116,3 +212,14 @@ runs:
               body: body,
             });
           }
+
+    - name: Fail on plan error
+      if: inputs.workspace-id != ''
+      shell: bash
+      env:
+        DRY_RUN_EXIT_CODE: ${{ steps.dry-run.outputs.exit-code }}
+      run: |
+        if [ "$DRY_RUN_EXIT_CODE" != "0" ]; then
+          echo "::error::Plan dry-run failed with exit code $DRY_RUN_EXIT_CODE"
+          exit "$DRY_RUN_EXIT_CODE"
+        fi
