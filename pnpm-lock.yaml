@@ -9,16 +9,16 @@ importers:
   .:
     devDependencies:
       '@mizchi/actrun':
-        specifier: 0.17.0
-        version: 0.17.0
+        specifier: 0.22.1
+        version: 0.22.1
 
 packages:
 
-  '@mizchi/actrun@0.17.0':
-    resolution: {integrity: sha512-y/ar1vwxY9fPmrILOeKGreLSDHP/l1/RL87T+DokvWphrP/28Z/DjDmGF4hADx/hUo2ZxG5qLe3LWsrnwm+8Jg==}
+  '@mizchi/actrun@0.22.1':
+    resolution: {integrity: sha512-vESVFdAvbbAvHV/J7LsqHohgmiyAZCweMQiiPllQZjZ9cXZL2YN++0FvbLUtWSV+ngFHg9oHqzPp6960hdofuQ==}
     engines: {node: '>=18'}
     hasBin: true
 
 snapshots:
 
-  '@mizchi/actrun@0.17.0': {}
+  '@mizchi/actrun@0.22.1': {}
