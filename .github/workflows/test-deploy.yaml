@@ -22,8 +22,6 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     permissions:
       contents: read
-    env:
-      WORKSPACE_NAME: actions-test-${{ github.run_id }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -41,14 +39,30 @@ jobs:
         working-directory: tests/deploy
         run: pnpm install
 
+      - name: Create test workspace
+        id: setup
+        working-directory: tests/deploy
+        env:
+          TAILOR_PLATFORM_MACHINE_USER_CLIENT_ID: ${{ secrets.PLATFORM_MACHINE_USER_CLIENT_ID }}
+          TAILOR_PLATFORM_MACHINE_USER_CLIENT_SECRET: ${{ secrets.PLATFORM_MACHINE_USER_CLIENT_SECRET }}
+          TAILOR_PLATFORM_ORGANIZATION_ID: ${{ vars.TAILOR_PLATFORM_ORGANIZATION_ID }}
+          TAILOR_PLATFORM_FOLDER_ID: ${{ vars.TAILOR_PLATFORM_FOLDER_ID }}
+        run: |
+          npx tailor-sdk login --machineuser
+
+          CREATE_ARGS=(--name "actions-test-${{ github.run_id }}" --region asia-northeast --organization-id "$TAILOR_PLATFORM_ORGANIZATION_ID")
+          if [ -n "$TAILOR_PLATFORM_FOLDER_ID" ]; then
+            CREATE_ARGS+=(--folder-id "$TAILOR_PLATFORM_FOLDER_ID")
+          fi
+          WORKSPACE_ID=$(npx tailor-sdk workspace create -j "${CREATE_ARGS[@]}" | jq -r '.id')
+          echo "workspace-id=$WORKSPACE_ID" >> "$GITHUB_OUTPUT"
+          echo "Created test workspace: $WORKSPACE_ID"
+
       - name: Run deploy action
         id: deploy
         uses: ./deploy
         with:
-          workspace-name: ${{ env.WORKSPACE_NAME }}
-          workspace-region: asia-northeast
-          organization-id: ${{ vars.TAILOR_PLATFORM_ORGANIZATION_ID }}
-          folder-id: ${{ vars.TAILOR_PLATFORM_FOLDER_ID }}
+          workspace-id: ${{ steps.setup.outputs.workspace-id }}
           working-directory: tests/deploy
           platform-client-id: ${{ secrets.PLATFORM_MACHINE_USER_CLIENT_ID }}
           platform-client-secret: ${{ secrets.PLATFORM_MACHINE_USER_CLIENT_SECRET }}
@@ -64,8 +78,8 @@ jobs:
           echo "Deploy succeeded. workspace-id=$WORKSPACE_ID"
 
       - name: Cleanup workspace
-        if: always() && steps.deploy.outputs.workspace-id != ''
+        if: always() && steps.setup.outputs.workspace-id != ''
         working-directory: tests/deploy
         env:
-          WORKSPACE_ID: ${{ steps.deploy.outputs.workspace-id }}
+          WORKSPACE_ID: ${{ steps.setup.outputs.workspace-id }}
         run: npx tailor-sdk workspace delete --workspace-id "$WORKSPACE_ID" --yes
