@@ -23,11 +23,13 @@ runs:
       env:
         TARGET_BRANCH: ${{ inputs.target-branch }}
       run: |
-        git fetch origin "$TARGET_BRANCH"
-        if git merge-base --is-ancestor "$GITHUB_SHA" "origin/$TARGET_BRANCH"; then
+        # Accept both short names (main) and fully-qualified refs (refs/heads/main).
+        BRANCH="${TARGET_BRANCH#refs/heads/}"
+        git fetch origin "$BRANCH"
+        if git merge-base --is-ancestor "$GITHUB_SHA" "origin/$BRANCH"; then
           echo "on-branch=true" >> "$GITHUB_OUTPUT"
         else
           # A tag outside the target branch is not an error — just skip.
           echo "on-branch=false" >> "$GITHUB_OUTPUT"
-          echo "::notice::Tag $GITHUB_REF_NAME is not reachable from $TARGET_BRANCH; skipping deploy."
+          echo "::notice::Tag $GITHUB_REF_NAME is not reachable from $BRANCH; skipping deploy."
         fi

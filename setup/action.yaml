@@ -37,6 +37,11 @@ runs:
       with:
         node-version-file: ${{ inputs.node-version-file }}
         cache: ${{ inputs.package-manager }}
+        cache-dependency-path: |
+          ${{ inputs.working-directory }}/pnpm-lock.yaml
+          ${{ inputs.working-directory }}/package-lock.json
+          ${{ inputs.working-directory }}/npm-shrinkwrap.json
+          ${{ inputs.working-directory }}/yarn.lock
 
     - name: Set up Bun
       if: inputs.package-manager == 'bun'
@@ -51,15 +56,15 @@ runs:
       run: |
         if [ -n "$INSTALL_COMMAND" ]; then
           eval "$INSTALL_COMMAND"
-          exit 0
+        else
+          case "$PACKAGE_MANAGER" in
+            pnpm) pnpm install --frozen-lockfile ;;
+            npm)  npm ci ;;
+            yarn) yarn install --frozen-lockfile ;;
+            bun)  bun install --frozen-lockfile ;;
+            *)
+              echo "::error::Unsupported package-manager '$PACKAGE_MANAGER' (expected pnpm, npm, yarn, or bun)"
+              exit 1
+              ;;
+          esac
         fi
-        case "$PACKAGE_MANAGER" in
-          pnpm) pnpm install --frozen-lockfile ;;
-          npm)  npm ci ;;
-          yarn) yarn install --frozen-lockfile ;;
-          bun)  bun install --frozen-lockfile ;;
-          *)
-            echo "::error::Unsupported package-manager '$PACKAGE_MANAGER' (expected pnpm, npm, yarn, or bun)"
-            exit 1
-            ;;
-        esac

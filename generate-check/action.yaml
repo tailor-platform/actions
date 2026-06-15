@@ -21,9 +21,9 @@ runs:
     - name: Check generated files are committed
       shell: bash
       run: |
-        git add -A
-        if ! git diff --cached --quiet; then
-          git --no-pager diff --cached --stat
+        CHANGES=$(git status --porcelain)
+        if [ -n "$CHANGES" ]; then
+          echo "$CHANGES"
           echo "::error::Generated files are out of date. Run 'tailor-sdk generate' locally and commit the result."
           exit 1
         fi
