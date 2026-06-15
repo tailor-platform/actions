@@ -1,0 +1,29 @@
+name: Check Tailor Platform generated files
+description: >-
+  Run tailor-sdk generate and fail if it produces changes, catching generated
+  files (seed data, enum constants, etc.) that were not regenerated and
+  committed. Requires Node.js and dependencies to be installed by the caller.
+
+inputs:
+  working-directory:
+    description: Working directory for the project (for monorepo setups)
+    required: false
+    default: "."
+
+runs:
+  using: composite
+  steps:
+    - name: Generate
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: npx tailor-sdk generate
+
+    - name: Check generated files are committed
+      shell: bash
+      run: |
+        git add -A
+        if ! git diff --cached --quiet; then
+          git --no-pager diff --cached --stat
+          echo "::error::Generated files are out of date. Run 'tailor-sdk generate' locally and commit the result."
+          exit 1
+        fi
