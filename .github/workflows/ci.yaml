@@ -14,3 +14,35 @@ jobs:
       - uses: reviewdog/action-actionlint@6fb7acc99f4a1008869fa8a0f09cfca740837d9d # v1.72.0
         with:
           reporter: github-pr-review
+
+  # Advisory (non-blocking) while we assess noise; promote to blocking after a
+  # short shake-out. See tailor-platform/sdk setup-github "workflow linter" item.
+  ghalint:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install ghalint
+        run: go install github.com/suzuki-shunsuke/ghalint/cmd/ghalint@v1.5.6
+      - name: Lint workflows
+        run: ghalint run
+      - name: Lint action.yaml definitions
+        run: ghalint run-action
+
+  zizmor:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: zizmorcore/zizmor-action@5f14fd08f7cf1cb1609c1e344975f152c7ee938d # v0.5.6
+        with:
+          advanced-security: false
+          annotations: true
