@@ -26,7 +26,10 @@ runs:
         # Accept both short names (main) and fully-qualified refs (refs/heads/main).
         BRANCH="${TARGET_BRANCH#refs/heads/}"
         git fetch origin "$BRANCH"
-        if git merge-base --is-ancestor "$GITHUB_SHA" "origin/$BRANCH"; then
+        # GITHUB_SHA may be a tag object for annotated tags; peel to its commit
+        # so --is-ancestor (which expects commits) is reliable.
+        COMMIT="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+        if git merge-base --is-ancestor "$COMMIT" "origin/$BRANCH"; then
           echo "on-branch=true" >> "$GITHUB_OUTPUT"
         else
           # A tag outside the target branch is not an error — just skip.
