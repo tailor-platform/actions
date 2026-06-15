@@ -19,7 +19,6 @@ jobs:
   # short shake-out. See tailor-platform/sdk setup-github "workflow linter" item.
   ghalint:
     runs-on: ubuntu-latest
-    continue-on-error: true
     permissions:
       contents: read
     steps:
@@ -27,15 +26,18 @@ jobs:
         with:
           persist-credentials: false
       - name: Install ghalint
-        run: go install github.com/suzuki-shunsuke/ghalint/cmd/ghalint@v1.5.6
+        run: |
+          go install github.com/suzuki-shunsuke/ghalint/cmd/ghalint@v1.5.6
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: Lint workflows
         run: ghalint run
+        continue-on-error: true
       - name: Lint action.yaml definitions
         run: ghalint run-action
+        continue-on-error: true
 
   zizmor:
     runs-on: ubuntu-latest
-    continue-on-error: true
     permissions:
       contents: read
     steps:
@@ -43,6 +45,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: zizmorcore/zizmor-action@5f14fd08f7cf1cb1609c1e344975f152c7ee938d # v0.5.6
+        continue-on-error: true
         with:
           advanced-security: false
           annotations: true
