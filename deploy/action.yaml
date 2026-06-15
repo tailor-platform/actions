@@ -59,7 +59,9 @@ runs:
             exit 1
             ;;
         esac
-        echo "TAILOR_SDK_RUN=$RUN" >> "$GITHUB_ENV"
+        # RUN is one of a fixed set of literals chosen by the case above (never
+        # user input), so writing it to the env file cannot inject code.
+        echo "TAILOR_SDK_RUN=$RUN" >> "$GITHUB_ENV" # zizmor: ignore[github-env]
 
     - name: Login to Tailor Platform
       shell: bash
