@@ -64,7 +64,9 @@ runs:
       shell: bash
       env:
         PACKAGE_MANAGER: ${{ inputs.package-manager }}
-      run: |
+      # RUN is one of a fixed set of literals chosen by the case below (never
+      # user input), so writing it to GITHUB_ENV cannot inject code.
+      run: | # zizmor: ignore[github-env]
         case "$PACKAGE_MANAGER" in
           pnpm) RUN="pnpm exec" ;;
           yarn) RUN="yarn" ;;
@@ -75,9 +77,7 @@ runs:
             exit 1
             ;;
         esac
-        # RUN is one of a fixed set of literals chosen by the case above (never
-        # user input), so writing it to the env file cannot inject code.
-        echo "TAILOR_SDK_RUN=$RUN" >> "$GITHUB_ENV" # zizmor: ignore[github-env]
+        echo "TAILOR_SDK_RUN=$RUN" >> "$GITHUB_ENV"
 
     - name: Login to Tailor Platform
       shell: bash
