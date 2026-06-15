@@ -37,11 +37,6 @@ runs:
       with:
         node-version-file: ${{ inputs.node-version-file }}
         cache: ${{ inputs.package-manager }}
-        cache-dependency-path: |
-          ${{ inputs.working-directory }}/pnpm-lock.yaml
-          ${{ inputs.working-directory }}/package-lock.json
-          ${{ inputs.working-directory }}/npm-shrinkwrap.json
-          ${{ inputs.working-directory }}/yarn.lock
 
     - name: Set up Bun
       if: inputs.package-manager == 'bun'
