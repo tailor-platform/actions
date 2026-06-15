@@ -5,6 +5,9 @@ description: >-
   committed. Requires Node.js and dependencies to be installed by the caller.
 
 inputs:
+  package-manager:
+    description: Package manager used to run tailor-sdk (pnpm, npm, yarn, or bun)
+    required: true
   working-directory:
     description: Working directory for the project (for monorepo setups)
     required: false
@@ -16,7 +19,22 @@ runs:
     - name: Generate
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-      run: npx tailor-sdk generate
+      env:
+        PACKAGE_MANAGER: ${{ inputs.package-manager }}
+      run: |
+        # Run the locally-installed tailor-sdk with each package manager's own
+        # runner, so the pinned version is used and Bun does not depend on an
+        # ambient Node/npx being present on the runner.
+        case "$PACKAGE_MANAGER" in
+          pnpm) pnpm exec tailor-sdk generate ;;
+          npm)  npx tailor-sdk generate ;;
+          yarn) yarn tailor-sdk generate ;;
+          bun)  bunx tailor-sdk generate ;;
+          *)
+            echo "::error::Unsupported package-manager '$PACKAGE_MANAGER' (expected pnpm, npm, yarn, or bun)"
+            exit 1
+            ;;
+        esac
 
     - name: Check generated files are committed
       shell: bash
