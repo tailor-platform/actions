@@ -13,6 +13,13 @@ inputs:
     description: Working directory for the project (for monorepo setups)
     required: false
     default: "."
+  package-manager:
+    description: >-
+      Package manager used to run tailor-sdk (pnpm, npm, yarn, or bun).
+      Defaults to npx when empty, so Bun uses its own runtime instead of
+      relying on an ambient Node, and the locally-installed version is used.
+    required: false
+    default: ""
   platform-client-id:
     description: OAuth2 client ID for Tailor Platform machine user
     required: true
@@ -37,13 +44,32 @@ runs:
         CLIENT_ID: ${{ inputs.platform-client-id }}
         CLIENT_SECRET: ${{ inputs.platform-client-secret }}
 
+    - name: Resolve tailor-sdk runner
+      shell: bash
+      env:
+        PACKAGE_MANAGER: ${{ inputs.package-manager }}
+      # RUN is one of a fixed set of literals chosen by the case below (never
+      # user input), so writing it to GITHUB_ENV cannot inject code.
+      run: | # zizmor: ignore[github-env]
+        case "$PACKAGE_MANAGER" in
+          pnpm) RUN="pnpm exec" ;;
+          yarn) RUN="yarn" ;;
+          bun)  RUN="bunx" ;;
+          npm|"") RUN="npx" ;;
+          *)
+            echo "::error::Unsupported package-manager '$PACKAGE_MANAGER' (expected pnpm, npm, yarn, or bun)"
+            exit 1
+            ;;
+        esac
+        echo "TAILOR_SDK_RUN=$RUN" >> "$GITHUB_ENV"
+
     - name: Login to Tailor Platform
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
         TAILOR_PLATFORM_MACHINE_USER_CLIENT_ID: ${{ inputs.platform-client-id }}
         TAILOR_PLATFORM_MACHINE_USER_CLIENT_SECRET: ${{ inputs.platform-client-secret }}
-      run: npx tailor-sdk login --machineuser
+      run: $TAILOR_SDK_RUN tailor-sdk login --machineuser
 
     - name: Validate workspace-id
       shell: bash
@@ -60,11 +86,11 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       env:
         TAILOR_PLATFORM_WORKSPACE_ID: ${{ inputs.workspace-id }}
-      run: npx tailor-sdk generate
+      run: $TAILOR_SDK_RUN tailor-sdk generate
 
     - name: Deploy
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
         TAILOR_PLATFORM_WORKSPACE_ID: ${{ inputs.workspace-id }}
-      run: npx tailor-sdk apply --yes
+      run: $TAILOR_SDK_RUN tailor-sdk apply --yes

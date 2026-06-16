@@ -1,0 +1,38 @@
+name: Guard tag reachability from a branch
+description: >-
+  Determine whether the pushed tag's commit is reachable from a target branch,
+  so a tag-triggered deploy can be limited to tags cut from that branch. The
+  caller must check out the repository with full history (fetch-depth: 0).
+
+inputs:
+  target-branch:
+    description: Branch the tag must be reachable from (e.g. main)
+    required: true
+
+outputs:
+  on-branch:
+    description: "'true' when the tag commit is reachable from the target branch, otherwise 'false'"
+    value: ${{ steps.guard.outputs.on-branch }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check tag reachability
+      id: guard
+      shell: bash
+      env:
+        TARGET_BRANCH: ${{ inputs.target-branch }}
+      run: |
+        # Accept both short names (main) and fully-qualified refs (refs/heads/main).
+        BRANCH="${TARGET_BRANCH#refs/heads/}"
+        git fetch origin "$BRANCH"
+        # GITHUB_SHA may be a tag object for annotated tags; peel to its commit
+        # so --is-ancestor (which expects commits) is reliable.
+        COMMIT="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+        if git merge-base --is-ancestor "$COMMIT" "origin/$BRANCH"; then
+          echo "on-branch=true" >> "$GITHUB_OUTPUT"
+        else
+          # A tag outside the target branch is not an error — just skip.
+          echo "on-branch=false" >> "$GITHUB_OUTPUT"
+          echo "::notice::Tag $GITHUB_REF_NAME is not reachable from $BRANCH; skipping deploy."
+        fi
