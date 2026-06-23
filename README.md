@@ -138,6 +138,111 @@ When `github-token` is provided and the event is a pull request, the action post
 
 The comment is keyed per workspace via a `<!-- tailor-plan: KEY -->` marker (`KEY` is the `label` input if provided, otherwise `workspace-id`, otherwise `"workspace"`), so multiple environments can post separate comments on the same PR. The comment is automatically updated on subsequent runs.
 
+---
+
+### [`setup`](setup/action.yaml)
+
+Set up the Tailor Platform toolchain (Node.js, package manager, install dependencies). Typically the first step in every job.
+
+---
+
+### [`generate-check`](generate-check/action.yaml)
+
+Run `tailor-sdk generate` and fail if it produces uncommitted changes. Catches generated files (seed data, enum constants, etc.) that were regenerated but not committed.
+
+#### Inputs
+
+| Name | Required | Default | Description |
+|------|----------|---------|-------------|
+| `package-manager` | Yes | | Package manager (`pnpm`, `npm`, `yarn`, or `bun`) |
+| `working-directory` | No | `.` | Working directory (for monorepo setups) |
+| `ignore` | No | | Newline-separated list of file paths to exclude from the check (e.g. `.npmrc` created by earlier steps) |
+
+---
+
+### [`tag-guard`](tag-guard/action.yaml)
+
+Guard that a pushed tag is reachable from a target branch before allowing a deploy to proceed. Skips gracefully when the tag is outside the branch (not an error).
+
+---
+
+### [`drift-check`](drift-check/action.yaml)
+
+Detect drift between the generated GitHub Actions workflows and the current config/repo state. Emits `::warning::` annotations and writes a step summary, but **never fails the job** — use as a non-blocking canary in plan jobs.
+
+#### Inputs
+
+| Name | Required | Default | Description |
+|------|----------|---------|-------------|
+| `package-manager` | Yes | | Package manager (`pnpm`, `npm`, `yarn`, or `bun`) |
+| `working-directory` | No | `.` | Working directory (for monorepo setups) |
+| `ignore` | No | | Comma-separated drift rule keys to suppress (e.g. `"default-branch,template-version"`). Supported keys: `missing-file`, `hand-edit`, `template-version`, `config-dir`, `default-branch` |
+
+---
+
+### [`seed-validate`](seed-validate/action.yaml)
+
+Validate seed data against the generated schema, detecting JSONL records that do not match their target type. Requires `tailor-sdk generate` to have run first.
+
+#### Inputs
+
+| Name | Required | Default | Description |
+|------|----------|---------|-------------|
+| `working-directory` | No | `.` | Working directory (for monorepo setups) |
+
+---
+
+### [`staticwebsite-deploy`](staticwebsite-deploy/action.yaml)
+
+Deploy a built static website to Tailor Platform and output its public URL. Run this after the `deploy` action in the same job (authentication is reused).
+
+#### Inputs
+
+| Name | Required | Default | Description |
+|------|----------|---------|-------------|
+| `workspace-id` | Yes | | Workspace ID (from a GitHub Environment variable, e.g. `vars.TAILOR_PLATFORM_WORKSPACE_ID`) |
+| `name` | Yes | | Static website name as defined in `tailor.config.ts` |
+| `dist-dir` | Yes | | Path to the built static website files |
+| `working-directory` | No | `.` | Working directory (for monorepo setups) |
+| `package-manager` | No | | Package manager (`pnpm`, `npm`, `yarn`, or `bun`). Defaults to `npx`. |
+
+#### Outputs
+
+| Name | Description |
+|------|-------------|
+| `site-url` | Public URL of the deployed static website |
+
+---
+
+### [`notify`](notify/action.yaml)
+
+Send a deployment notification. Currently supports Slack via Bot token and channel ID.
+
+#### Usage
+
+```yaml
+    steps:
+      # ... deploy steps ...
+      - if: always()
+        uses: tailor-platform/actions/notify@v1
+        with:
+          provider: slack
+          status: ${{ job.status }}
+          workspace-name: my-app-prod
+          slack-channel-id: ${{ vars.SLACK_DEPLOY_CHANNEL_ID }}
+          slack-token: ${{ secrets.SLACK_BOT_TOKEN }}
+```
+
+#### Inputs
+
+| Name | Required | Default | Description |
+|------|----------|---------|-------------|
+| `provider` | Yes | | Notification provider. Currently only `slack` is supported. |
+| `status` | Yes | | Deployment status: `success` or `failure`. Pass `${{ job.status }}`. |
+| `workspace-name` | No | | Workspace name shown in the message |
+| `slack-channel-id` | No | | Slack channel ID (required when `provider` is `slack`) |
+| `slack-token` | No | | Slack Bot token with `chat:write` permission (required when `provider` is `slack`) |
+
 ## License
 
 MIT
