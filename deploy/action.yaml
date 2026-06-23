@@ -105,5 +105,9 @@ runs:
       env:
         TAILOR_PLATFORM_WORKSPACE_ID: ${{ inputs.workspace-id }}
       run: |
-        APP_URL=$($TAILOR_SDK_RUN tailor-sdk show --json | jq -r '.url // ""')
+        if APP_JSON=$($TAILOR_SDK_RUN tailor-sdk show --json 2>/dev/null); then
+          APP_URL=$(echo "$APP_JSON" | jq -r '.url // ""')
+        else
+          APP_URL=""
+        fi
         echo "app-url=$APP_URL" >> "$GITHUB_OUTPUT"
