@@ -1,0 +1,73 @@
+name: Deploy Tailor Platform static website
+description: >-
+  Deploy a built static website to Tailor Platform and output its public URL.
+  Requires Node.js, dependencies, and an active Tailor Platform session
+  (login is handled by the deploy action in the same job).
+
+inputs:
+  workspace-id:
+    description: >-
+      Tailor Platform workspace ID to deploy to.
+      Set this from a GitHub Environment variable (e.g. vars.TAILOR_PLATFORM_WORKSPACE_ID).
+    required: true
+  name:
+    description: Static website name as defined in tailor.config.ts
+    required: true
+  dist-dir:
+    description: Path to the built static website files
+    required: true
+  working-directory:
+    description: Working directory for the project (for monorepo setups)
+    required: false
+    default: "."
+  package-manager:
+    description: >-
+      Package manager used to run tailor-sdk (pnpm, npm, yarn, or bun).
+      Defaults to npx when empty.
+    required: false
+    default: ""
+
+outputs:
+  site-url:
+    description: Public URL of the deployed static website
+    value: ${{ steps.deploy.outputs.site-url }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve tailor-sdk runner
+      shell: bash
+      env:
+        PACKAGE_MANAGER: ${{ inputs.package-manager }}
+      # RUN is one of a fixed set of literals chosen by the case below (never
+      # user input), so writing it to GITHUB_ENV cannot inject code.
+      run: | # zizmor: ignore[github-env]
+        case "$PACKAGE_MANAGER" in
+          pnpm) RUN="pnpm exec" ;;
+          yarn) RUN="yarn" ;;
+          bun)  RUN="bunx" ;;
+          npm|"") RUN="npx" ;;
+          *)
+            echo "::error::Unsupported package-manager '$PACKAGE_MANAGER' (expected pnpm, npm, yarn, or bun)"
+            exit 1
+            ;;
+        esac
+        echo "TAILOR_SDK_RUN=$RUN" >> "$GITHUB_ENV"
+
+    - name: Deploy static website
+      id: deploy
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        WORKSPACE_ID: ${{ inputs.workspace-id }}
+        SITE_NAME: ${{ inputs.name }}
+        DIST_DIR: ${{ inputs.dist-dir }}
+      run: |
+        RESULT=$($TAILOR_SDK_RUN tailor-sdk staticwebsite deploy \
+          --workspace-id "$WORKSPACE_ID" \
+          --name "$SITE_NAME" \
+          --dir "$DIST_DIR" \
+          --json)
+        SITE_URL=$(echo "$RESULT" | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).url)")
+        echo "site-url=$SITE_URL" >> "$GITHUB_OUTPUT"
+        echo "Deployed: $SITE_URL"
