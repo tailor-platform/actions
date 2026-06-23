@@ -1,0 +1,19 @@
+name: Validate Tailor Platform seed data
+description: >-
+  Validate seed data against the generated schema, detecting JSONL records that
+  do not match their target type. Requires Node.js, dependencies, and
+  tailor-sdk generate to have run before this action.
+
+inputs:
+  working-directory:
+    description: Working directory for the project (for monorepo setups)
+    required: false
+    default: "."
+
+runs:
+  using: composite
+  steps:
+    - name: Validate seed data
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: node .tailor-sdk/exec.mjs validate
