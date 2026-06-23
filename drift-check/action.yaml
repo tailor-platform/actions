@@ -1,0 +1,94 @@
+name: Check Tailor Platform workflow drift
+description: >-
+  Detect drift between the generated GitHub Actions workflows and the current
+  config/repo state by running tailor-sdk setup github --check.
+  Emits ::warning:: annotations and writes a step summary, but never fails the job.
+  Use the 'ignore' input to suppress known intentional deviations.
+  Requires Node.js and dependencies to be installed by the caller.
+
+inputs:
+  package-manager:
+    description: Package manager used to run tailor-sdk (pnpm, npm, yarn, or bun)
+    required: true
+  working-directory:
+    description: Working directory for the project (for monorepo setups)
+    required: false
+    default: "."
+  ignore:
+    description: >-
+      Comma-separated list of drift rule keys to suppress (e.g. "default-branch,template-version").
+      Each warning message includes the rule key to add here.
+      Supported keys: missing-file, hand-edit, template-version, config-dir, default-branch.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Check workflow drift
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PACKAGE_MANAGER: ${{ inputs.package-manager }}
+        IGNORE_RULES: ${{ inputs.ignore }}
+      run: |
+        case "$PACKAGE_MANAGER" in
+          pnpm) RUN="pnpm exec" ;;
+          yarn) RUN="yarn" ;;
+          bun)  RUN="bunx" ;;
+          npm|"") RUN="npx" ;;
+          *)
+            echo "::error::Unsupported package-manager '$PACKAGE_MANAGER' (expected pnpm, npm, yarn, or bun)"
+            exit 1
+            ;;
+        esac
+
+        set +e
+        OUTPUT=$($RUN tailor-sdk setup github --check 2>&1)
+        CHECK_EXIT=$?
+        set -e
+
+        if [ "$CHECK_EXIT" -eq 0 ]; then
+          echo "$OUTPUT"
+          exit 0
+        fi
+
+        # Normalise IGNORE_RULES to a comma-separated string without spaces for
+        # whole-word matching: ",key1,key2," so grep -F ",<rule>," is unambiguous.
+        IGNORE_NORM=",$(echo "$IGNORE_RULES" | tr -d ' '),"
+
+        WARNED=0
+        SUPPRESSED=0
+
+        # Process each finding line. Each finding ends with "(ignore key: <rule>)".
+        while IFS= read -r line; do
+          [[ "$line" =~ \(ignore\ key:\ ([^)]+)\) ]] || continue
+          RULE="${BASH_REMATCH[1]}"
+
+          # Strip ANSI escape codes and leading symbol (⚠ / spaces) before "[".
+          CLEAN=$(printf '%s' "$line" \
+            | sed $'s/\x1b\\[[0-9;]*[A-Za-z]//g' \
+            | sed 's/^[^[]*//')
+
+          if echo "$IGNORE_NORM" | grep -qF ",$RULE,"; then
+            SUPPRESSED=$((SUPPRESSED + 1))
+            echo "Suppressed ($RULE): $CLEAN"
+          else
+            WARNED=$((WARNED + 1))
+            echo "::warning::$CLEAN"
+          fi
+        done <<< "$OUTPUT"
+
+        {
+          echo "## ⚠️ Tailor Platform Workflow Drift"
+          echo ""
+          echo "$WARNED finding(s) emitted, $SUPPRESSED suppressed."
+          echo ""
+          printf '%s\n' "$OUTPUT" \
+            | sed $'s/\x1b\\[[0-9;]*[A-Za-z]//g' \
+            | grep "(ignore key:" \
+            | sed 's/^[^[]*//' \
+            | sed 's/^/- /'
+          echo ""
+          echo "Re-run \`tailor-sdk setup github\` to regenerate, or add a rule key to the \`ignore\` input to silence a known deviation."
+        } >> "$GITHUB_STEP_SUMMARY"
