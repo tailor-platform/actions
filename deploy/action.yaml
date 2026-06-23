@@ -31,6 +31,9 @@ outputs:
   workspace-id:
     description: Tailor Platform workspace ID
     value: ${{ inputs.workspace-id }}
+  app-url:
+    description: Application URL (GraphQL endpoint) of the deployed workspace
+    value: ${{ steps.show.outputs.app-url }}
 
 runs:
   using: composite
@@ -94,3 +97,13 @@ runs:
       env:
         TAILOR_PLATFORM_WORKSPACE_ID: ${{ inputs.workspace-id }}
       run: $TAILOR_SDK_RUN tailor-sdk apply --yes
+
+    - name: Resolve app URL
+      id: show
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        TAILOR_PLATFORM_WORKSPACE_ID: ${{ inputs.workspace-id }}
+      run: |
+        APP_URL=$($TAILOR_SDK_RUN tailor-sdk show --json | jq -r '.url // ""')
+        echo "app-url=$APP_URL" >> "$GITHUB_OUTPUT"

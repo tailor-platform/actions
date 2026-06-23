@@ -50,6 +50,7 @@ jobs:
 | Name | Description |
 |------|-------------|
 | `workspace-id` | Workspace ID passed in |
+| `app-url` | Application URL (GraphQL endpoint) of the deployed workspace. Available to subsequent steps, e.g. for passing to a static website build slot. |
 
 #### Secrets and variables setup
 
