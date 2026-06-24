@@ -79,6 +79,10 @@ runs:
           fi
         done <<< "$OUTPUT"
 
+        if [ "$WARNED" -eq 0 ] && [ "$SUPPRESSED" -eq 0 ]; then
+          echo "::warning::[drift-check] tailor-sdk setup github --check exited $CHECK_EXIT but produced no parseable findings — check failed unexpectedly (auth/network/config error?)"
+        fi
+
         {
           echo "## ⚠️ Tailor Platform Workflow Drift"
           echo ""

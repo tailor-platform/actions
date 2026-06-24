@@ -81,7 +81,7 @@ runs:
           --data-binary "$PAYLOAD" \
           https://slack.com/api/chat.postMessage)
 
-        if ! echo "$RESPONSE" | grep -q '"ok":true'; then
+        if ! echo "$RESPONSE" | jq -e '.ok == true' > /dev/null 2>&1; then
           ERROR=$(echo "$RESPONSE" | jq -r '.error // "unknown error"' 2>/dev/null || echo "unknown error")
           echo "::error::Slack notification failed: $ERROR"
           exit 1

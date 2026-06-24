@@ -47,6 +47,11 @@ runs:
           exit 0
         fi
 
+        if [[ "$BODY" != "$MARKER_PREFIX"* ]]; then
+          echo "::error::sticky-comment: body must start with marker-prefix"
+          exit 1
+        fi
+
         EXISTING=$(gh api --paginate --slurp \
           "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
           2>/dev/null | \
