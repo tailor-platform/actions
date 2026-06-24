@@ -241,8 +241,8 @@ Send a deployment notification. Currently supports Slack via Bot token and chann
 | `provider` | Yes | | Notification provider. Currently only `slack` is supported. |
 | `status` | Yes | | Deployment status: `success` or `failure`. Pass `${{ job.status }}`. |
 | `workspace-name` | No | | Workspace name shown in the message |
-| `slack-channel-id` | No | | Slack channel ID (required when `provider` is `slack`) |
-| `slack-token` | No | | Slack Bot token with `chat:write` permission (required when `provider` is `slack`) |
+| `slack-channel-id` | No | | Slack channel ID. When empty, the notification is silently skipped. |
+| `slack-token` | No | | Slack Bot token with `chat:write` permission. When empty, the notification is silently skipped. |
 
 ## License
 

@@ -56,13 +56,9 @@ runs:
         WORKSPACE_NAME: ${{ inputs.workspace-name }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: |
-        if [ -z "$SLACK_TOKEN" ]; then
-          echo "::error::slack-token is required when provider is 'slack'"
-          exit 1
-        fi
-        if [ -z "$SLACK_CHANNEL_ID" ]; then
-          echo "::error::slack-channel-id is required when provider is 'slack'"
-          exit 1
+        if [ -z "$SLACK_TOKEN" ] || [ -z "$SLACK_CHANNEL_ID" ]; then
+          echo "::notice::notify: slack-token or slack-channel-id is not set — skipping Slack notification"
+          exit 0
         fi
 
         if [ "$STATUS" = "success" ]; then
