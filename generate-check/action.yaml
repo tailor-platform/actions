@@ -44,6 +44,7 @@ runs:
 
     - name: Check generated files are committed
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       env:
         IGNORE_PATHS: ${{ inputs.ignore }}
       run: |

@@ -60,10 +60,11 @@ runs:
         WORKSPACE_NAME="${NAME_PREFIX}-pr-${PR_NUMBER}"
         MARKER_PREFIX="<!-- tailor-preview: $WORKSPACE_NAME id="
 
-        COMMENT=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" \
+        COMMENT=$(gh api --paginate --slurp \
+          "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
           2>/dev/null | \
           jq -r --arg m "$MARKER_PREFIX" \
-            '[.[] | select(.body | startswith($m))] | first | .body // empty')
+            '[ .[][] | select(.body | startswith($m)) ] | first | .body // empty')
 
         WORKSPACE_ID=$(echo "$COMMENT" | \
           jq -rR 'capture("<!-- tailor-preview: [^ ]+ id=(?P<id>[a-f0-9-]+)").id // empty' \
@@ -74,11 +75,11 @@ runs:
           exit 0
         fi
 
-        echo "workspace-id=$WORKSPACE_ID" >> "$GITHUB_OUTPUT"
-        echo "workspace-name=$WORKSPACE_NAME" >> "$GITHUB_OUTPUT"
-
         echo "Deleting preview workspace: $WORKSPACE_NAME ($WORKSPACE_ID)"
         $TAILOR_SDK_RUN tailor-sdk workspace delete --workspace-id "$WORKSPACE_ID" --yes
+
+        echo "workspace-id=$WORKSPACE_ID" >> "$GITHUB_OUTPUT"
+        echo "workspace-name=$WORKSPACE_NAME" >> "$GITHUB_OUTPUT"
 
     - name: Build cleanup comment body
       id: body

@@ -68,6 +68,6 @@ runs:
           --name "$SITE_NAME" \
           --dir "$DIST_DIR" \
           --json)
-        SITE_URL=$(echo "$RESULT" | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).url)")
+        SITE_URL=$(echo "$RESULT" | jq -r '.url // ""')
         echo "site-url=$SITE_URL" >> "$GITHUB_OUTPUT"
         echo "Deployed: $SITE_URL"

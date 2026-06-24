@@ -197,7 +197,6 @@ runs:
           const existingComment = allComments.find(
             comment =>
               comment.user?.type === 'Bot' &&
-              comment.user?.login === 'github-actions[bot]' &&
               comment.body.includes(marker),
           );
 
