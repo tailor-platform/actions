@@ -1,6 +1,5 @@
 overrides:
   valibot: '>=1.2.0'
-  '@napi-rs/wasm-runtime': '1.1.5'
 
 allowBuilds:
   '@prisma/engines': true
