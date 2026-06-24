@@ -28,8 +28,9 @@ inputs:
     required: true
   mention:
     description: >-
-      Comma-separated GitHub usernames to @mention in a PR comment when deploy
-      completes (e.g. "user1,user2"). When empty, no mention comment is posted.
+      Set to "true" to @mention the relevant person in a PR comment when deploy
+      completes. Mentions the commit author; falls back to the PR author if the
+      commit was made by a bot; skips entirely if both are bots.
       Requires github-token with pull-requests:write permission.
     required: false
     default: ""
@@ -127,23 +128,38 @@ runs:
         echo "app-url=$APP_URL" >> "$GITHUB_OUTPUT"
 
     - name: Post mention comment
-      if: always() && inputs.mention != ''
+      if: always() && inputs.mention == 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
-        MENTION_USERS: ${{ inputs.mention }}
         APPLY_OUTCOME: ${{ steps.apply.outcome }}
         WORKSPACE_ID: ${{ inputs.workspace-id }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: |
         if [ -z "$GH_TOKEN" ]; then
-          echo "::warning::mention is set but github-token is not provided — skipping mention comment"
+          echo "::warning::mention is enabled but github-token is not provided — skipping"
           exit 0
         fi
 
-        MENTIONS=$(printf '%s' "$MENTION_USERS" | tr ',' '\n' | \
-          sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//' | \
-          grep -v '^$' | sed 's/^@*//' | sed 's/^/@/' | tr '\n' ' ' | xargs)
+        # Resolve who to mention: commit author → PR author → skip
+        COMMIT_AUTHOR=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" \
+          --jq '.author.login // empty' 2>/dev/null || echo "")
+
+        MENTION_USER=""
+        if [ -n "$COMMIT_AUTHOR" ] && [[ "$COMMIT_AUTHOR" != *"[bot]" ]]; then
+          MENTION_USER="@$COMMIT_AUTHOR"
+        else
+          PR_AUTHOR=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
+            --jq '.[0].user.login // empty' 2>/dev/null || echo "")
+          if [ -n "$PR_AUTHOR" ] && [[ "$PR_AUTHOR" != *"[bot]" ]]; then
+            MENTION_USER="@$PR_AUTHOR"
+          fi
+        fi
+
+        if [ -z "$MENTION_USER" ]; then
+          echo "::notice::No non-bot user to mention — skipping mention comment"
+          exit 0
+        fi
 
         PR_NUM=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
           --jq '.[0].number // empty' 2>/dev/null || echo "")
@@ -161,5 +177,5 @@ runs:
           STATUS="failed"
         fi
 
-        BODY="${EMOJI} Deploy \`${WORKSPACE_ID}\` ${STATUS} — ${MENTIONS}"$'\n'"[View run](${RUN_URL})"
+        BODY="${EMOJI} Deploy \`${WORKSPACE_ID}\` ${STATUS} — ${MENTION_USER}"$'\n'"[View run](${RUN_URL})"
         gh pr comment "$PR_NUM" --body "$BODY"

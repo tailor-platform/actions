@@ -35,8 +35,8 @@ jobs:
           workspace-id: ${{ vars.TAILOR_PLATFORM_WORKSPACE_ID }}
           platform-client-id: ${{ secrets.TAILOR_PLATFORM_MACHINE_USER_CLIENT_ID }}
           platform-client-secret: ${{ secrets.TAILOR_PLATFORM_MACHINE_USER_CLIENT_SECRET }}
-          # Optional: @mention users on the merged PR when deploy completes
-          mention: ${{ vars.TAILOR_DEPLOY_MENTION_USERS }}   # e.g. "user1,user2"
+          # Optional: @mention the commit/PR author when deploy completes
+          mention: "true"
           github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
@@ -48,7 +48,7 @@ jobs:
 | `working-directory` | No | `.` | Working directory (for monorepo setups) |
 | `platform-client-id` | Yes | | OAuth2 client ID for machine user |
 | `platform-client-secret` | Yes | | OAuth2 client secret for machine user |
-| `mention` | No | | Comma-separated GitHub usernames to @mention in a PR comment when deploy completes (e.g. `"user1,user2"`). Requires `github-token`. When empty, no mention comment is posted. |
+| `mention` | No | | Set to `"true"` to post a deploy status comment with an @mention on the associated PR. Mentions the commit author; falls back to the PR author if the commit was by a bot; skips if both are bots. Requires `github-token`. |
 | `github-token` | No | | GitHub token with `pull-requests: write` for posting the mention comment. |
 
 #### Outputs
