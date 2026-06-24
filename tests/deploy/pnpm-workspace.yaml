@@ -8,3 +8,5 @@ allowBuilds:
   esbuild: true
   multiline-ts: true
   protobufjs: true
+
+minimumReleaseAge: 0
