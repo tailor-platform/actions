@@ -32,7 +32,8 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Post preview comment
+    - name: Build comment body
+      id: build
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
@@ -51,7 +52,6 @@ runs:
 
         MARKER="<!-- tailor-preview: $WORKSPACE_NAME id=$WORKSPACE_ID -->"
 
-        # Resolve who to mention
         MENTION_USER=""
         if [ "$MENTION_ENABLED" = "true" ]; then
           COMMIT_AUTHOR=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" \
@@ -67,7 +67,6 @@ runs:
           fi
         fi
 
-        # Build body
         case "$STATUS" in
           success) EMOJI="✅"; STATUS_TEXT="Deployed" ;;
           failure) EMOJI="❌"; STATUS_TEXT="Failed" ;;
@@ -86,17 +85,17 @@ runs:
 
         BODY="${MARKER}"$'\n'"## ${EMOJI} Tailor Platform Preview (\`${WORKSPACE_NAME}\`)"$'\n\n'"${TABLE}"$'\n\n'"${FOOTER}"
 
-        # Find existing comment (marker is always the first line)
-        EXISTING_ID=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" \
-          2>/dev/null | \
-          jq -r --arg m "<!-- tailor-preview: $WORKSPACE_NAME " \
-            '[.[] | select(.body | startswith($m))] | first | .id // empty')
+        EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+        {
+          echo "body<<$EOF"
+          echo "$BODY"
+          echo "$EOF"
+        } >> "$GITHUB_OUTPUT"
 
-        PAYLOAD=$(jq -n --arg body "$BODY" '{body: $body}')
-        if [ -n "$EXISTING_ID" ]; then
-          echo "$PAYLOAD" | gh api "repos/$GITHUB_REPOSITORY/issues/comments/$EXISTING_ID" \
-            -X PATCH --input - > /dev/null
-        else
-          echo "$PAYLOAD" | gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
-            -X POST --input - > /dev/null
-        fi
+    - name: Post or update preview comment
+      if: github.event.pull_request.number != ''
+      uses: ./_internal/sticky-comment
+      with:
+        marker-prefix: "<!-- tailor-preview: ${{ inputs.workspace-name }} "
+        body: ${{ steps.build.outputs.body }}
+        github-token: ${{ inputs.github-token }}

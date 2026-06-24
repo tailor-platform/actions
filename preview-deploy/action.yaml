@@ -63,41 +63,13 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Mask credentials
-      shell: bash
-      run: |
-        echo "::add-mask::$CLIENT_ID"
-        echo "::add-mask::$CLIENT_SECRET"
-      env:
-        CLIENT_ID: ${{ inputs.platform-client-id }}
-        CLIENT_SECRET: ${{ inputs.platform-client-secret }}
-
-    - name: Resolve tailor-sdk runner
-      shell: bash
-      env:
-        PACKAGE_MANAGER: ${{ inputs.package-manager }}
-      # RUN is one of a fixed set of literals chosen by the case below (never
-      # user input), so writing it to GITHUB_ENV cannot inject code.
-      run: | # zizmor: ignore[github-env]
-        case "$PACKAGE_MANAGER" in
-          pnpm) RUN="pnpm exec" ;;
-          yarn) RUN="yarn" ;;
-          bun)  RUN="bunx" ;;
-          npm|"") RUN="npx" ;;
-          *)
-            echo "::error::Unsupported package-manager '$PACKAGE_MANAGER' (expected pnpm, npm, yarn, or bun)"
-            exit 1
-            ;;
-        esac
-        echo "TAILOR_SDK_RUN=$RUN" >> "$GITHUB_ENV"
-
-    - name: Login to Tailor Platform
-      shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      env:
-        TAILOR_PLATFORM_MACHINE_USER_CLIENT_ID: ${{ inputs.platform-client-id }}
-        TAILOR_PLATFORM_MACHINE_USER_CLIENT_SECRET: ${{ inputs.platform-client-secret }}
-      run: $TAILOR_SDK_RUN tailor-sdk login --machineuser
+    - name: Set up Tailor SDK
+      uses: ./_internal/sdk-setup
+      with:
+        platform-client-id: ${{ inputs.platform-client-id }}
+        platform-client-secret: ${{ inputs.platform-client-secret }}
+        package-manager: ${{ inputs.package-manager }}
+        working-directory: ${{ inputs.working-directory }}
 
     - name: Resolve or create preview workspace
       id: workspace
