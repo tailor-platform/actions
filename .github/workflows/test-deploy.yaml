@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "deploy/**"
+      - "_internal/**"
       - "tests/deploy/**"
       - ".github/workflows/test-deploy.yaml"
   push:
@@ -73,12 +74,17 @@ jobs:
       - name: Verify outputs
         env:
           WORKSPACE_ID: ${{ steps.deploy.outputs.workspace-id }}
+          APP_URL: ${{ steps.deploy.outputs.app-url }}
         run: |
           if [ -z "$WORKSPACE_ID" ]; then
             echo "::error::workspace-id output is empty"
             exit 1
           fi
-          echo "Deploy succeeded. workspace-id=$WORKSPACE_ID"
+          if [ "$APP_URL" = "null" ]; then
+            echo "::error::app-url output is the literal string 'null' — jq fallback not applied"
+            exit 1
+          fi
+          echo "Deploy succeeded. workspace-id=$WORKSPACE_ID app-url=${APP_URL:-(empty)}"
 
       - name: Cleanup workspace
         if: always() && steps.setup.outputs.workspace-id != ''

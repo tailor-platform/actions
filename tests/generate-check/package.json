@@ -1,0 +1,7 @@
+{
+  "name": "generate-check-test",
+  "private": true,
+  "dependencies": {
+    "tailor-sdk": "file:./fake-sdk"
+  }
+}
