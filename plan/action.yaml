@@ -152,28 +152,17 @@ runs:
         echo "marker=$MARKER" >> "$GITHUB_OUTPUT"
 
         if [ -z "$WORKSPACE_ID" ]; then
-          CONTENT="### ℹ️ Tailor Platform Plan ($KEY)
-
-Workspace is not provisioned yet — set TAILOR_PLATFORM_WORKSPACE_ID after provisioning the workspace."
+          CONTENT=$(printf '### ℹ️ Tailor Platform Plan (%s)\n\nWorkspace is not provisioned yet — set TAILOR_PLATFORM_WORKSPACE_ID after provisioning the workspace.' "$KEY")
         else
           if [ "$DRY_RUN_EXIT_CODE" = "0" ]; then STATUS="✅"; else STATUS="❌"; fi
           OUTPUT="$DRY_RUN_OUTPUT"
           MAX_OUTPUT=60000
           if [ "${#OUTPUT}" -gt "$MAX_OUTPUT" ]; then
-            OUTPUT="[output truncated to the last ${MAX_OUTPUT} characters — see the job's step summary for the full plan]
-
-${OUTPUT: -$MAX_OUTPUT}"
+            NOTE=$(printf '[output truncated to the last %s characters — see the job'\''s step summary for the full plan]' "$MAX_OUTPUT")
+            OUTPUT=$(printf '%s\n\n%s' "$NOTE" "${OUTPUT: -$MAX_OUTPUT}")
           fi
-          CONTENT="### $STATUS Tailor Platform Plan ($KEY)
-
-<details>
-<summary>Plan output (exit code: $DRY_RUN_EXIT_CODE)</summary>
-
-\`\`\`
-$OUTPUT
-\`\`\`
-
-</details>"
+          CONTENT=$(printf '### %s Tailor Platform Plan (%s)\n\n<details>\n<summary>Plan output (exit code: %s)</summary>\n\n```\n%s\n```\n\n</details>' \
+            "$STATUS" "$KEY" "$DRY_RUN_EXIT_CODE" "$OUTPUT")
         fi
 
         EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)

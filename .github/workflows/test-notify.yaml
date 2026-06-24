@@ -64,8 +64,10 @@ jobs:
           provider: unsupported-provider
           status: success
       - name: "Verify: outcome must be failure"
+        env:
+          OUTCOME: ${{ steps.notify.outcome }}
         run: |
-          if [ "${{ steps.notify.outcome }}" != "failure" ]; then
+          if [ "$OUTCOME" != "failure" ]; then
             echo "::error::Expected notify to fail with unsupported provider"
             exit 1
           fi

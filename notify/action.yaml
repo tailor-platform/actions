@@ -10,7 +10,7 @@ inputs:
   status:
     description: >-
       Deployment status to report: 'success' or 'failure'.
-      Typically passed as ${{ job.status }}.
+      Typically pass the calling job's outcome as this value.
     required: true
   workspace-name:
     description: Tailor Platform workspace name shown in the notification message

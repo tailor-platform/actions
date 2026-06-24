@@ -112,8 +112,10 @@ jobs:
           working-directory: tests/generate-check
 
       - name: "Verify: outcome must be failure"
+        env:
+          OUTCOME: ${{ steps.check.outcome }}
         run: |
-          if [ "${{ steps.check.outcome }}" != "failure" ]; then
+          if [ "$OUTCOME" != "failure" ]; then
             echo "::error::Expected generate-check to fail when generated files are dirty"
             exit 1
           fi
