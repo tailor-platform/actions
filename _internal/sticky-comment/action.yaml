@@ -47,10 +47,11 @@ runs:
           exit 0
         fi
 
-        EXISTING=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" \
+        EXISTING=$(gh api --paginate --slurp \
+          "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
           2>/dev/null | \
           jq -r --arg m "$MARKER_PREFIX" \
-            '[.[] | select(.body | startswith($m))] | first | {id: .id, body: .body} // empty')
+            '[ .[][] | select(.user.type == "Bot" and (.body | startswith($m))) ] | first | {id: .id, body: .body} // empty')
 
         EXISTING_ID=$(echo "$EXISTING" | jq -r '.id // empty')
         EXISTING_BODY=$(echo "$EXISTING" | jq -r '.body // empty')
