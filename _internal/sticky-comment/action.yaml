@@ -51,7 +51,7 @@ runs:
           "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
           2>/dev/null | \
           jq -r --arg m "$MARKER_PREFIX" \
-            '[ .[][] | select(.user.type == "Bot" and (.body | startswith($m))) ] | first | {id: .id, body: .body} // empty')
+            '[ .[][] | select(.user.type == "Bot" and .user.login == "github-actions[bot]" and (.body | startswith($m))) ] | first | {id: .id, body: .body} // empty')
 
         EXISTING_ID=$(echo "$EXISTING" | jq -r '.id // empty')
         EXISTING_BODY=$(echo "$EXISTING" | jq -r '.body // empty')
