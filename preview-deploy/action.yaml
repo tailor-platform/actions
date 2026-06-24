@@ -95,7 +95,7 @@ runs:
           "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
           2>/dev/null | \
           jq -r --arg m "$MARKER_PREFIX" \
-            '[ .[][] | select(.body | startswith($m)) ] | first | .body // empty' | \
+            '[ .[][] | select(.user.type == "Bot" and (.body | startswith($m))) ] | first | .body // empty' | \
           jq -rR 'capture("<!-- tailor-preview: [^ ]+ id=(?P<id>[a-f0-9-]+)").id // empty' \
           2>/dev/null || echo "")
 

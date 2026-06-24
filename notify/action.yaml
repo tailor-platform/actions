@@ -9,8 +9,9 @@ inputs:
     required: true
   status:
     description: >-
-      Deployment status to report: 'success' or 'failure'.
-      Typically pass the calling job's outcome as this value.
+      Deployment status to report. Accepts 'success', 'failure', or 'cancelled'.
+      Typically pass ${{ job.status }} or ${{ steps.<id>.outcome }}.
+      Any value other than 'success' is reported as a failure (:x:).
     required: true
   workspace-name:
     description: Tailor Platform workspace name shown in the notification message
