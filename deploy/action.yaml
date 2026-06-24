@@ -26,6 +26,19 @@ inputs:
   platform-client-secret:
     description: OAuth2 client secret for Tailor Platform machine user
     required: true
+  mention:
+    description: >-
+      Comma-separated GitHub usernames to @mention in a PR comment when deploy
+      completes (e.g. "user1,user2"). When empty, no mention comment is posted.
+      Requires github-token with pull-requests:write permission.
+    required: false
+    default: ""
+  github-token:
+    description: >-
+      GitHub token for posting the @mention PR comment.
+      Required when mention is set.
+    required: false
+    default: ""
 
 outputs:
   workspace-id:
@@ -92,6 +105,7 @@ runs:
       run: $TAILOR_SDK_RUN tailor-sdk generate
 
     - name: Deploy
+      id: apply
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
@@ -111,3 +125,41 @@ runs:
           APP_URL=""
         fi
         echo "app-url=$APP_URL" >> "$GITHUB_OUTPUT"
+
+    - name: Post mention comment
+      if: always() && inputs.mention != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        MENTION_USERS: ${{ inputs.mention }}
+        APPLY_OUTCOME: ${{ steps.apply.outcome }}
+        WORKSPACE_ID: ${{ inputs.workspace-id }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        if [ -z "$GH_TOKEN" ]; then
+          echo "::warning::mention is set but github-token is not provided — skipping mention comment"
+          exit 0
+        fi
+
+        MENTIONS=$(printf '%s' "$MENTION_USERS" | tr ',' '\n' | \
+          sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//' | \
+          grep -v '^$' | sed 's/^@*//' | sed 's/^/@/' | tr '\n' ' ' | xargs)
+
+        PR_NUM=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
+          --jq '.[0].number // empty' 2>/dev/null || echo "")
+
+        if [ -z "$PR_NUM" ]; then
+          echo "::notice::No PR associated with this commit — skipping mention comment"
+          exit 0
+        fi
+
+        if [ "$APPLY_OUTCOME" = "success" ]; then
+          EMOJI="✅"
+          STATUS="succeeded"
+        else
+          EMOJI="❌"
+          STATUS="failed"
+        fi
+
+        gh pr comment "$PR_NUM" --body "${EMOJI} Deploy \`${WORKSPACE_ID}\` ${STATUS} — ${MENTIONS}
+[View run](${RUN_URL})"

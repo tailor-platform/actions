@@ -21,6 +21,7 @@ jobs:
     environment: production
     permissions:
       contents: read
+      pull-requests: write  # required when using the mention input
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -34,6 +35,9 @@ jobs:
           workspace-id: ${{ vars.TAILOR_PLATFORM_WORKSPACE_ID }}
           platform-client-id: ${{ secrets.TAILOR_PLATFORM_MACHINE_USER_CLIENT_ID }}
           platform-client-secret: ${{ secrets.TAILOR_PLATFORM_MACHINE_USER_CLIENT_SECRET }}
+          # Optional: @mention users on the merged PR when deploy completes
+          mention: ${{ vars.TAILOR_DEPLOY_MENTION_USERS }}   # e.g. "user1,user2"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
 #### Inputs
@@ -44,6 +48,8 @@ jobs:
 | `working-directory` | No | `.` | Working directory (for monorepo setups) |
 | `platform-client-id` | Yes | | OAuth2 client ID for machine user |
 | `platform-client-secret` | Yes | | OAuth2 client secret for machine user |
+| `mention` | No | | Comma-separated GitHub usernames to @mention in a PR comment when deploy completes (e.g. `"user1,user2"`). Requires `github-token`. When empty, no mention comment is posted. |
+| `github-token` | No | | GitHub token with `pull-requests: write` for posting the mention comment. |
 
 #### Outputs
 
