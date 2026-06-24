@@ -26,20 +26,6 @@ inputs:
   platform-client-secret:
     description: OAuth2 client secret for Tailor Platform machine user
     required: true
-  mention:
-    description: >-
-      Set to "true" to @mention the relevant person in a PR comment when deploy
-      completes. Mentions the commit author; falls back to the PR author if the
-      commit was made by a bot; skips entirely if both are bots.
-      Requires github-token with pull-requests:write permission.
-    required: false
-    default: ""
-  github-token:
-    description: >-
-      GitHub token for posting the @mention PR comment.
-      Required when mention is set.
-    required: false
-    default: ""
 
 outputs:
   workspace-id:
@@ -106,7 +92,6 @@ runs:
       run: $TAILOR_SDK_RUN tailor-sdk generate
 
     - name: Deploy
-      id: apply
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
@@ -126,56 +111,3 @@ runs:
           APP_URL=""
         fi
         echo "app-url=$APP_URL" >> "$GITHUB_OUTPUT"
-
-    - name: Post mention comment
-      if: always() && inputs.mention == 'true'
-      shell: bash
-      env:
-        GH_TOKEN: ${{ inputs.github-token }}
-        APPLY_OUTCOME: ${{ steps.apply.outcome }}
-        WORKSPACE_ID: ${{ inputs.workspace-id }}
-        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-      run: |
-        if [ -z "$GH_TOKEN" ]; then
-          echo "::warning::mention is enabled but github-token is not provided — skipping"
-          exit 0
-        fi
-
-        # Resolve who to mention: commit author → PR author → skip
-        COMMIT_AUTHOR=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" \
-          --jq '.author.login // empty' 2>/dev/null || echo "")
-
-        MENTION_USER=""
-        if [ -n "$COMMIT_AUTHOR" ] && [[ "$COMMIT_AUTHOR" != *"[bot]" ]]; then
-          MENTION_USER="@$COMMIT_AUTHOR"
-        else
-          PR_AUTHOR=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
-            --jq '.[0].user.login // empty' 2>/dev/null || echo "")
-          if [ -n "$PR_AUTHOR" ] && [[ "$PR_AUTHOR" != *"[bot]" ]]; then
-            MENTION_USER="@$PR_AUTHOR"
-          fi
-        fi
-
-        if [ -z "$MENTION_USER" ]; then
-          echo "::notice::No non-bot user to mention — skipping mention comment"
-          exit 0
-        fi
-
-        PR_NUM=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
-          --jq '.[0].number // empty' 2>/dev/null || echo "")
-
-        if [ -z "$PR_NUM" ]; then
-          echo "::notice::No PR associated with this commit — skipping mention comment"
-          exit 0
-        fi
-
-        if [ "$APPLY_OUTCOME" = "success" ]; then
-          EMOJI="✅"
-          STATUS="succeeded"
-        else
-          EMOJI="❌"
-          STATUS="failed"
-        fi
-
-        BODY="${EMOJI} Deploy \`${WORKSPACE_ID}\` ${STATUS} — ${MENTION_USER}"$'\n'"[View run](${RUN_URL})"
-        gh pr comment "$PR_NUM" --body "$BODY"

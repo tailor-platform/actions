@@ -1,0 +1,118 @@
+name: Delete Tailor Platform preview workspace
+description: >-
+  Delete the per-PR preview workspace when a pull request is closed.
+  Reads the workspace ID from the PR comment posted by preview-comment and
+  deletes the workspace. Run this on pull_request closed events.
+  Requires Node.js and dependencies to be installed by the caller.
+
+inputs:
+  workspace-name-prefix:
+    description: >-
+      The same prefix used in preview-deploy. Used to locate the PR comment
+      that holds the workspace ID.
+    required: true
+  working-directory:
+    description: Working directory for the project (for monorepo setups)
+    required: false
+    default: "."
+  package-manager:
+    description: >-
+      Package manager used to run tailor-sdk (pnpm, npm, yarn, or bun).
+      Defaults to npx when empty.
+    required: false
+    default: ""
+  platform-client-id:
+    description: OAuth2 client ID for Tailor Platform machine user
+    required: true
+  platform-client-secret:
+    description: OAuth2 client secret for Tailor Platform machine user
+    required: true
+  github-token:
+    description: >-
+      GitHub token for reading the PR comment and updating it after cleanup.
+      Requires pull-requests:write permission.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Mask credentials
+      shell: bash
+      run: |
+        echo "::add-mask::$CLIENT_ID"
+        echo "::add-mask::$CLIENT_SECRET"
+      env:
+        CLIENT_ID: ${{ inputs.platform-client-id }}
+        CLIENT_SECRET: ${{ inputs.platform-client-secret }}
+
+    - name: Resolve tailor-sdk runner
+      shell: bash
+      env:
+        PACKAGE_MANAGER: ${{ inputs.package-manager }}
+      # RUN is one of a fixed set of literals chosen by the case below (never
+      # user input), so writing it to GITHUB_ENV cannot inject code.
+      run: | # zizmor: ignore[github-env]
+        case "$PACKAGE_MANAGER" in
+          pnpm) RUN="pnpm exec" ;;
+          yarn) RUN="yarn" ;;
+          bun)  RUN="bunx" ;;
+          npm|"") RUN="npx" ;;
+          *)
+            echo "::error::Unsupported package-manager '$PACKAGE_MANAGER' (expected pnpm, npm, yarn, or bun)"
+            exit 1
+            ;;
+        esac
+        echo "TAILOR_SDK_RUN=$RUN" >> "$GITHUB_ENV"
+
+    - name: Login to Tailor Platform
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        TAILOR_PLATFORM_MACHINE_USER_CLIENT_ID: ${{ inputs.platform-client-id }}
+        TAILOR_PLATFORM_MACHINE_USER_CLIENT_SECRET: ${{ inputs.platform-client-secret }}
+      run: $TAILOR_SDK_RUN tailor-sdk login --machineuser
+
+    - name: Delete preview workspace
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        NAME_PREFIX: ${{ inputs.workspace-name-prefix }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        if [ -z "$PR_NUMBER" ]; then
+          echo "::error::preview-cleanup must run on a pull_request event"
+          exit 1
+        fi
+
+        WORKSPACE_NAME="${NAME_PREFIX}-pr-${PR_NUMBER}"
+        MARKER_PREFIX="<!-- tailor-preview: $WORKSPACE_NAME id="
+
+        # Find the PR comment and extract workspace-id
+        COMMENT=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" \
+          2>/dev/null | \
+          jq -r --arg m "$MARKER_PREFIX" \
+            '[.[] | select(.body | startswith($m))] | first | {id: .id, body: .body} // empty')
+
+        COMMENT_ID=$(echo "$COMMENT" | jq -r '.id // empty')
+        WORKSPACE_ID=$(echo "$COMMENT" | jq -r '.body // empty' | \
+          jq -rR 'capture("<!-- tailor-preview: [^ ]+ id=(?P<id>[a-f0-9-]+)").id // empty' \
+          2>/dev/null || echo "")
+
+        if [ -z "$WORKSPACE_ID" ]; then
+          echo "::warning::No preview workspace ID found in PR comment — skipping deletion"
+          exit 0
+        fi
+
+        echo "Deleting preview workspace: $WORKSPACE_NAME ($WORKSPACE_ID)"
+        $TAILOR_SDK_RUN tailor-sdk workspace delete --workspace-id "$WORKSPACE_ID" --yes
+
+        # Update PR comment to reflect cleanup
+        if [ -n "$COMMENT_ID" ]; then
+          MARKER="<!-- tailor-preview: $WORKSPACE_NAME id=$WORKSPACE_ID -->"
+          TABLE="| | |"$'\n'"|---|---|"$'\n'"| Workspace ID | \`${WORKSPACE_ID}\` |"$'\n'"| Status | 🗑️ Cleaned up |"
+          BODY="${MARKER}"$'\n'"## 🗑️ Tailor Platform Preview (\`${WORKSPACE_NAME}\`) — Cleaned Up"$'\n\n'"${TABLE}"$'\n\n'"[View run](${RUN_URL})"
+          jq -n --arg body "$BODY" '{body: $body}' | \
+            gh api "repos/$GITHUB_REPOSITORY/issues/comments/$COMMENT_ID" \
+              -X PATCH --input - > /dev/null
+        fi

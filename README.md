@@ -21,7 +21,6 @@ jobs:
     environment: production
     permissions:
       contents: read
-      pull-requests: write  # required when using the mention input
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -35,9 +34,6 @@ jobs:
           workspace-id: ${{ vars.TAILOR_PLATFORM_WORKSPACE_ID }}
           platform-client-id: ${{ secrets.TAILOR_PLATFORM_MACHINE_USER_CLIENT_ID }}
           platform-client-secret: ${{ secrets.TAILOR_PLATFORM_MACHINE_USER_CLIENT_SECRET }}
-          # Optional: @mention the commit/PR author when deploy completes
-          mention: "true"
-          github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
 #### Inputs
@@ -48,8 +44,6 @@ jobs:
 | `working-directory` | No | `.` | Working directory (for monorepo setups) |
 | `platform-client-id` | Yes | | OAuth2 client ID for machine user |
 | `platform-client-secret` | Yes | | OAuth2 client secret for machine user |
-| `mention` | No | | Set to `"true"` to post a deploy status comment with an @mention on the associated PR. Mentions the commit author; falls back to the PR author if the commit was by a bot; skips if both are bots. Requires `github-token`. |
-| `github-token` | No | | GitHub token with `pull-requests: write` for posting the mention comment. |
 
 #### Outputs
 
@@ -249,6 +243,135 @@ Send a deployment notification. Currently supports Slack via Bot token and chann
 | `workspace-name` | No | | Workspace name shown in the message |
 | `slack-channel-id` | No | | Slack channel ID. When empty, the notification is silently skipped. |
 | `slack-token` | No | | Slack Bot token with `chat:write` permission. When empty, the notification is silently skipped. |
+
+---
+
+### [`preview-deploy`](preview-deploy/action.yaml)
+
+Deploy a per-PR preview workspace. On the first push to a PR the workspace is created; subsequent pushes reuse the existing workspace (identified by the workspace ID recorded in the PR comment by `preview-comment`). Run on `pull_request` events (not `closed`).
+
+**Prerequisites:** Same as `deploy` — checkout, Node.js, package manager, and dependency installation.
+
+#### Usage
+
+```yaml
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    if: github.event.action != 'closed' && !github.event.pull_request.draft
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - id: preview
+        uses: tailor-platform/actions/preview-deploy@v1
+        with:
+          workspace-name-prefix: my-app
+          region: us-west
+          organization-id: ${{ vars.TAILOR_PLATFORM_ORGANIZATION_ID }}
+          platform-client-id: ${{ secrets.TAILOR_PLATFORM_MACHINE_USER_CLIENT_ID }}
+          platform-client-secret: ${{ secrets.TAILOR_PLATFORM_MACHINE_USER_CLIENT_SECRET }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: tailor-platform/actions/preview-comment@v1
+        with:
+          workspace-id: ${{ steps.preview.outputs.workspace-id }}
+          workspace-name: ${{ steps.preview.outputs.workspace-name }}
+          status: ${{ job.status }}
+          app-url: ${{ steps.preview.outputs.app-url }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          mention: "true"
+```
+
+#### Inputs
+
+| Name | Required | Default | Description |
+|------|----------|---------|-------------|
+| `workspace-name-prefix` | Yes | | Prefix for the workspace name. The full name is `{prefix}-pr-{PR number}` (max 57 chars). |
+| `region` | Yes | | Workspace region for creation (e.g. `us-west`, `asia-northeast`). Only used on first run. |
+| `organization-id` | No | | Organization ID for workspace creation. Defaults to `TAILOR_PLATFORM_ORGANIZATION_ID` env var. |
+| `folder-id` | No | | Folder ID for workspace creation |
+| `working-directory` | No | `.` | Working directory (for monorepo setups) |
+| `package-manager` | No | | Package manager (`pnpm`, `npm`, `yarn`, or `bun`). Defaults to `npx`. |
+| `platform-client-id` | Yes | | OAuth2 client ID for machine user |
+| `platform-client-secret` | Yes | | OAuth2 client secret for machine user |
+| `github-token` | Yes | | GitHub token for reading PR comments to find an existing workspace ID |
+
+#### Outputs
+
+| Name | Description |
+|------|-------------|
+| `workspace-id` | Workspace ID of the preview deployment |
+| `workspace-name` | Full workspace name (e.g. `my-app-pr-42`) |
+| `app-url` | Application URL (GraphQL endpoint) of the preview workspace |
+
+---
+
+### [`preview-comment`](preview-comment/action.yaml)
+
+Post or update a PR comment with preview deployment status, workspace ID, app URL, and optional @mention. Typically called after `preview-deploy`. The comment is keyed by workspace name so multiple preview environments can coexist on one PR.
+
+#### Inputs
+
+| Name | Required | Default | Description |
+|------|----------|---------|-------------|
+| `workspace-id` | Yes | | Workspace ID of the preview deployment |
+| `workspace-name` | Yes | | Workspace name (from `preview-deploy` output) |
+| `status` | Yes | | Deployment status: `success`, `failure`, or `deleted` |
+| `app-url` | No | | Application URL to show in the comment |
+| `github-token` | Yes | | GitHub token with `pull-requests: write` |
+| `mention` | No | | Set to `"true"` to @mention the commit author (falls back to PR author if commit is by a bot) |
+
+---
+
+### [`preview-cleanup`](preview-cleanup/action.yaml)
+
+Delete the preview workspace when a PR is closed. Reads the workspace ID from the PR comment posted by `preview-comment` and deletes the workspace. Run on `pull_request` `closed` events.
+
+#### Usage
+
+```yaml
+jobs:
+  preview-cleanup:
+    runs-on: ubuntu-latest
+    if: github.event.action == 'closed'
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: tailor-platform/actions/preview-cleanup@v1
+        with:
+          workspace-name-prefix: my-app
+          platform-client-id: ${{ secrets.TAILOR_PLATFORM_MACHINE_USER_CLIENT_ID }}
+          platform-client-secret: ${{ secrets.TAILOR_PLATFORM_MACHINE_USER_CLIENT_SECRET }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+#### Inputs
+
+| Name | Required | Default | Description |
+|------|----------|---------|-------------|
+| `workspace-name-prefix` | Yes | | Same prefix used in `preview-deploy` |
+| `working-directory` | No | `.` | Working directory (for monorepo setups) |
+| `package-manager` | No | | Package manager (`pnpm`, `npm`, `yarn`, or `bun`). Defaults to `npx`. |
+| `platform-client-id` | Yes | | OAuth2 client ID for machine user |
+| `platform-client-secret` | Yes | | OAuth2 client secret for machine user |
+| `github-token` | Yes | | GitHub token with `pull-requests: write` for reading and updating the PR comment |
+
+---
 
 ## License
 
