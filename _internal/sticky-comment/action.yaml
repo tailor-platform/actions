@@ -20,7 +20,7 @@ inputs:
   pr-number:
     description: Pull request number. Defaults to the current PR number.
     required: false
-    default: ${{ github.event.pull_request.number }}
+    default: ""
 
 outputs:
   comment-id:
@@ -40,7 +40,7 @@ runs:
         GH_TOKEN: ${{ inputs.github-token }}
         MARKER_PREFIX: ${{ inputs.marker-prefix }}
         BODY: ${{ inputs.body }}
-        PR_NUMBER: ${{ inputs.pr-number }}
+        PR_NUMBER: ${{ inputs.pr-number || github.event.pull_request.number }}
       run: |
         if [ -z "$PR_NUMBER" ]; then
           echo "::notice::sticky-comment: not a pull_request event — skipping"
