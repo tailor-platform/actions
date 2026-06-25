@@ -90,7 +90,7 @@ runs:
           echo ""
           printf '%s\n' "$OUTPUT" \
             | sed $'s/\x1b\\[[0-9;]*[A-Za-z]//g' \
-            | grep "(ignore key:" \
+            | (grep "(ignore key:" || true) \
             | sed 's/^[^[]*//' \
             | sed 's/^/- /'
           echo ""

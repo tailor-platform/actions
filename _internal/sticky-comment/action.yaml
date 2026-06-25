@@ -47,7 +47,7 @@ runs:
           exit 0
         fi
 
-        if [[ "$BODY" != "$MARKER_PREFIX"* ]]; then
+        if [ "${BODY:0:${#MARKER_PREFIX}}" != "$MARKER_PREFIX" ]; then
           echo "::error::sticky-comment: body must start with marker-prefix"
           exit 1
         fi
@@ -75,6 +75,10 @@ runs:
           echo "comment-id=$EXISTING_ID" >> "$GITHUB_OUTPUT"
         else
           COMMENT_ID=$(echo "$PAYLOAD" | gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
-            -X POST --input - | jq -r '.id')
+            -X POST --input - | jq -r '.id // empty')
+          if [ -z "$COMMENT_ID" ]; then
+            echo "::error::sticky-comment: failed to create comment (no id returned)"
+            exit 1
+          fi
           echo "comment-id=$COMMENT_ID" >> "$GITHUB_OUTPUT"
         fi
