@@ -95,14 +95,14 @@ runs:
           "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" | \
           jq -r --arg m "$MARKER_PREFIX" \
             '[ .[][] | select(.user.type == "Bot" and (.body | startswith($m))) ] | first | .body // empty' | \
-          jq -rR 'capture("<!-- tailor-preview: [^ ]+ id=(?P<id>[a-f0-9-]+)").id // empty')
+          jq -rR '(try capture("<!-- tailor-preview: [^ ]+ id=(?P<id>[a-f0-9-]+)") | .id) // empty')
 
         if [ -n "$EXISTING_ID" ]; then
           echo "Found existing preview workspace: $EXISTING_ID"
           WORKSPACE_ID="$EXISTING_ID"
         else
           echo "Creating preview workspace: $WORKSPACE_NAME (region: $REGION)"
-          CREATE_ARGS=(workspace create "$WORKSPACE_NAME" --region "$REGION" --json)
+          CREATE_ARGS=(workspace create --name "$WORKSPACE_NAME" --region "$REGION" --json)
           [ -n "$ORG_ID" ] && CREATE_ARGS+=(--organization-id "$ORG_ID")
           [ -n "$FOLDER_ID" ] && CREATE_ARGS+=(--folder-id "$FOLDER_ID")
           WORKSPACE_ID=$($TAILOR_SDK_RUN tailor-sdk "${CREATE_ARGS[@]}" | jq -r '.id // empty')
