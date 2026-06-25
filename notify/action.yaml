@@ -10,7 +10,7 @@ inputs:
   status:
     description: >-
       Deployment status to report. Accepts 'success', 'failure', or 'cancelled'.
-      Typically pass ${{ job.status }} or ${{ steps.<id>.outcome }}.
+      Typically pass `job.status` or `steps.<id>.outcome`.
       Any value other than 'success' is reported as a failure (:x:).
     required: true
   workspace-name:
