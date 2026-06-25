@@ -53,8 +53,7 @@ runs:
         fi
 
         EXISTING=$(gh api --paginate --slurp \
-          "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
-          2>/dev/null | \
+          "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" | \
           jq -r --arg m "$MARKER_PREFIX" \
             '[ .[][] | select(.user.type == "Bot" and (.body | startswith($m))) ] | first | {id: .id, body: .body} // empty')
 

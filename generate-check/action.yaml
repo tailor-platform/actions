@@ -53,7 +53,7 @@ runs:
         # Unstage paths listed in the ignore input so they don't trigger a failure.
         if [ -n "$IGNORE_PATHS" ]; then
           while IFS= read -r p; do
-            p=$(echo "$p" | xargs)
+            p=$(printf '%s' "$p" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
             [ -n "$p" ] && git restore --staged -- "$p" 2>/dev/null || true
           done <<< "$IGNORE_PATHS"
         fi
