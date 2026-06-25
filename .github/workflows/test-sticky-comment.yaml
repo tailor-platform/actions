@@ -1,0 +1,90 @@
+name: Test Sticky Comment Action
+
+on:
+  pull_request:
+    paths:
+      - "_internal/sticky-comment/**"
+      - ".github/workflows/test-sticky-comment.yaml"
+  workflow_dispatch:
+    inputs:
+      pr-number:
+        description: PR number to post test comments on
+        required: true
+        type: number
+
+permissions: {}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: "Test: post new sticky comment"
+        id: post
+        uses: ./_internal/sticky-comment
+        with:
+          marker-prefix: "<!-- test-sticky-comment -->"
+          body: |
+            <!-- test-sticky-comment -->
+            Test run ${{ github.run_id }} — initial body
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pr-number: ${{ github.event.pull_request.number || inputs.pr-number }}
+
+      - name: "Verify: comment-id is set after first post"
+        env:
+          COMMENT_ID: ${{ steps.post.outputs.comment-id }}
+        run: |
+          if [ -z "$COMMENT_ID" ]; then
+            echo "::error::comment-id should be set after posting a new comment"
+            exit 1
+          fi
+          echo "Created comment id: $COMMENT_ID"
+
+      - name: "Test: update existing sticky comment"
+        id: update
+        uses: ./_internal/sticky-comment
+        with:
+          marker-prefix: "<!-- test-sticky-comment -->"
+          body: |
+            <!-- test-sticky-comment -->
+            Test run ${{ github.run_id }} — updated body
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pr-number: ${{ github.event.pull_request.number || inputs.pr-number }}
+
+      - name: "Verify: same comment-id on update"
+        env:
+          POST_ID: ${{ steps.post.outputs.comment-id }}
+          UPDATE_ID: ${{ steps.update.outputs.comment-id }}
+        run: |
+          if [ "$POST_ID" != "$UPDATE_ID" ]; then
+            echo "::error::Expected same comment-id when updating an existing sticky comment"
+            echo "  post:   $POST_ID"
+            echo "  update: $UPDATE_ID"
+            exit 1
+          fi
+
+      - name: "Verify: existing-body is populated on update"
+        env:
+          EXISTING_BODY: ${{ steps.update.outputs.existing-body }}
+        run: |
+          if [ -z "$EXISTING_BODY" ]; then
+            echo "::error::existing-body should contain the body from the first post"
+            exit 1
+          fi
+          echo "existing-body is set (length: ${#EXISTING_BODY})"
+
+      - name: Cleanup — delete test comment
+        if: always() && steps.post.outputs.comment-id != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMENT_ID: ${{ steps.post.outputs.comment-id }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/issues/comments/$COMMENT_ID" -X DELETE
+          echo "Deleted comment $COMMENT_ID"

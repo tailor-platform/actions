@@ -1,0 +1,83 @@
+name: Post or update sticky PR comment
+description: >-
+  Find an existing PR comment whose body starts with marker-prefix and update it,
+  or create a new comment. The body must include the marker as its first line.
+  Internal action — use via preview-comment, preview-cleanup, or plan actions.
+
+inputs:
+  marker-prefix:
+    description: >-
+      String to identify the existing comment (body.startsWith check).
+      Use the full marker for exact matches, or a prefix for markers that embed
+      a variable (e.g. "<!-- tailor-preview: workspace-name ").
+    required: true
+  body:
+    description: Full comment body to post or update (must start with the marker line)
+    required: true
+  github-token:
+    description: GitHub token with pull-requests:write permission
+    required: true
+  pr-number:
+    description: Pull request number. Defaults to the current PR number.
+    required: false
+    default: ""
+
+outputs:
+  comment-id:
+    description: ID of the created or updated comment
+    value: ${{ steps.post.outputs.comment-id }}
+  existing-body:
+    description: Body of the existing comment before the update (empty when a new comment was created)
+    value: ${{ steps.post.outputs.existing-body }}
+
+runs:
+  using: composite
+  steps:
+    - name: Post or update comment
+      id: post
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        MARKER_PREFIX: ${{ inputs.marker-prefix }}
+        BODY: ${{ inputs.body }}
+        PR_NUMBER: ${{ inputs.pr-number || github.event.pull_request.number }}
+      run: |
+        if [ -z "$PR_NUMBER" ]; then
+          echo "::notice::sticky-comment: not a pull_request event — skipping"
+          exit 0
+        fi
+
+        if [ "${BODY:0:${#MARKER_PREFIX}}" != "$MARKER_PREFIX" ]; then
+          echo "::error::sticky-comment: body must start with marker-prefix"
+          exit 1
+        fi
+
+        EXISTING=$(gh api --paginate --slurp \
+          "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" | \
+          jq -r --arg m "$MARKER_PREFIX" \
+            '[ .[][] | select(.user.type == "Bot" and (.body | startswith($m))) ] | first | {id: .id, body: .body} // empty')
+
+        EXISTING_ID=$(echo "$EXISTING" | jq -r '.id // empty')
+        EXISTING_BODY=$(echo "$EXISTING" | jq -r '.body // empty')
+
+        EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+        {
+          echo "existing-body<<$EOF"
+          echo "$EXISTING_BODY"
+          echo "$EOF"
+        } >> "$GITHUB_OUTPUT"
+
+        PAYLOAD=$(jq -n --arg body "$BODY" '{body: $body}')
+        if [ -n "$EXISTING_ID" ]; then
+          echo "$PAYLOAD" | gh api "repos/$GITHUB_REPOSITORY/issues/comments/$EXISTING_ID" \
+            -X PATCH --input - > /dev/null
+          echo "comment-id=$EXISTING_ID" >> "$GITHUB_OUTPUT"
+        else
+          COMMENT_ID=$(echo "$PAYLOAD" | gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+            -X POST --input - | jq -r '.id // empty')
+          if [ -z "$COMMENT_ID" ]; then
+            echo "::error::sticky-comment: failed to create comment (no id returned)"
+            exit 1
+          fi
+          echo "comment-id=$COMMENT_ID" >> "$GITHUB_OUTPUT"
+        fi

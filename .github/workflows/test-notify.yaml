@@ -1,0 +1,73 @@
+name: Test Notify Action
+
+on:
+  pull_request:
+    paths:
+      - "notify/**"
+      - ".github/workflows/test-notify.yaml"
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  test-skip-no-token:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: "Test: skips gracefully when slack-token is absent"
+        uses: ./notify
+        with:
+          provider: slack
+          status: success
+          workspace-name: test-workspace
+          # No slack-token or slack-channel-id → must exit 0
+
+  test-skip-no-channel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: "Test: skips gracefully when slack-channel-id is absent"
+        uses: ./notify
+        with:
+          provider: slack
+          status: failure
+          slack-token: xoxb-fake-token-for-skip-test
+          # No slack-channel-id → must exit 0
+
+  test-invalid-provider:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: "Test: fails on unsupported provider"
+        id: notify
+        continue-on-error: true
+        uses: ./notify
+        with:
+          provider: unsupported-provider
+          status: success
+      - name: "Verify: outcome must be failure"
+        env:
+          OUTCOME: ${{ steps.notify.outcome }}
+        run: |
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::Expected notify to fail with unsupported provider"
+            exit 1
+          fi

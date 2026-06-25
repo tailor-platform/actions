@@ -1,0 +1,59 @@
+name: Set up Tailor SDK
+description: >-
+  Mask credentials, resolve the tailor-sdk runner (writes TAILOR_SDK_RUN to env),
+  and log in to Tailor Platform. Internal action — use via deploy, plan, or preview actions.
+
+inputs:
+  platform-client-id:
+    description: OAuth2 client ID for Tailor Platform machine user
+    required: true
+  platform-client-secret:
+    description: OAuth2 client secret for Tailor Platform machine user
+    required: true
+  package-manager:
+    description: Package manager used to run tailor-sdk (pnpm, npm, yarn, or bun). Defaults to npx when empty.
+    required: false
+    default: ""
+  working-directory:
+    description: Working directory for the project (for monorepo setups)
+    required: false
+    default: "."
+
+runs:
+  using: composite
+  steps:
+    - name: Mask credentials
+      shell: bash
+      env:
+        CLIENT_ID: ${{ inputs.platform-client-id }}
+        CLIENT_SECRET: ${{ inputs.platform-client-secret }}
+      run: |
+        echo "::add-mask::$CLIENT_ID"
+        echo "::add-mask::$CLIENT_SECRET"
+
+    - name: Resolve tailor-sdk runner
+      shell: bash
+      env:
+        PACKAGE_MANAGER: ${{ inputs.package-manager }}
+      # RUN is one of a fixed set of literals chosen by the case below (never
+      # user input), so writing it to GITHUB_ENV cannot inject code.
+      run: | # zizmor: ignore[github-env]
+        case "$PACKAGE_MANAGER" in
+          pnpm) RUN="pnpm exec" ;;
+          yarn) RUN="yarn" ;;
+          bun)  RUN="bunx" ;;
+          npm|"") RUN="npx" ;;
+          *)
+            echo "::error::Unsupported package-manager '$PACKAGE_MANAGER' (expected pnpm, npm, yarn, or bun)"
+            exit 1
+            ;;
+        esac
+        echo "TAILOR_SDK_RUN=$RUN" >> "$GITHUB_ENV"
+
+    - name: Login to Tailor Platform
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        TAILOR_PLATFORM_MACHINE_USER_CLIENT_ID: ${{ inputs.platform-client-id }}
+        TAILOR_PLATFORM_MACHINE_USER_CLIENT_SECRET: ${{ inputs.platform-client-secret }}
+      run: $TAILOR_SDK_RUN tailor-sdk login --machineuser

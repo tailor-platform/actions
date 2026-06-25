@@ -12,6 +12,12 @@ inputs:
     description: Working directory for the project (for monorepo setups)
     required: false
     default: "."
+  ignore:
+    description: >-
+      Newline-separated list of file paths to exclude from the check.
+      Useful for temporary files created by earlier steps (e.g. .npmrc).
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -38,10 +44,27 @@ runs:
 
     - name: Check generated files are committed
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        IGNORE_PATHS: ${{ inputs.ignore }}
       run: |
-        CHANGES=$(git status --porcelain)
-        if [ -n "$CHANGES" ]; then
-          echo "$CHANGES"
+        if ! git diff --cached --quiet; then
+          echo "::error::generate-check requires a clean git index. Unstage pending changes before calling this action."
+          exit 1
+        fi
+        trap 'git reset > /dev/null 2>&1 || true' EXIT
+        git add -A
+
+        # Unstage paths listed in the ignore input so they don't trigger a failure.
+        if [ -n "$IGNORE_PATHS" ]; then
+          while IFS= read -r p; do
+            p=$(printf '%s' "$p" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            [ -n "$p" ] && git restore --staged -- "$p" 2>/dev/null || true
+          done <<< "$IGNORE_PATHS"
+        fi
+
+        if ! git diff --cached --quiet; then
+          git --no-pager diff --cached --stat
           echo "::error::Generated files are out of date. Run 'tailor-sdk generate' locally and commit the result."
           exit 1
         fi

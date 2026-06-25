@@ -1,0 +1,128 @@
+name: Deploy Tailor Platform preview workspace
+description: >-
+  Find or create a per-PR preview workspace and deploy to it.
+  On the first push to a PR, the workspace is created. Subsequent pushes
+  reuse the existing workspace (identified from the PR comment).
+  Requires Node.js and dependencies to be installed by the caller.
+
+inputs:
+  workspace-name-prefix:
+    description: >-
+      Prefix for the preview workspace name. The full name will be
+      "{prefix}-pr-{PR number}" (e.g. "my-app-pr-42"). Maximum 57 characters
+      to stay within the 63-character workspace name limit.
+    required: true
+  region:
+    description: >-
+      Workspace region for creation (e.g. us-west, asia-northeast).
+      Only used when creating a new workspace; ignored on subsequent pushes.
+    required: true
+  organization-id:
+    description: >-
+      Organization ID to associate the workspace with on creation.
+      Defaults to the TAILOR_PLATFORM_ORGANIZATION_ID environment variable.
+    required: false
+    default: ""
+  folder-id:
+    description: Folder ID to associate the workspace with on creation
+    required: false
+    default: ""
+  working-directory:
+    description: Working directory for the project (for monorepo setups)
+    required: false
+    default: "."
+  package-manager:
+    description: >-
+      Package manager used to run tailor-sdk (pnpm, npm, yarn, or bun).
+      Defaults to npx when empty.
+    required: false
+    default: ""
+  platform-client-id:
+    description: OAuth2 client ID for Tailor Platform machine user
+    required: true
+  platform-client-secret:
+    description: OAuth2 client secret for Tailor Platform machine user
+    required: true
+  github-token:
+    description: >-
+      GitHub token for reading the PR comment to find an existing workspace ID.
+      Requires pull-requests:write (used by preview-comment to post the result).
+    required: true
+
+outputs:
+  workspace-id:
+    description: Workspace ID of the preview deployment
+    value: ${{ steps.workspace.outputs.workspace-id }}
+  workspace-name:
+    description: Full workspace name (e.g. "my-app-pr-42")
+    value: ${{ steps.workspace.outputs.workspace-name }}
+  app-url:
+    description: Application URL (GraphQL endpoint) of the preview workspace
+    value: ${{ steps.deploy.outputs.app-url }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Tailor SDK
+      uses: ./_internal/sdk-setup
+      with:
+        platform-client-id: ${{ inputs.platform-client-id }}
+        platform-client-secret: ${{ inputs.platform-client-secret }}
+        package-manager: ${{ inputs.package-manager }}
+        working-directory: ${{ inputs.working-directory }}
+
+    - name: Resolve or create preview workspace
+      id: workspace
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        NAME_PREFIX: ${{ inputs.workspace-name-prefix }}
+        REGION: ${{ inputs.region }}
+        ORG_ID: ${{ inputs.organization-id }}
+        FOLDER_ID: ${{ inputs.folder-id }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: | # zizmor: ignore[github-env]
+        if [ -z "$PR_NUMBER" ]; then
+          echo "::error::preview-deploy must run on a pull_request event"
+          exit 1
+        fi
+
+        WORKSPACE_NAME="${NAME_PREFIX}-pr-${PR_NUMBER}"
+        if [ ${#WORKSPACE_NAME} -gt 63 ]; then
+          echo "::error::workspace name '${WORKSPACE_NAME}' exceeds 63-character limit (${#WORKSPACE_NAME} chars). Shorten 'workspace-name-prefix'."
+          exit 1
+        fi
+
+        # Look for an existing workspace-id in the PR comment
+        MARKER_PREFIX="<!-- tailor-preview: $WORKSPACE_NAME id="
+        EXISTING_ID=$(gh api --paginate --slurp \
+          "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" | \
+          jq -r --arg m "$MARKER_PREFIX" \
+            '[ .[][] | select(.user.type == "Bot" and (.body | startswith($m))) ] | first | .body // empty' | \
+          jq -rR '(try capture("<!-- tailor-preview: [^ ]+ id=(?P<id>[a-f0-9-]+)") | .id) // empty')
+
+        if [ -n "$EXISTING_ID" ]; then
+          echo "Found existing preview workspace: $EXISTING_ID"
+          WORKSPACE_ID="$EXISTING_ID"
+        else
+          echo "Creating preview workspace: $WORKSPACE_NAME (region: $REGION)"
+          CREATE_ARGS=(workspace create --name "$WORKSPACE_NAME" --region "$REGION" --json)
+          [ -n "$ORG_ID" ] && CREATE_ARGS+=(--organization-id "$ORG_ID")
+          [ -n "$FOLDER_ID" ] && CREATE_ARGS+=(--folder-id "$FOLDER_ID")
+          WORKSPACE_ID=$($TAILOR_SDK_RUN tailor-sdk "${CREATE_ARGS[@]}" | jq -r '.id // empty')
+          if [ -z "$WORKSPACE_ID" ]; then
+            echo "::error::Failed to create preview workspace '$WORKSPACE_NAME'"
+            exit 1
+          fi
+        fi
+
+        echo "workspace-id=$WORKSPACE_ID" >> "$GITHUB_OUTPUT"
+        echo "workspace-name=$WORKSPACE_NAME" >> "$GITHUB_OUTPUT"
+        echo "TAILOR_PLATFORM_WORKSPACE_ID=$WORKSPACE_ID" >> "$GITHUB_ENV"
+
+    - name: Deploy
+      id: deploy
+      uses: ./_internal/deploy
+      with:
+        workspace-id: ${{ steps.workspace.outputs.workspace-id }}
+        working-directory: ${{ inputs.working-directory }}

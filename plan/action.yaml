@@ -51,41 +51,13 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Mask credentials
-      shell: bash
-      run: |
-        echo "::add-mask::$CLIENT_ID"
-        echo "::add-mask::$CLIENT_SECRET"
-      env:
-        CLIENT_ID: ${{ inputs.platform-client-id }}
-        CLIENT_SECRET: ${{ inputs.platform-client-secret }}
-
-    - name: Resolve tailor-sdk runner
-      shell: bash
-      env:
-        PACKAGE_MANAGER: ${{ inputs.package-manager }}
-      # RUN is one of a fixed set of literals chosen by the case below (never
-      # user input), so writing it to GITHUB_ENV cannot inject code.
-      run: | # zizmor: ignore[github-env]
-        case "$PACKAGE_MANAGER" in
-          pnpm) RUN="pnpm exec" ;;
-          yarn) RUN="yarn" ;;
-          bun)  RUN="bunx" ;;
-          npm|"") RUN="npx" ;;
-          *)
-            echo "::error::Unsupported package-manager '$PACKAGE_MANAGER' (expected pnpm, npm, yarn, or bun)"
-            exit 1
-            ;;
-        esac
-        echo "TAILOR_SDK_RUN=$RUN" >> "$GITHUB_ENV"
-
-    - name: Login to Tailor Platform
-      shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      env:
-        TAILOR_PLATFORM_MACHINE_USER_CLIENT_ID: ${{ inputs.platform-client-id }}
-        TAILOR_PLATFORM_MACHINE_USER_CLIENT_SECRET: ${{ inputs.platform-client-secret }}
-      run: $TAILOR_SDK_RUN tailor-sdk login --machineuser
+    - name: Set up Tailor SDK
+      uses: ./_internal/sdk-setup
+      with:
+        platform-client-id: ${{ inputs.platform-client-id }}
+        platform-client-secret: ${{ inputs.platform-client-secret }}
+        package-manager: ${{ inputs.package-manager }}
+        working-directory: ${{ inputs.working-directory }}
 
     - name: Merge base branch
       if: github.event_name == 'pull_request'
@@ -135,7 +107,7 @@ runs:
 
         if [ -z "$WORKSPACE_ID" ]; then
           {
-            echo "## ℹ️ Tailor Platform Plan ($KEY)"
+            echo "### ℹ️ Tailor Platform Plan ($KEY)"
             echo ""
             echo "Workspace is not provisioned yet — set TAILOR_PLATFORM_WORKSPACE_ID after provisioning the workspace."
           } >> "$GITHUB_STEP_SUMMARY"
@@ -149,7 +121,7 @@ runs:
         fi
 
         {
-          echo "## $STATUS Tailor Platform Plan ($KEY)"
+          echo "### $STATUS Tailor Platform Plan ($KEY)"
           echo ""
           echo "<details>"
           echo "<summary>Plan output (exit code: $DRY_RUN_EXIT_CODE)</summary>"
@@ -161,83 +133,52 @@ runs:
           echo "</details>"
         } >> "$GITHUB_STEP_SUMMARY"
 
-    - name: Comment on PR
+    - name: Build plan comment body
+      id: comment-body
       if: github.event_name == 'pull_request' && inputs.github-token != ''
-      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      shell: bash
       env:
         WORKSPACE_ID: ${{ inputs.workspace-id }}
         LABEL: ${{ inputs.label }}
         DRY_RUN_OUTPUT: ${{ steps.dry-run.outputs.output }}
         DRY_RUN_EXIT_CODE: ${{ steps.dry-run.outputs.exit-code }}
+      run: |
+        if [ -n "$LABEL" ]; then KEY="$LABEL"
+        elif [ -n "$WORKSPACE_ID" ]; then KEY="$WORKSPACE_ID"
+        else KEY="workspace"
+        fi
+
+        MARKER="<!-- tailor-plan: $KEY -->"
+        echo "marker=$MARKER" >> "$GITHUB_OUTPUT"
+
+        if [ -z "$WORKSPACE_ID" ]; then
+          CONTENT=$(printf '### ℹ️ Tailor Platform Plan (%s)\n\nWorkspace is not provisioned yet — set TAILOR_PLATFORM_WORKSPACE_ID after provisioning the workspace.' "$KEY")
+        else
+          if [ "$DRY_RUN_EXIT_CODE" = "0" ]; then STATUS="✅"; else STATUS="❌"; fi
+          OUTPUT="$DRY_RUN_OUTPUT"
+          MAX_OUTPUT=60000
+          if [ "${#OUTPUT}" -gt "$MAX_OUTPUT" ]; then
+            NOTE=$(printf '[output truncated to the last %s characters — see the job'\''s step summary for the full plan]' "$MAX_OUTPUT")
+            OUTPUT=$(printf '%s\n\n%s' "$NOTE" "${OUTPUT: -$MAX_OUTPUT}")
+          fi
+          CONTENT=$(printf '### %s Tailor Platform Plan (%s)\n\n<details>\n<summary>Plan output (exit code: %s)</summary>\n\n```\n%s\n```\n\n</details>' \
+            "$STATUS" "$KEY" "$DRY_RUN_EXIT_CODE" "$OUTPUT")
+        fi
+
+        EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+        {
+          echo "body<<$EOF"
+          printf '%s\n%s\n' "$MARKER" "$CONTENT"
+          echo "$EOF"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Post sticky plan comment
+      if: github.event_name == 'pull_request' && inputs.github-token != ''
+      uses: ./_internal/sticky-comment
       with:
+        marker-prefix: ${{ steps.comment-body.outputs.marker }}
+        body: ${{ steps.comment-body.outputs.body }}
         github-token: ${{ inputs.github-token }}
-        script: |
-          const workspaceId = process.env.WORKSPACE_ID;
-          const label = process.env.LABEL;
-
-          // Marker key: label > workspace-id > "workspace"
-          const key = label || workspaceId || 'workspace';
-          const marker = `<!-- tailor-plan: ${key} -->`;
-
-          let body;
-          if (!workspaceId) {
-            // Workspace not provisioned yet; report it instead of running a dry-run.
-            body = `${marker}
-          ## ℹ️ Tailor Platform Plan (${key})
-
-          Workspace is not provisioned yet — set TAILOR_PLATFORM_WORKSPACE_ID after provisioning the workspace.
-          `;
-          } else {
-            const exitCode = process.env.DRY_RUN_EXIT_CODE;
-            let output = process.env.DRY_RUN_OUTPUT;
-
-            // GitHub rejects issue comment bodies over 65536 chars. Truncate the
-            // (potentially large) plan output, keeping the tail where the summary
-            // and errors usually are, and point readers to the full step summary.
-            const MAX_OUTPUT = 60000;
-            if (output.length > MAX_OUTPUT) {
-              const note = `[output truncated to the last ${MAX_OUTPUT} characters — see the job's step summary for the full plan]\n\n`;
-              output = note + output.slice(output.length - MAX_OUTPUT);
-            }
-
-            const status = exitCode === '0' ? '✅' : '❌';
-            body = `${marker}
-          ## ${status} Tailor Platform Plan (${key})
-
-          <details>
-          <summary>Plan output (exit code: ${exitCode})</summary>
-
-          \`\`\`
-          ${output}
-          \`\`\`
-
-          </details>
-          `;
-          }
-
-          const { data: comments } = await github.rest.issues.listComments({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            issue_number: context.issue.number,
-          });
-
-          const existingComment = comments.find(comment => comment.body.includes(marker));
-
-          if (existingComment) {
-            await github.rest.issues.updateComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              comment_id: existingComment.id,
-              body: body,
-            });
-          } else {
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: body,
-            });
-          }
 
     - name: Fail on plan error
       if: inputs.workspace-id != ''

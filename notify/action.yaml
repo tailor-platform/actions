@@ -1,0 +1,88 @@
+name: Notify Tailor Platform deployment
+description: >-
+  Send a deployment notification after a Tailor Platform deploy.
+  Currently supports Slack (via Bot token + channel ID).
+
+inputs:
+  provider:
+    description: Notification provider. Currently only 'slack' is supported.
+    required: true
+  status:
+    description: >-
+      Deployment status to report. Accepts 'success', 'failure', or 'cancelled'.
+      Typically pass `job.status` or `steps.<id>.outcome`.
+      Any value other than 'success' is reported as a failure (:x:).
+    required: true
+  workspace-name:
+    description: Tailor Platform workspace name shown in the notification message
+    required: false
+  slack-channel-id:
+    description: Slack channel ID to post to (required when provider is 'slack')
+    required: false
+  slack-token:
+    description: >-
+      Slack Bot token (xoxb-...) with chat:write permission (required when provider is 'slack').
+    required: false
+
+runs:
+  using: composite
+  steps:
+    - name: Validate provider
+      shell: bash
+      env:
+        PROVIDER: ${{ inputs.provider }}
+      run: |
+        if [ "$PROVIDER" != "slack" ]; then
+          echo "::error::Unsupported provider '$PROVIDER'. Currently only 'slack' is supported."
+          exit 1
+        fi
+
+    - name: Mask Slack token
+      if: inputs.provider == 'slack'
+      shell: bash
+      env:
+        SLACK_TOKEN: ${{ inputs.slack-token }}
+      run: |
+        if [ -n "$SLACK_TOKEN" ]; then
+          echo "::add-mask::$SLACK_TOKEN"
+        fi
+
+    - name: Notify Slack
+      if: inputs.provider == 'slack'
+      shell: bash
+      env:
+        SLACK_TOKEN: ${{ inputs.slack-token }}
+        SLACK_CHANNEL_ID: ${{ inputs.slack-channel-id }}
+        STATUS: ${{ inputs.status }}
+        WORKSPACE_NAME: ${{ inputs.workspace-name }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        if [ -z "$SLACK_TOKEN" ] || [ -z "$SLACK_CHANNEL_ID" ]; then
+          echo "::notice::notify: slack-token or slack-channel-id is not set — skipping Slack notification"
+          exit 0
+        fi
+
+        if [ "$STATUS" = "success" ]; then
+          EMOJI=":white_check_mark:"
+        else
+          EMOJI=":x:"
+        fi
+
+        LABEL="${WORKSPACE_NAME:-Tailor Platform}"
+        TEXT="$EMOJI *$LABEL* deployment $STATUS — <$RUN_URL|View run>"
+
+        # Use jq to safely JSON-encode the payload (handles special characters in inputs).
+        PAYLOAD=$(jq -nc --arg channel "$SLACK_CHANNEL_ID" --arg text "$TEXT" \
+          '{channel: $channel, text: $text}')
+
+        RESPONSE=$(curl -sSf \
+          -H "Authorization: Bearer $SLACK_TOKEN" \
+          -H "Content-Type: application/json; charset=utf-8" \
+          --data-binary "$PAYLOAD" \
+          https://slack.com/api/chat.postMessage)
+
+        if ! echo "$RESPONSE" | jq -e '.ok == true' > /dev/null 2>&1; then
+          ERROR=$(echo "$RESPONSE" | jq -r '.error // "unknown error"' 2>/dev/null || echo "unknown error")
+          echo "::error::Slack notification failed: $ERROR"
+          exit 1
+        fi

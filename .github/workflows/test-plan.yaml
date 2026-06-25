@@ -67,6 +67,7 @@ jobs:
         uses: ./plan
         with:
           workspace-id: ${{ steps.setup.outputs.workspace-id }}
+          label: test-plan
           working-directory: tests/deploy
           platform-client-id: ${{ secrets.PLATFORM_MACHINE_USER_CLIENT_ID }}
           platform-client-secret: ${{ secrets.PLATFORM_MACHINE_USER_CLIENT_SECRET }}

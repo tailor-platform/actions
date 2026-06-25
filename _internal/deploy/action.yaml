@@ -1,0 +1,50 @@
+name: Generate, apply, and resolve app URL
+description: >-
+  Run tailor-sdk generate, apply, and show for a given workspace.
+  Internal action shared by deploy and preview-deploy.
+  Requires TAILOR_SDK_RUN to be set (by sdk-setup) before this action runs.
+
+inputs:
+  workspace-id:
+    description: Tailor Platform workspace ID to deploy to
+    required: true
+  working-directory:
+    description: Working directory for the project (for monorepo setups)
+    required: false
+    default: "."
+
+outputs:
+  app-url:
+    description: Application URL (GraphQL endpoint) of the deployed workspace
+    value: ${{ steps.show.outputs.app-url }}
+
+runs:
+  using: composite
+  steps:
+    - name: Generate types
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        TAILOR_PLATFORM_WORKSPACE_ID: ${{ inputs.workspace-id }}
+      run: $TAILOR_SDK_RUN tailor-sdk generate
+
+    - name: Deploy
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        TAILOR_PLATFORM_WORKSPACE_ID: ${{ inputs.workspace-id }}
+      run: $TAILOR_SDK_RUN tailor-sdk apply --yes
+
+    - name: Resolve app URL
+      id: show
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        TAILOR_PLATFORM_WORKSPACE_ID: ${{ inputs.workspace-id }}
+      run: |
+        if APP_JSON=$($TAILOR_SDK_RUN tailor-sdk show --json 2>/dev/null); then
+          APP_URL=$(echo "$APP_JSON" | jq -r '.url // ""')
+        else
+          APP_URL=""
+        fi
+        echo "app-url=$APP_URL" >> "$GITHUB_OUTPUT"

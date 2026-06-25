@@ -50,6 +50,7 @@ jobs:
 | Name | Description |
 |------|-------------|
 | `workspace-id` | Workspace ID passed in |
+| `app-url` | Application URL (GraphQL endpoint) of the deployed workspace. Available to subsequent steps, e.g. for passing to a static website build slot. |
 
 #### Secrets and variables setup
 
@@ -137,6 +138,240 @@ When `github-token` is provided and the event is a pull request, the action post
 - ℹ️ **Not provisioned**: Workspace ID is empty — dry-run skipped
 
 The comment is keyed per workspace via a `<!-- tailor-plan: KEY -->` marker (`KEY` is the `label` input if provided, otherwise `workspace-id`, otherwise `"workspace"`), so multiple environments can post separate comments on the same PR. The comment is automatically updated on subsequent runs.
+
+---
+
+### [`setup`](setup/action.yaml)
+
+Set up the Tailor Platform toolchain (Node.js, package manager, install dependencies). Typically the first step in every job.
+
+---
+
+### [`generate-check`](generate-check/action.yaml)
+
+Run `tailor-sdk generate` and fail if it produces uncommitted changes. Catches generated files (seed data, enum constants, etc.) that were regenerated but not committed.
+
+#### Inputs
+
+| Name | Required | Default | Description |
+|------|----------|---------|-------------|
+| `package-manager` | Yes | | Package manager (`pnpm`, `npm`, `yarn`, or `bun`) |
+| `working-directory` | No | `.` | Working directory (for monorepo setups) |
+| `ignore` | No | | Newline-separated list of file paths to exclude from the check (e.g. `.npmrc` created by earlier steps) |
+
+---
+
+### [`tag-guard`](tag-guard/action.yaml)
+
+Guard that a pushed tag is reachable from a target branch before allowing a deploy to proceed. Skips gracefully when the tag is outside the branch (not an error).
+
+---
+
+### [`drift-check`](drift-check/action.yaml)
+
+Detect drift between the generated GitHub Actions workflows and the current config/repo state. Emits `::warning::` annotations and writes a step summary, but **never fails the job** — use as a non-blocking canary in plan jobs.
+
+#### Inputs
+
+| Name | Required | Default | Description |
+|------|----------|---------|-------------|
+| `package-manager` | Yes | | Package manager (`pnpm`, `npm`, `yarn`, or `bun`) |
+| `working-directory` | No | `.` | Working directory (for monorepo setups) |
+| `ignore` | No | | Comma-separated drift rule keys to suppress (e.g. `"default-branch,template-version"`). Supported keys: `missing-file`, `hand-edit`, `template-version`, `config-dir`, `default-branch` |
+
+---
+
+### [`seed-validate`](seed-validate/action.yaml)
+
+Validate seed data against the generated schema, detecting JSONL records that do not match their target type. Requires `tailor-sdk generate` to have run first.
+
+#### Inputs
+
+| Name | Required | Default | Description |
+|------|----------|---------|-------------|
+| `working-directory` | No | `.` | Working directory (for monorepo setups) |
+
+---
+
+### [`staticwebsite-deploy`](staticwebsite-deploy/action.yaml)
+
+Deploy a built static website to Tailor Platform and output its public URL. Run this after the `deploy` action in the same job (authentication is reused).
+
+#### Inputs
+
+| Name | Required | Default | Description |
+|------|----------|---------|-------------|
+| `workspace-id` | Yes | | Workspace ID (from a GitHub Environment variable, e.g. `vars.TAILOR_PLATFORM_WORKSPACE_ID`) |
+| `name` | Yes | | Static website name as defined in `tailor.config.ts` |
+| `dist-dir` | Yes | | Path to the built static website files |
+| `working-directory` | No | `.` | Working directory (for monorepo setups) |
+| `package-manager` | No | | Package manager (`pnpm`, `npm`, `yarn`, or `bun`). Defaults to `npx`. |
+
+#### Outputs
+
+| Name | Description |
+|------|-------------|
+| `site-url` | Public URL of the deployed static website |
+
+---
+
+### [`notify`](notify/action.yaml)
+
+Send a deployment notification. Currently supports Slack via Bot token and channel ID.
+
+#### Usage
+
+```yaml
+    steps:
+      # ... deploy steps ...
+      - if: always()
+        uses: tailor-platform/actions/notify@v1
+        with:
+          provider: slack
+          status: ${{ job.status }}
+          workspace-name: my-app-prod
+          slack-channel-id: ${{ vars.SLACK_DEPLOY_CHANNEL_ID }}
+          slack-token: ${{ secrets.SLACK_BOT_TOKEN }}
+```
+
+#### Inputs
+
+| Name | Required | Default | Description |
+|------|----------|---------|-------------|
+| `provider` | Yes | | Notification provider. Currently only `slack` is supported. |
+| `status` | Yes | | Deployment status. Accepts `success`, `failure`, or `cancelled` (any non-`success` value is reported as a failure). Pass `${{ job.status }}`. |
+| `workspace-name` | No | | Workspace name shown in the message |
+| `slack-channel-id` | No | | Slack channel ID. When empty, the notification is silently skipped. |
+| `slack-token` | No | | Slack Bot token with `chat:write` permission. When empty, the notification is silently skipped. |
+
+---
+
+### [`preview-deploy`](preview-deploy/action.yaml)
+
+Deploy a per-PR preview workspace. On the first push to a PR the workspace is created; subsequent pushes reuse the existing workspace (identified by the workspace ID recorded in the PR comment by `preview-comment`). Run on `pull_request` events (not `closed`).
+
+**Prerequisites:** Same as `deploy` — checkout, Node.js, package manager, and dependency installation.
+
+#### Usage
+
+```yaml
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    if: github.event.action != 'closed' && !github.event.pull_request.draft
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - id: preview
+        uses: tailor-platform/actions/preview-deploy@v1
+        with:
+          workspace-name-prefix: my-app
+          region: us-west
+          organization-id: ${{ vars.TAILOR_PLATFORM_ORGANIZATION_ID }}
+          platform-client-id: ${{ secrets.TAILOR_PLATFORM_MACHINE_USER_CLIENT_ID }}
+          platform-client-secret: ${{ secrets.TAILOR_PLATFORM_MACHINE_USER_CLIENT_SECRET }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: tailor-platform/actions/preview-comment@v1
+        with:
+          workspace-id: ${{ steps.preview.outputs.workspace-id }}
+          workspace-name: ${{ steps.preview.outputs.workspace-name }}
+          status: ${{ job.status }}
+          app-url: ${{ steps.preview.outputs.app-url }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          mention: "true"
+```
+
+#### Inputs
+
+| Name | Required | Default | Description |
+|------|----------|---------|-------------|
+| `workspace-name-prefix` | Yes | | Prefix for the workspace name. The full name is `{prefix}-pr-{PR number}` (max 57 chars). |
+| `region` | Yes | | Workspace region for creation (e.g. `us-west`, `asia-northeast`). Only used on first run. |
+| `organization-id` | No | | Organization ID for workspace creation. Defaults to `TAILOR_PLATFORM_ORGANIZATION_ID` env var. |
+| `folder-id` | No | | Folder ID for workspace creation |
+| `working-directory` | No | `.` | Working directory (for monorepo setups) |
+| `package-manager` | No | | Package manager (`pnpm`, `npm`, `yarn`, or `bun`). Defaults to `npx`. |
+| `platform-client-id` | Yes | | OAuth2 client ID for machine user |
+| `platform-client-secret` | Yes | | OAuth2 client secret for machine user |
+| `github-token` | Yes | | GitHub token for reading PR comments to find an existing workspace ID |
+
+#### Outputs
+
+| Name | Description |
+|------|-------------|
+| `workspace-id` | Workspace ID of the preview deployment |
+| `workspace-name` | Full workspace name (e.g. `my-app-pr-42`) |
+| `app-url` | Application URL (GraphQL endpoint) of the preview workspace |
+
+---
+
+### [`preview-comment`](preview-comment/action.yaml)
+
+Post or update a PR comment with preview deployment status, workspace ID, app URL, and optional @mention. Typically called after `preview-deploy`. The comment is keyed by workspace name so multiple preview environments can coexist on one PR.
+
+#### Inputs
+
+| Name | Required | Default | Description |
+|------|----------|---------|-------------|
+| `workspace-id` | Yes | | Workspace ID of the preview deployment |
+| `workspace-name` | Yes | | Workspace name (from `preview-deploy` output) |
+| `status` | Yes | | Deployment status: `success`, `failure`, or `deleted` |
+| `app-url` | No | | Application URL to show in the comment |
+| `github-token` | Yes | | GitHub token with `pull-requests: write` |
+| `mention` | No | | Set to `"true"` to @mention the commit author (falls back to PR author if commit is by a bot) |
+
+---
+
+### [`preview-cleanup`](preview-cleanup/action.yaml)
+
+Delete the preview workspace when a PR is closed. Reads the workspace ID from the PR comment posted by `preview-comment` and deletes the workspace. Run on `pull_request` `closed` events.
+
+#### Usage
+
+```yaml
+jobs:
+  preview-cleanup:
+    runs-on: ubuntu-latest
+    if: github.event.action == 'closed'
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: tailor-platform/actions/preview-cleanup@v1
+        with:
+          workspace-name-prefix: my-app
+          platform-client-id: ${{ secrets.TAILOR_PLATFORM_MACHINE_USER_CLIENT_ID }}
+          platform-client-secret: ${{ secrets.TAILOR_PLATFORM_MACHINE_USER_CLIENT_SECRET }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+#### Inputs
+
+| Name | Required | Default | Description |
+|------|----------|---------|-------------|
+| `workspace-name-prefix` | Yes | | Same prefix used in `preview-deploy` |
+| `working-directory` | No | `.` | Working directory (for monorepo setups) |
+| `package-manager` | No | | Package manager (`pnpm`, `npm`, `yarn`, or `bun`). Defaults to `npx`. |
+| `platform-client-id` | Yes | | OAuth2 client ID for machine user |
+| `platform-client-secret` | Yes | | OAuth2 client secret for machine user |
+| `github-token` | Yes | | GitHub token with `pull-requests: write` for reading and updating the PR comment |
+
+---
 
 ## License
 

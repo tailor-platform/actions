@@ -1,0 +1,108 @@
+name: Delete Tailor Platform preview workspace
+description: >-
+  Delete the per-PR preview workspace when a pull request is closed.
+  Reads the workspace ID from the PR comment posted by preview-comment and
+  deletes the workspace. Run this on pull_request closed events.
+  Requires Node.js and dependencies to be installed by the caller.
+
+inputs:
+  workspace-name-prefix:
+    description: >-
+      The same prefix used in preview-deploy. Used to locate the PR comment
+      that holds the workspace ID.
+    required: true
+  working-directory:
+    description: Working directory for the project (for monorepo setups)
+    required: false
+    default: "."
+  package-manager:
+    description: >-
+      Package manager used to run tailor-sdk (pnpm, npm, yarn, or bun).
+      Defaults to npx when empty.
+    required: false
+    default: ""
+  platform-client-id:
+    description: OAuth2 client ID for Tailor Platform machine user
+    required: true
+  platform-client-secret:
+    description: OAuth2 client secret for Tailor Platform machine user
+    required: true
+  github-token:
+    description: >-
+      GitHub token for reading the PR comment and updating it after cleanup.
+      Requires pull-requests:write permission.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Tailor SDK
+      uses: ./_internal/sdk-setup
+      with:
+        platform-client-id: ${{ inputs.platform-client-id }}
+        platform-client-secret: ${{ inputs.platform-client-secret }}
+        package-manager: ${{ inputs.package-manager }}
+        working-directory: ${{ inputs.working-directory }}
+
+    - name: Delete preview workspace
+      id: delete
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        NAME_PREFIX: ${{ inputs.workspace-name-prefix }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: |
+        if [ -z "$PR_NUMBER" ]; then
+          echo "::error::preview-cleanup must run on a pull_request event"
+          exit 1
+        fi
+
+        WORKSPACE_NAME="${NAME_PREFIX}-pr-${PR_NUMBER}"
+        MARKER_PREFIX="<!-- tailor-preview: $WORKSPACE_NAME id="
+
+        COMMENT=$(gh api --paginate --slurp \
+          "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" | \
+          jq -r --arg m "$MARKER_PREFIX" \
+            '[ .[][] | select(.user.type == "Bot" and (.body | startswith($m))) ] | first | .body // empty')
+
+        WORKSPACE_ID=$(echo "$COMMENT" | \
+          jq -rR '(try capture("<!-- tailor-preview: [^ ]+ id=(?P<id>[a-f0-9-]+)") | .id) // empty')
+
+        if [ -z "$WORKSPACE_ID" ]; then
+          echo "::warning::No preview workspace ID found in PR comment — skipping deletion"
+          exit 0
+        fi
+
+        echo "Deleting preview workspace: $WORKSPACE_NAME ($WORKSPACE_ID)"
+        $TAILOR_SDK_RUN tailor-sdk workspace delete --workspace-id "$WORKSPACE_ID" --yes
+
+        echo "workspace-id=$WORKSPACE_ID" >> "$GITHUB_OUTPUT"
+        echo "workspace-name=$WORKSPACE_NAME" >> "$GITHUB_OUTPUT"
+
+    - name: Build cleanup comment body
+      id: body
+      if: steps.delete.outputs.workspace-id != ''
+      shell: bash
+      env:
+        WORKSPACE_ID: ${{ steps.delete.outputs.workspace-id }}
+        WORKSPACE_NAME: ${{ steps.delete.outputs.workspace-name }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        MARKER="<!-- tailor-preview: $WORKSPACE_NAME id=$WORKSPACE_ID -->"
+        TABLE="| | |"$'\n'"|---|---|"$'\n'"| Workspace ID | \`${WORKSPACE_ID}\` |"$'\n'"| Status | 🗑️ Cleaned up |"
+        BODY="${MARKER}"$'\n'"## 🗑️ Tailor Platform Preview (\`${WORKSPACE_NAME}\`) — Cleaned Up"$'\n\n'"${TABLE}"$'\n\n'"[View run](${RUN_URL})"
+
+        EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+        {
+          echo "body<<$EOF"
+          echo "$BODY"
+          echo "$EOF"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Update preview comment
+      if: steps.delete.outputs.workspace-id != ''
+      uses: ./_internal/sticky-comment
+      with:
+        marker-prefix: "<!-- tailor-preview: ${{ steps.delete.outputs.workspace-name }} "
+        body: ${{ steps.body.outputs.body }}
+        github-token: ${{ inputs.github-token }}
