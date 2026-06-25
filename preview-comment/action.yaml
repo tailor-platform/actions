@@ -43,6 +43,7 @@ runs:
         APP_URL: ${{ inputs.app-url }}
         MENTION_ENABLED: ${{ inputs.mention }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: |
         if [ -z "$PR_NUMBER" ]; then
@@ -54,7 +55,7 @@ runs:
 
         MENTION_USER=""
         if [ "$MENTION_ENABLED" = "true" ]; then
-          COMMIT_AUTHOR=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" \
+          COMMIT_AUTHOR=$(gh api "repos/$GITHUB_REPOSITORY/commits/$PR_HEAD_SHA" \
             --jq '.author.login // empty' 2>/dev/null || echo "")
           if [ -n "$COMMIT_AUTHOR" ] && [[ "$COMMIT_AUTHOR" != *"[bot]" ]]; then
             MENTION_USER="@$COMMIT_AUTHOR"

@@ -88,6 +88,10 @@ runs:
         fi
 
         WORKSPACE_NAME="${NAME_PREFIX}-pr-${PR_NUMBER}"
+        if [ ${#WORKSPACE_NAME} -gt 63 ]; then
+          echo "::error::workspace name '${WORKSPACE_NAME}' exceeds 63-character limit (${#WORKSPACE_NAME} chars). Shorten 'workspace-name-prefix'."
+          exit 1
+        fi
 
         # Look for an existing workspace-id in the PR comment
         MARKER_PREFIX="<!-- tailor-preview: $WORKSPACE_NAME id="
