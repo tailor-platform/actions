@@ -75,7 +75,8 @@ runs:
             echo "Suppressed ($RULE): $CLEAN"
           else
             WARNED=$((WARNED + 1))
-            echo "::warning::$CLEAN"
+            SAFE="${CLEAN//'%'/'%25'}"
+            echo "::warning::$SAFE"
           fi
         done <<< "$OUTPUT"
 
