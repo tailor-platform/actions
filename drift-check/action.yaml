@@ -76,6 +76,7 @@ runs:
           else
             WARNED=$((WARNED + 1))
             SAFE="${CLEAN//'%'/'%25'}"
+            SAFE="${SAFE//$'\r'/'%0D'}"
             echo "::warning::$SAFE"
           fi
         done <<< "$OUTPUT"

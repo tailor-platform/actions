@@ -48,6 +48,10 @@ runs:
       env:
         IGNORE_PATHS: ${{ inputs.ignore }}
       run: |
+        if ! git diff --cached --quiet; then
+          echo "::error::generate-check requires a clean git index. Unstage pending changes before calling this action."
+          exit 1
+        fi
         trap 'git reset > /dev/null 2>&1 || true' EXIT
         git add -A
 
