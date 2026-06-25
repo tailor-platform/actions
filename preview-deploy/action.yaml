@@ -92,12 +92,10 @@ runs:
         # Look for an existing workspace-id in the PR comment
         MARKER_PREFIX="<!-- tailor-preview: $WORKSPACE_NAME id="
         EXISTING_ID=$(gh api --paginate --slurp \
-          "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
-          2>/dev/null | \
+          "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" | \
           jq -r --arg m "$MARKER_PREFIX" \
             '[ .[][] | select(.user.type == "Bot" and (.body | startswith($m))) ] | first | .body // empty' | \
-          jq -rR 'capture("<!-- tailor-preview: [^ ]+ id=(?P<id>[a-f0-9-]+)").id // empty' \
-          2>/dev/null || echo "")
+          jq -rR 'capture("<!-- tailor-preview: [^ ]+ id=(?P<id>[a-f0-9-]+)").id // empty')
 
         if [ -n "$EXISTING_ID" ]; then
           echo "Found existing preview workspace: $EXISTING_ID"

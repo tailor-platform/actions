@@ -48,6 +48,7 @@ runs:
       env:
         IGNORE_PATHS: ${{ inputs.ignore }}
       run: |
+        trap 'git reset > /dev/null 2>&1 || true' EXIT
         git add -A
 
         # Unstage paths listed in the ignore input so they don't trigger a failure.
