@@ -9,8 +9,8 @@ inputs:
     description: >-
       Tailor Platform workspace ID to run dry-run against.
       Set this from a GitHub Environment variable (e.g. vars.TAILOR_PLATFORM_WORKSPACE_ID).
-      When empty, the action skips the dry-run and reports that the workspace is not provisioned yet.
-    required: false
+      Must not be empty — the job fails with an error if the workspace is not provisioned.
+    required: true
   label:
     description: >-
       Human-readable label for this workspace (e.g. the workspace name).
@@ -42,7 +42,7 @@ inputs:
 
 outputs:
   workspace-id:
-    description: Tailor Platform workspace ID (empty when the workspace is not provisioned yet)
+    description: Tailor Platform workspace ID
     value: ${{ inputs.workspace-id }}
   exit-code:
     description: Exit code of the dry-run (empty when skipped)
@@ -70,7 +70,6 @@ runs:
 
     - name: Run dry-run
       id: dry-run
-      if: inputs.workspace-id != ''
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
@@ -103,15 +102,6 @@ runs:
           KEY="$WORKSPACE_ID"
         else
           KEY="workspace"
-        fi
-
-        if [ -z "$WORKSPACE_ID" ]; then
-          {
-            echo "### ℹ️ Tailor Platform Plan ($KEY)"
-            echo ""
-            echo "Workspace is not provisioned yet — set TAILOR_PLATFORM_WORKSPACE_ID after provisioning the workspace."
-          } >> "$GITHUB_STEP_SUMMARY"
-          exit 0
         fi
 
         if [ "$DRY_RUN_EXIT_CODE" = "0" ]; then
@@ -151,19 +141,15 @@ runs:
         MARKER="<!-- tailor-plan: $KEY -->"
         echo "marker=$MARKER" >> "$GITHUB_OUTPUT"
 
-        if [ -z "$WORKSPACE_ID" ]; then
-          CONTENT=$(printf '### ℹ️ Tailor Platform Plan (%s)\n\nWorkspace is not provisioned yet — set TAILOR_PLATFORM_WORKSPACE_ID after provisioning the workspace.' "$KEY")
-        else
-          if [ "$DRY_RUN_EXIT_CODE" = "0" ]; then STATUS="✅"; else STATUS="❌"; fi
-          OUTPUT="$DRY_RUN_OUTPUT"
-          MAX_OUTPUT=60000
-          if [ "${#OUTPUT}" -gt "$MAX_OUTPUT" ]; then
-            NOTE=$(printf '[output truncated to the last %s characters — see the job'\''s step summary for the full plan]' "$MAX_OUTPUT")
-            OUTPUT=$(printf '%s\n\n%s' "$NOTE" "${OUTPUT: -$MAX_OUTPUT}")
-          fi
-          CONTENT=$(printf '### %s Tailor Platform Plan (%s)\n\n<details>\n<summary>Plan output (exit code: %s)</summary>\n\n```\n%s\n```\n\n</details>' \
-            "$STATUS" "$KEY" "$DRY_RUN_EXIT_CODE" "$OUTPUT")
+        if [ "$DRY_RUN_EXIT_CODE" = "0" ]; then STATUS="✅"; else STATUS="❌"; fi
+        OUTPUT="$DRY_RUN_OUTPUT"
+        MAX_OUTPUT=60000
+        if [ "${#OUTPUT}" -gt "$MAX_OUTPUT" ]; then
+          NOTE=$(printf '[output truncated to the last %s characters — see the job'\''s step summary for the full plan]' "$MAX_OUTPUT")
+          OUTPUT=$(printf '%s\n\n%s' "$NOTE" "${OUTPUT: -$MAX_OUTPUT}")
         fi
+        CONTENT=$(printf '### %s Tailor Platform Plan (%s)\n\n<details>\n<summary>Plan output (exit code: %s)</summary>\n\n```\n%s\n```\n\n</details>' \
+          "$STATUS" "$KEY" "$DRY_RUN_EXIT_CODE" "$OUTPUT")
 
         EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
         {
@@ -181,7 +167,6 @@ runs:
         github-token: ${{ inputs.github-token }}
 
     - name: Fail on plan error
-      if: inputs.workspace-id != ''
       shell: bash
       env:
         DRY_RUN_EXIT_CODE: ${{ steps.dry-run.outputs.exit-code }}
