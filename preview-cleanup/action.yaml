@@ -23,10 +23,23 @@ inputs:
     default: ""
   platform-client-id:
     description: OAuth2 client ID for Tailor Platform machine user
-    required: true
+    # PAT fallback: optional when platform-token is provided instead
+    required: false
+    default: ""
   platform-client-secret:
     description: OAuth2 client secret for Tailor Platform machine user
-    required: true
+    # PAT fallback: optional when platform-token is provided instead
+    required: false
+    default: ""
+  # PAT fallback: alternative to platform-client-id + platform-client-secret.
+  # See _internal/sdk-setup/action.yaml for details.
+  platform-token:
+    description: >-
+      Tailor Platform personal access token.
+      Alternative to platform-client-id + platform-client-secret when a
+      Proxy-Free Machine User (PFMU) is not available.
+    required: false
+    default: ""
   github-token:
     description: >-
       GitHub token for reading the PR comment and updating it after cleanup.
@@ -37,10 +50,11 @@ runs:
   using: composite
   steps:
     - name: Set up Tailor SDK
-      uses: tailor-platform/actions/_internal/sdk-setup@e698b5e417c2c320e7292c68b14ad5090048746b
+      uses: tailor-platform/actions/_internal/sdk-setup@bb8fa7d55b9720c3e47b9fd6da89c4005d10251d
       with:
         platform-client-id: ${{ inputs.platform-client-id }}
         platform-client-secret: ${{ inputs.platform-client-secret }}
+        platform-token: ${{ inputs.platform-token }}
         package-manager: ${{ inputs.package-manager }}
         working-directory: ${{ inputs.working-directory }}
 
@@ -101,7 +115,7 @@ runs:
 
     - name: Update preview comment
       if: steps.delete.outputs.workspace-id != ''
-      uses: tailor-platform/actions/_internal/sticky-comment@e698b5e417c2c320e7292c68b14ad5090048746b
+      uses: tailor-platform/actions/_internal/sticky-comment@bb8fa7d55b9720c3e47b9fd6da89c4005d10251d
       with:
         marker-prefix: "<!-- tailor-preview: ${{ steps.delete.outputs.workspace-name }} "
         body: ${{ steps.body.outputs.body }}
