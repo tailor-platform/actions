@@ -65,7 +65,7 @@ runs:
   using: composite
   steps:
     - name: Set up Tailor SDK
-      uses: ./_internal/sdk-setup
+      uses: tailor-platform/actions/_internal/sdk-setup@e698b5e417c2c320e7292c68b14ad5090048746b
       with:
         platform-client-id: ${{ inputs.platform-client-id }}
         platform-client-secret: ${{ inputs.platform-client-secret }}
@@ -175,7 +175,7 @@ runs:
 
     - name: Post sticky plan comment
       if: github.event_name == 'pull_request' && inputs.github-token != ''
-      uses: ./_internal/sticky-comment
+      uses: tailor-platform/actions/_internal/sticky-comment@e698b5e417c2c320e7292c68b14ad5090048746b
       with:
         marker-prefix: ${{ steps.comment-body.outputs.marker }}
         body: ${{ steps.comment-body.outputs.body }}
