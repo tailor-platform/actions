@@ -56,9 +56,9 @@ runs:
         # PAT fallback: mask the personal access token if provided
         PLATFORM_TOKEN: ${{ inputs.platform-token }}
       run: |
-        [ -n "$CLIENT_ID" ] && echo "::add-mask::$CLIENT_ID"
-        [ -n "$CLIENT_SECRET" ] && echo "::add-mask::$CLIENT_SECRET"
-        [ -n "$PLATFORM_TOKEN" ] && echo "::add-mask::$PLATFORM_TOKEN"
+        [ -n "$CLIENT_ID" ] && echo "::add-mask::$CLIENT_ID" || true
+        [ -n "$CLIENT_SECRET" ] && echo "::add-mask::$CLIENT_SECRET" || true
+        [ -n "$PLATFORM_TOKEN" ] && echo "::add-mask::$PLATFORM_TOKEN" || true
 
     - name: Resolve tailor-sdk runner
       shell: bash
