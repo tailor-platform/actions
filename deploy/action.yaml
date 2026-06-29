@@ -73,7 +73,7 @@ runs:
 
     - name: Deploy
       id: deploy
-      uses: tailor-platform/actions/_internal/deploy@e698b5e417c2c320e7292c68b14ad5090048746b
+      uses: tailor-platform/actions/_internal/deploy@a2fbab436bafb70a0bc700425c3a38d6a3874ac3
       with:
         workspace-id: ${{ inputs.workspace-id }}
         working-directory: ${{ inputs.working-directory }}
