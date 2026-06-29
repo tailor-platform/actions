@@ -9,8 +9,10 @@ inputs:
     description: >-
       Tailor Platform workspace ID to run dry-run against.
       Set this from a GitHub Environment variable (e.g. vars.TAILOR_PLATFORM_WORKSPACE_ID).
-      Must not be empty — the job fails with an error if the workspace is not provisioned.
-    required: true
+      When empty, the action reports "not yet provisioned" and exits successfully —
+      this covers the chicken-and-egg case where a workspace does not exist before the first deploy.
+    required: false
+    default: ""
   label:
     description: >-
       Human-readable label for this workspace (e.g. the workspace name).
@@ -90,6 +92,17 @@ runs:
       env:
         TAILOR_PLATFORM_WORKSPACE_ID: ${{ inputs.workspace-id }}
       run: |
+        if [ -z "$TAILOR_PLATFORM_WORKSPACE_ID" ]; then
+          echo "Workspace ID is empty — workspace not yet provisioned. Skipping dry-run."
+          echo "exit-code=0" >> "$GITHUB_OUTPUT"
+          OUTPUT="Workspace not yet provisioned — dry-run skipped."
+          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          echo "output<<$EOF" >> "$GITHUB_OUTPUT"
+          echo "$OUTPUT" >> "$GITHUB_OUTPUT"
+          echo "$EOF" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
         set +e
         OUTPUT=$($TAILOR_SDK_RUN tailor-sdk apply --dry-run --yes 2>&1)
         EXIT_CODE=$?
@@ -175,7 +188,7 @@ runs:
 
     - name: Post sticky plan comment
       if: github.event_name == 'pull_request' && inputs.github-token != ''
-      uses: tailor-platform/actions/_internal/sticky-comment@a2fbab436bafb70a0bc700425c3a38d6a3874ac3
+      uses: tailor-platform/actions/_internal/sticky-comment@e698b5e417c2c320e7292c68b14ad5090048746b
       with:
         marker-prefix: ${{ steps.comment-body.outputs.marker }}
         body: ${{ steps.comment-body.outputs.body }}
