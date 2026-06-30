@@ -24,10 +24,10 @@ runs:
         PACKAGE_MANAGER: ${{ inputs.package-manager }}
       run: |
         case "$PACKAGE_MANAGER" in
-          pnpm) pnpm exec tailor-sdk tailordb migration generate ;;
-          npm)  npx tailor-sdk tailordb migration generate ;;
-          yarn) yarn tailor-sdk tailordb migration generate ;;
-          bun)  bunx tailor-sdk tailordb migration generate ;;
+          pnpm) pnpm exec tailor-sdk tailordb migration generate --yes ;;
+          npm)  npx tailor-sdk tailordb migration generate --yes ;;
+          yarn) yarn tailor-sdk tailordb migration generate --yes ;;
+          bun)  bunx tailor-sdk tailordb migration generate --yes ;;
           *)
             echo "::error::Unsupported package-manager '$PACKAGE_MANAGER' (expected pnpm, npm, yarn, or bun)"
             exit 1
