@@ -32,7 +32,7 @@ runs:
         INSTALL_COMMAND: ${{ inputs.install-command }}
       run: |
         if [ -n "$INSTALL_COMMAND" ]; then
-          eval "$INSTALL_COMMAND"
+          bash -c "$INSTALL_COMMAND"
         else
           case "$PACKAGE_MANAGER" in
             pnpm) pnpm install --frozen-lockfile ;;

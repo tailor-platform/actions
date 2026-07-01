@@ -65,7 +65,7 @@ gh variable set TAILOR_PLATFORM_WORKSPACE_ID --env production
 
 #### Scaffold with Tailor SDK CLI
 
-The [`tailor-sdk setup github`](https://github.com/tailor-platform/sdk) command generates a workflow file that uses this action, with package manager auto-detection.
+The [`tailor-sdk setup`](https://github.com/tailor-platform/sdk) command generates a workflow file that uses this action, with package manager auto-detection.
 
 ---
 
