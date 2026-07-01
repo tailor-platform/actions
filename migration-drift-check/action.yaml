@@ -17,6 +17,15 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Verify clean working tree
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        if [ -n "$(git status --porcelain)" ]; then
+          echo "::error::migration-drift-check requires a clean working tree. Commit or discard all changes before calling this action."
+          exit 1
+        fi
+
     - name: Generate migration files
       shell: bash
       working-directory: ${{ inputs.working-directory }}
@@ -38,10 +47,6 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: |
-        if [ -n "$(git status --porcelain)" ]; then
-          echo "::error::migration-drift-check requires a clean working tree. Commit or discard all changes before calling this action."
-          exit 1
-        fi
         trap 'git reset > /dev/null 2>&1 || true' EXIT
         git add -A
         if ! git diff --cached --quiet; then
