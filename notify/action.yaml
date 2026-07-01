@@ -23,6 +23,13 @@ inputs:
     description: >-
       Slack Bot token (xoxb-...) with chat:write permission (required when provider is 'slack').
     required: false
+  user-mapping:
+    description: >-
+      Optional JSON string mapping GitHub usernames to Slack user IDs for @mention support.
+      e.g. '{"alice":"U0123456","bob":"U7890ABC"}'.
+      When a match is found the actor is mentioned as <@UXXXXX>; falls back to plain username.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -55,6 +62,8 @@ runs:
         SLACK_CHANNEL_ID: ${{ inputs.slack-channel-id }}
         STATUS: ${{ inputs.status }}
         WORKSPACE_NAME: ${{ inputs.workspace-name }}
+        GITHUB_ACTOR: ${{ github.actor }}
+        USER_MAPPING: ${{ inputs.user-mapping }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: |
         if [ -z "$SLACK_TOKEN" ] || [ -z "$SLACK_CHANNEL_ID" ]; then
@@ -68,8 +77,24 @@ runs:
           EMOJI=":x:"
         fi
 
+        # Resolve actor mention from user-mapping (JSON string), fall back to plain username.
+        if [ -n "$USER_MAPPING" ] && [ -n "$GITHUB_ACTOR" ]; then
+          SLACK_USER_ID=$(echo "$USER_MAPPING" | jq -r --arg user "$GITHUB_ACTOR" '.[$user] // ""' 2>/dev/null || true)
+          if [ -n "$SLACK_USER_ID" ]; then
+            ACTOR_MENTION="<@$SLACK_USER_ID>"
+          else
+            ACTOR_MENTION="$GITHUB_ACTOR"
+          fi
+        else
+          ACTOR_MENTION="${GITHUB_ACTOR:-}"
+        fi
+
         LABEL="${WORKSPACE_NAME:-Tailor Platform}"
-        TEXT="$EMOJI *$LABEL* deployment $STATUS — <$RUN_URL|View run>"
+        if [ -n "$ACTOR_MENTION" ]; then
+          TEXT="$EMOJI *$LABEL* deployment $STATUS by $ACTOR_MENTION — <$RUN_URL|View run>"
+        else
+          TEXT="$EMOJI *$LABEL* deployment $STATUS — <$RUN_URL|View run>"
+        fi
 
         # Use jq to safely JSON-encode the payload (handles special characters in inputs).
         PAYLOAD=$(jq -nc --arg channel "$SLACK_CHANNEL_ID" --arg text "$TEXT" \

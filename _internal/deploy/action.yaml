@@ -1,6 +1,6 @@
-name: Generate, apply, and resolve app URL
+name: Apply and resolve app URL
 description: >-
-  Run tailor-sdk generate, apply, and show for a given workspace.
+  Run tailor-sdk apply and show for a given workspace.
   Internal action shared by deploy and preview-deploy.
   Requires TAILOR_SDK_RUN to be set (by sdk-setup) before this action runs.
 
@@ -21,13 +21,6 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Generate types
-      shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      env:
-        TAILOR_PLATFORM_WORKSPACE_ID: ${{ inputs.workspace-id }}
-      run: $TAILOR_SDK_RUN tailor-sdk generate
-
     - name: Deploy
       shell: bash
       working-directory: ${{ inputs.working-directory }}

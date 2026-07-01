@@ -95,7 +95,7 @@ runs:
 
     - name: Post or update preview comment
       if: github.event.pull_request.number != ''
-      uses: ./_internal/sticky-comment
+      uses: tailor-platform/actions/_internal/sticky-comment@ef227c18ad0ad487d6aecf80a47c251472819f22
       with:
         marker-prefix: "<!-- tailor-preview: ${{ inputs.workspace-name }} "
         body: ${{ steps.build.outputs.body }}

@@ -65,7 +65,7 @@ gh variable set TAILOR_PLATFORM_WORKSPACE_ID --env production
 
 #### Scaffold with Tailor SDK CLI
 
-The [`tailor-sdk setup github`](https://github.com/tailor-platform/sdk) command generates a workflow file that uses this action, with package manager auto-detection.
+The [`tailor-sdk setup`](https://github.com/tailor-platform/sdk) command generates a workflow file using this action together with the [`install`](#install) action, with package manager auto-detection.
 
 ---
 
@@ -135,7 +135,8 @@ When `github-token` is provided and the event is a pull request, the action post
 
 - ✅ **Success**: Shows the planned changes
 - ❌ **Failure**: Shows the error output
-- ℹ️ **Not provisioned**: Workspace ID is empty — dry-run skipped
+
+When `workspace-id` is not set, no PR comment is posted — the step summary records the "not yet provisioned" state instead.
 
 The comment is keyed per workspace via a `<!-- tailor-plan: KEY -->` marker (`KEY` is the `label` input if provided, otherwise `workspace-id`, otherwise `"workspace"`), so multiple environments can post separate comments on the same PR. The comment is automatically updated on subsequent runs.
 
@@ -143,7 +144,7 @@ The comment is keyed per workspace via a `<!-- tailor-plan: KEY -->` marker (`KE
 
 ### [`setup`](setup/action.yaml)
 
-Set up the Tailor Platform toolchain (Node.js, package manager, install dependencies). Typically the first step in every job.
+Set up the Tailor Platform toolchain (Node.js and package manager). Does not install project dependencies — use the [`install`](#install) action for that.
 
 ---
 
