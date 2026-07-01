@@ -38,8 +38,8 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: |
-        if ! git diff --cached --quiet; then
-          echo "::error::migration-drift-check requires a clean git index. Unstage pending changes before calling this action."
+        if [ -n "$(git status --porcelain)" ]; then
+          echo "::error::migration-drift-check requires a clean working tree. Commit or discard all changes before calling this action."
           exit 1
         fi
         trap 'git reset > /dev/null 2>&1 || true' EXIT
