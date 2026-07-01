@@ -37,7 +37,7 @@ runs:
   using: composite
   steps:
     - name: Set up Tailor SDK
-      uses: tailor-platform/actions/_internal/sdk-setup@a2fbab436bafb70a0bc700425c3a38d6a3874ac3
+      uses: ./_internal/sdk-setup
       with:
         platform-client-id: ${{ inputs.platform-client-id }}
         platform-client-secret: ${{ inputs.platform-client-secret }}
@@ -101,7 +101,7 @@ runs:
 
     - name: Update preview comment
       if: steps.delete.outputs.workspace-id != ''
-      uses: tailor-platform/actions/_internal/sticky-comment@a2fbab436bafb70a0bc700425c3a38d6a3874ac3
+      uses: ./_internal/sticky-comment
       with:
         marker-prefix: "<!-- tailor-preview: ${{ steps.delete.outputs.workspace-name }} "
         body: ${{ steps.body.outputs.body }}
