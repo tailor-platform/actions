@@ -38,14 +38,7 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Warn — no credentials provided
-      if: inputs.platform-client-id == ''
-      shell: bash
-      run: |
-        echo "::warning::platform-client-id is not set — skipping SDK login. Ensure TAILOR_PLATFORM_TOKEN is already set in the environment by a preceding step."
-
     - name: Set up Tailor SDK
-      if: inputs.platform-client-id != ''
       uses: tailor-platform/actions/_internal/sdk-setup@a2fbab436bafb70a0bc700425c3a38d6a3874ac3
       with:
         platform-client-id: ${{ inputs.platform-client-id }}
