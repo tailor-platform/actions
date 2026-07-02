@@ -31,14 +31,43 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          persist-credentials: false
-      - name: Reject SHA/tag-pinned self-references to _internal actions
+          fetch-depth: 0
+      - name: Ensure _internal actions are SHA-pinned to a commit already on main
         run: |
-          if grep -rnE 'uses:\s*tailor-platform/actions/_internal/' --include='*.yaml' --include='*.yml' .; then
-            echo "::error::_internal/* actions must be referenced via local path (./_internal/<name>), not a pinned tailor-platform/actions/_internal/... ref. A remote/SHA pin here can only ever point at a commit older than the one being edited, so it either drifts from the outer action or (if self-referential) turns into a dangling impostor-commit the moment the branch is amended/rebased. Local paths always resolve to the exact commit/ref the outer action was invoked at, with no separate pin-bump step required."
+          set -uo pipefail
+          git fetch origin main --quiet
+          FAILED=0
+
+          # Local-path refs (./_internal/...) resolve relative to the CALLER's checkout,
+          # not this repo's, so they break the moment an external repo consumes the outer
+          # action via `uses: tailor-platform/actions/<name>@<ref>`. Restrict this check to
+          # published action.yaml/action.yml files — .github/workflows/*.yaml test files
+          # invoke _internal actions directly from this same repo/commit, where local paths
+          # are correct and required.
+          mapfile -t ACTION_FILES < <(find . -type d -name node_modules -prune -o -type f \( -name 'action.yaml' -o -name 'action.yml' \) -print)
+          if [ "${#ACTION_FILES[@]}" -gt 0 ]; then
+            while IFS=: read -r file line rest; do
+              echo "::error file=$file,line=$line::_internal/* actions must be referenced via a SHA-pinned tailor-platform/actions/_internal/<name>@<sha> ref, not a local path (./_internal/...). Local paths break for external consumers of this repo's actions."
+              FAILED=1
+            done < <(grep -nE 'uses:[[:space:]]*\./_internal/' "${ACTION_FILES[@]}")
+          fi
+
+          # Every pin must already be reachable from origin/main, never a commit that only
+          # lives on the branch/PR being edited right now — otherwise a later amend/rebase
+          # orphans it (impostor-commit) after CI already went green on the doomed SHA.
+          while IFS=: read -r file line rest; do
+            sha=$(printf '%s' "$rest" | grep -oE '_internal/[a-zA-Z0-9_-]+@[0-9a-f]{40}' | grep -oE '[0-9a-f]{40}$')
+            [ -z "$sha" ] && continue
+            if ! git merge-base --is-ancestor "$sha" origin/main 2>/dev/null; then
+              echo "::error file=$file,line=$line::_internal ref $sha is not part of origin/main's history yet. Pinning to a commit that only exists on this branch/PR is fragile: rebasing or amending later orphans it. Merge the _internal change to main first, then bump this pin to point at the resulting main commit."
+              FAILED=1
+            fi
+          done < <(grep -rnE 'uses:[[:space:]]*tailor-platform/actions/_internal/' --include='*.yaml' --include='*.yml' .)
+
+          if [ "$FAILED" -eq 1 ]; then
             exit 1
           fi
-          echo "OK: no pinned references to _internal/* actions found."
+          echo "OK: all _internal/* references are SHA-pinned and already on origin/main."
 
   ghalint:
     runs-on: ubuntu-latest
