@@ -7,10 +7,14 @@
  * allowed licenses, based on the Google licenseclassifier categories:
  * https://github.com/google/licenseclassifier/blob/e6a9bb99b5a6f71d5a34336b8245e305f5430f99/license_type.go
  *
- * The reciprocal/notice/unencumbered groups below are the shared baseline.
- * Per-repository additions/removals come in via ADDITIONAL_LICENSES /
- * DENIED_LICENSES (comma- or newline-separated SPDX identifiers), typically
- * sourced from a repository's `ALLOWED_LICENSES` GitHub Variable.
+ * Which of the reciprocal/notice/unencumbered groups apply is itself
+ * configurable via LICENSE_GROUPS (defaults to all three), since including
+ * "reciprocal" (weak-copyleft licenses like MPL/EPL/CDDL) is a licensing
+ * policy call, not a fixed fact — organizations may want to change it
+ * without editing this script. Per-repository additions/removals on top of
+ * the selected groups come in via ADDITIONAL_LICENSES / DENIED_LICENSES
+ * (comma- or newline-separated SPDX identifiers). All three typically come
+ * from GitHub Variables (e.g. LICENSE_GROUPS / ALLOWED_LICENSES).
  *
  * Multi-license handling:
  *   "(MIT OR Apache-2.0)" is allowed if any member license is allowed.
@@ -123,10 +127,26 @@ function parseLicenseList(raw) {
     .filter((l) => l.length > 0);
 }
 
-function buildAllowSet() {
+function resolveGroups() {
+  const requested = parseLicenseList(process.env.LICENSE_GROUPS);
+  if (requested.length === 0) {
+    return Object.keys(licenseGroups);
+  }
+  const unknown = requested.filter((g) => !(g in licenseGroups));
+  if (unknown.length > 0) {
+    console.error(
+      `::error::Unknown license group(s) in LICENSE_GROUPS: ${unknown.join(", ")}. ` +
+        `Valid groups: ${Object.keys(licenseGroups).join(", ")}`,
+    );
+    process.exit(1);
+  }
+  return requested;
+}
+
+function buildAllowSet(groups) {
   const set = new Set();
-  for (const licenses of Object.values(licenseGroups)) {
-    for (const license of licenses) {
+  for (const group of groups) {
+    for (const license of licenseGroups[group]) {
       set.add(license);
     }
   }
@@ -159,9 +179,10 @@ function isLicenseAllowed(licenseString, allowSet) {
 }
 
 function main() {
-  const allowSet = buildAllowSet();
+  const groups = resolveGroups();
+  const allowSet = buildAllowSet(groups);
 
-  console.log("Checking licenses...\n");
+  console.log(`Checking licenses (groups: ${groups.join(", ")})...\n`);
   execSync("pnpm licenses list", { stdio: "inherit" });
 
   const output = execSync("pnpm licenses list --json");

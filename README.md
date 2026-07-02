@@ -356,22 +356,36 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - uses: tailor-platform/actions/check-licenses@v1
         with:
+          license-groups: ${{ vars.LICENSE_GROUPS }}
           additional-licenses: ${{ vars.ALLOWED_LICENSES }}
+          denied-licenses: ${{ vars.DENIED_LICENSES }}
 ```
 
 #### Inputs
 
 | Name | Required | Default | Description |
 |------|----------|---------|-------------|
-| `additional-licenses` | No | | Extra individually-allowed SPDX license identifiers, beyond the reciprocal/notice/unencumbered baseline. Comma- or newline-separated. Source this from the `ALLOWED_LICENSES` GitHub Variable (managed centrally in `tailor-inc/tailor-infra`) so every consuming repo shares one allowlist. |
-| `denied-licenses` | No | | SPDX license identifiers to remove from the baseline allow set, even if they belong to an allowed group. Comma- or newline-separated. |
+| `license-groups` | No | `reciprocal,notice,unencumbered` | Which Google licenseclassifier categories to allow. Comma- or newline-separated. Including `reciprocal` (weak-copyleft licenses like MPL/EPL/CDDL) is a licensing-policy decision, not a fixed fact, so it's configurable rather than hardcoded — source it from a `LICENSE_GROUPS` GitHub Variable. |
+| `additional-licenses` | No | | Extra individually-allowed SPDX license identifiers, beyond the selected `license-groups`. Comma- or newline-separated. Source this from the `ALLOWED_LICENSES` GitHub Variable (managed centrally in `tailor-inc/tailor-infra`) so every consuming repo shares one allowlist. |
+| `denied-licenses` | No | | SPDX license identifiers to remove from the allow set, even if they belong to a selected group. Comma- or newline-separated. Source this from a `DENIED_LICENSES` GitHub Variable, kept alongside `LICENSE_GROUPS` / `ALLOWED_LICENSES` even while empty, so denying a license later is a Variable update, not a workflow edit. |
 | `working-directory` | No | `.` | Working directory (for monorepo setups) |
 
 #### Managing the allowlist
 
-The reciprocal/notice/unencumbered groups are fixed inside the action (they rarely change). Exceptions shared by multiple repos live in a single **organization-level** `ALLOWED_LICENSES` GitHub Variable, managed via Terraform in `tailor-inc/tailor-infra`, so the value isn't duplicated per repo:
+Both which license groups apply and the individual per-license exceptions are policy decisions, not implementation details — they live in GitHub Variables rather than in this action's code, so they can change without a workflow edit or a new action release. Values shared by multiple repos live in single **organization-level** variables, managed via Terraform in `tailor-inc/tailor-infra`, so they aren't duplicated per repo:
 
 ```hcl
+resource "github_actions_organization_variable" "license_groups" {
+  variable_name = "LICENSE_GROUPS"
+  visibility    = "selected"
+  selected_repository_ids = [
+    data.github_repository.erp_kit.repo_id,
+    data.github_repository.sdk.repo_id,
+    data.github_repository.app_shell.repo_id,
+  ]
+  value = "reciprocal,notice,unencumbered"
+}
+
 resource "github_actions_organization_variable" "allowed_licenses" {
   variable_name = "ALLOWED_LICENSES"
   visibility    = "selected"
@@ -382,9 +396,22 @@ resource "github_actions_organization_variable" "allowed_licenses" {
   ]
   value = "BlueOak-1.0.0,WTFPL,Unknown"
 }
+
+# Empty for now — kept so denying a specific license later is a value
+# update here, not a new input wired through every consuming workflow.
+resource "github_actions_organization_variable" "denied_licenses" {
+  variable_name = "DENIED_LICENSES"
+  visibility    = "selected"
+  selected_repository_ids = [
+    data.github_repository.erp_kit.repo_id,
+    data.github_repository.sdk.repo_id,
+    data.github_repository.app_shell.repo_id,
+  ]
+  value = ""
+}
 ```
 
-`vars.ALLOWED_LICENSES` in a workflow resolves the org variable the same way it would a repo variable — a repo-level `github_actions_variable` of the same name still takes precedence if a specific repo ever needs to diverge from the shared list.
+`vars.LICENSE_GROUPS` / `vars.ALLOWED_LICENSES` in a workflow resolve the org variable the same way they would a repo variable — a repo-level `github_actions_variable` of the same name still takes precedence if a specific repo ever needs to diverge from the shared value.
 
 ---
 

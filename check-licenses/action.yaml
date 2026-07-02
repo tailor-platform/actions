@@ -5,17 +5,27 @@ description: >-
   Node.js, pnpm, and dependencies to be installed by the caller.
 
 inputs:
+  license-groups:
+    description: >-
+      Which Google licenseclassifier categories to allow, out of reciprocal,
+      notice, unencumbered. Comma- or newline-separated. Defaults to all
+      three. Including "reciprocal" (weak-copyleft licenses like
+      MPL/EPL/CDDL) is a licensing-policy decision, not a fixed fact — source
+      this from a `LICENSE_GROUPS` GitHub Variable so it can be changed
+      without editing workflows.
+    required: false
+    default: ""
   additional-licenses:
     description: >-
       Extra individually-allowed SPDX license identifiers, beyond the
-      reciprocal/notice/unencumbered baseline. Comma- or newline-separated
-      (e.g. from a repository `ALLOWED_LICENSES` GitHub Variable).
+      selected license-groups. Comma- or newline-separated (e.g. from an
+      `ALLOWED_LICENSES` GitHub Variable).
     required: false
     default: ""
   denied-licenses:
     description: >-
-      SPDX license identifiers to remove from the baseline allow set, even if
-      they belong to an allowed group. Comma- or newline-separated.
+      SPDX license identifiers to remove from the allow set, even if they
+      belong to a selected group. Comma- or newline-separated.
     required: false
     default: ""
   working-directory:
@@ -30,6 +40,7 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
+        LICENSE_GROUPS: ${{ inputs.license-groups }}
         ADDITIONAL_LICENSES: ${{ inputs.additional-licenses }}
         DENIED_LICENSES: ${{ inputs.denied-licenses }}
       run: node "${{ github.action_path }}/check-licenses.mjs"
