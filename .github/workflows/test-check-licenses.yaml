@@ -1,0 +1,155 @@
+name: Test Check-Licenses Action
+
+on:
+  pull_request:
+    paths:
+      - "check-licenses/**"
+      - "tests/check-licenses/**"
+      - ".github/workflows/test-check-licenses.yaml"
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  test-pass:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.9.0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+          cache-dependency-path: tests/check-licenses/pass/pnpm-lock.yaml
+
+      - name: Install fake dependencies
+        working-directory: tests/check-licenses/pass
+        run: pnpm install
+
+      - name: "Test: allowed license passes"
+        uses: ./check-licenses
+        with:
+          working-directory: tests/check-licenses/pass
+
+  test-fail:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.9.0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+          cache-dependency-path: tests/check-licenses/fail/pnpm-lock.yaml
+
+      - name: Install fake dependencies
+        working-directory: tests/check-licenses/fail
+        run: pnpm install
+
+      - name: "Test: disallowed license fails"
+        id: check
+        continue-on-error: true
+        uses: ./check-licenses
+        with:
+          working-directory: tests/check-licenses/fail
+
+      - name: "Verify: outcome must be failure"
+        env:
+          OUTCOME: ${{ steps.check.outcome }}
+        run: |
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::Expected check-licenses to fail on a disallowed license"
+            exit 1
+          fi
+
+  test-additional-licenses:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.9.0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+          cache-dependency-path: tests/check-licenses/fail/pnpm-lock.yaml
+
+      - name: Install fake dependencies
+        working-directory: tests/check-licenses/fail
+        run: pnpm install
+
+      - name: "Test: additional-licenses allows an otherwise-disallowed license"
+        uses: ./check-licenses
+        with:
+          working-directory: tests/check-licenses/fail
+          additional-licenses: GPL-3.0
+
+  test-denied-licenses:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.9.0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+          cache-dependency-path: tests/check-licenses/pass/pnpm-lock.yaml
+
+      - name: Install fake dependencies
+        working-directory: tests/check-licenses/pass
+        run: pnpm install
+
+      - name: "Test: denied-licenses rejects an otherwise-allowed license"
+        id: check
+        continue-on-error: true
+        uses: ./check-licenses
+        with:
+          working-directory: tests/check-licenses/pass
+          denied-licenses: MIT
+
+      - name: "Verify: outcome must be failure"
+        env:
+          OUTCOME: ${{ steps.check.outcome }}
+        run: |
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::Expected check-licenses to fail when the only license is denied"
+            exit 1
+          fi

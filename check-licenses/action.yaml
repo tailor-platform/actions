@@ -1,0 +1,35 @@
+name: Check Licenses
+description: >-
+  Check that all dependencies use allowed licenses, based on the Google
+  licenseclassifier categories (reciprocal, notice, unencumbered). Requires
+  Node.js, pnpm, and dependencies to be installed by the caller.
+
+inputs:
+  additional-licenses:
+    description: >-
+      Extra individually-allowed SPDX license identifiers, beyond the
+      reciprocal/notice/unencumbered baseline. Comma- or newline-separated
+      (e.g. from a repository `ALLOWED_LICENSES` GitHub Variable).
+    required: false
+    default: ""
+  denied-licenses:
+    description: >-
+      SPDX license identifiers to remove from the baseline allow set, even if
+      they belong to an allowed group. Comma- or newline-separated.
+    required: false
+    default: ""
+  working-directory:
+    description: Working directory for the project (for monorepo setups)
+    required: false
+    default: "."
+
+runs:
+  using: composite
+  steps:
+    - name: Check licenses
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        ADDITIONAL_LICENSES: ${{ inputs.additional-licenses }}
+        DENIED_LICENSES: ${{ inputs.denied-licenses }}
+      run: node "${{ github.action_path }}/check-licenses.mjs"

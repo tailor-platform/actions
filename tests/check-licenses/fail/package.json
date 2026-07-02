@@ -1,0 +1,8 @@
+{
+  "name": "check-licenses-test-fail",
+  "private": true,
+  "dependencies": {
+    "mit-pkg": "file:../fake-packages/mit-pkg",
+    "gpl-pkg": "file:../fake-packages/gpl-pkg"
+  }
+}

@@ -1,0 +1,30 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      gpl-pkg:
+        specifier: file:../fake-packages/gpl-pkg
+        version: file:../fake-packages/gpl-pkg
+      mit-pkg:
+        specifier: file:../fake-packages/mit-pkg
+        version: file:../fake-packages/mit-pkg
+
+packages:
+
+  gpl-pkg@file:../fake-packages/gpl-pkg:
+    resolution: {directory: ../fake-packages/gpl-pkg, type: directory}
+
+  mit-pkg@file:../fake-packages/mit-pkg:
+    resolution: {directory: ../fake-packages/mit-pkg, type: directory}
+
+snapshots:
+
+  gpl-pkg@file:../fake-packages/gpl-pkg: {}
+
+  mit-pkg@file:../fake-packages/mit-pkg: {}

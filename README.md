@@ -331,6 +331,56 @@ Post or update a PR comment with preview deployment status, workspace ID, app UR
 
 ---
 
+### [`check-licenses`](check-licenses/action.yaml)
+
+Check that all dependencies use allowed licenses, based on the Google [licenseclassifier](https://github.com/google/licenseclassifier) categories (`reciprocal`, `notice`, `unencumbered`). Fails the job when a dependency's license isn't in the allowed set.
+
+**Prerequisites:** The caller is responsible for checkout, Node.js setup, pnpm setup, and dependency installation.
+
+#### Usage
+
+```yaml
+jobs:
+  check-licenses:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: tailor-platform/actions/check-licenses@v1
+        with:
+          additional-licenses: ${{ vars.ALLOWED_LICENSES }}
+```
+
+#### Inputs
+
+| Name | Required | Default | Description |
+|------|----------|---------|-------------|
+| `additional-licenses` | No | | Extra individually-allowed SPDX license identifiers, beyond the reciprocal/notice/unencumbered baseline. Comma- or newline-separated. Source this from a repository `ALLOWED_LICENSES` GitHub Variable (managed centrally in `tailor-inc/tailor-infra`) so the allowlist stays auditable per repository. |
+| `denied-licenses` | No | | SPDX license identifiers to remove from the baseline allow set, even if they belong to an allowed group. Comma- or newline-separated. |
+| `working-directory` | No | `.` | Working directory (for monorepo setups) |
+
+#### Managing the allowlist
+
+The reciprocal/notice/unencumbered groups are fixed inside the action (they rarely change). Per-repository exceptions belong in that repository's `ALLOWED_LICENSES` GitHub Variable, managed via Terraform in `tailor-inc/tailor-infra`, e.g.:
+
+```hcl
+resource "github_actions_variable" "allowed_licenses" {
+  repository    = github_repository.this.name
+  variable_name = "ALLOWED_LICENSES"
+  value         = "BlueOak-1.0.0,WTFPL,Unknown"
+}
+```
+
+---
+
 ### [`preview-cleanup`](preview-cleanup/action.yaml)
 
 Delete the preview workspace when a PR is closed. Reads the workspace ID from the PR comment posted by `preview-comment` and deletes the workspace. Run on `pull_request` `closed` events.

@@ -1,0 +1,22 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      mit-pkg:
+        specifier: file:../fake-packages/mit-pkg
+        version: file:../fake-packages/mit-pkg
+
+packages:
+
+  mit-pkg@file:../fake-packages/mit-pkg:
+    resolution: {directory: ../fake-packages/mit-pkg, type: directory}
+
+snapshots:
+
+  mit-pkg@file:../fake-packages/mit-pkg: {}
