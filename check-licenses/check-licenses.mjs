@@ -146,33 +146,37 @@ function parseLicenseList(raw) {
     .filter((l) => l.length > 0);
 }
 
-function resolveGroups() {
-  const requested = parseLicenseList(process.env.LICENSE_GROUPS);
+// Thrown by the pure parsing/validation functions below; main() catches it,
+// prints a `::error::` annotation, and exits 1. Kept separate from
+// process.exit so the parsing logic itself stays unit-testable.
+class LicenseCheckError extends Error {}
+
+function resolveGroups(raw) {
+  const requested = parseLicenseList(raw);
   if (requested.length === 0) {
     return Object.keys(licenseGroups);
   }
   const unknown = requested.filter((g) => !(g in licenseGroups));
   if (unknown.length > 0) {
-    console.error(
-      `::error::Unknown license group(s) in LICENSE_GROUPS: ${unknown.join(", ")}. ` +
+    throw new LicenseCheckError(
+      `Unknown license group(s) in LICENSE_GROUPS: ${unknown.join(", ")}. ` +
         `Valid groups: ${Object.keys(licenseGroups).join(", ")}`,
     );
-    process.exit(1);
   }
   return requested;
 }
 
-function buildAllowSet(groups) {
+function buildAllowSet(groups, additionalRaw, deniedRaw) {
   const set = new Set();
   for (const group of groups) {
     for (const license of licenseGroups[group]) {
       set.add(license);
     }
   }
-  for (const license of parseLicenseList(process.env.ADDITIONAL_LICENSES)) {
+  for (const license of parseLicenseList(additionalRaw)) {
     set.add(license);
   }
-  for (const license of parseLicenseList(process.env.DENIED_LICENSES)) {
+  for (const license of parseLicenseList(deniedRaw)) {
     set.delete(license);
   }
   return set;
@@ -184,22 +188,19 @@ function parsePackageExceptions(raw) {
   try {
     parsed = JSON.parse(raw);
   } catch (e) {
-    console.error(`::error::PACKAGE_EXCEPTIONS is not valid JSON: ${e.message}`);
-    process.exit(1);
+    throw new LicenseCheckError(`PACKAGE_EXCEPTIONS is not valid JSON: ${e.message}`);
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    console.error('::error::PACKAGE_EXCEPTIONS must be a JSON object of { "<license>": [[...chain]] }');
-    process.exit(1);
+    throw new LicenseCheckError('PACKAGE_EXCEPTIONS must be a JSON object of { "<license>": [[...chain]] }');
   }
   for (const [license, chains] of Object.entries(parsed)) {
     const valid =
       Array.isArray(chains) &&
       chains.every((chain) => Array.isArray(chain) && chain.every((s) => typeof s === "string"));
     if (!valid) {
-      console.error(
-        `::error::PACKAGE_EXCEPTIONS["${license}"] must be an array of string arrays (dependency chains)`,
+      throw new LicenseCheckError(
+        `PACKAGE_EXCEPTIONS["${license}"] must be an array of string arrays (dependency chains)`,
       );
-      process.exit(1);
     }
   }
   return parsed;
@@ -272,11 +273,12 @@ function dependencyPathsFor(packageName) {
 // chain — one approved route doesn't excuse a different, unreviewed route
 // to the same package. If no route could be resolved at all (pnpm why
 // failed, or found nothing), there's nothing to verify, so it's not excused
-// (fail safe rather than silently pass).
-function isPackageException(packageName, license, exceptions) {
+// (fail safe rather than silently pass). `getPaths` defaults to the real
+// `pnpm why`-backed lookup; tests inject a fake one to avoid shelling out.
+function isPackageException(packageName, license, exceptions, getPaths = dependencyPathsFor) {
   const chains = exceptions[license];
   if (!chains || chains.length === 0) return false;
-  const paths = dependencyPathsFor(packageName);
+  const paths = getPaths(packageName);
   if (paths.length === 0) return false;
   return paths.every((path) => chains.some((chain) => isOrderedSubsequence(chain, path)));
 }
@@ -301,9 +303,16 @@ function isLicenseAllowed(licenseString, allowSet) {
 }
 
 function main() {
-  const groups = resolveGroups();
-  const allowSet = buildAllowSet(groups);
-  const packageExceptions = parsePackageExceptions(process.env.PACKAGE_EXCEPTIONS);
+  let groups, allowSet, packageExceptions;
+  try {
+    groups = resolveGroups(process.env.LICENSE_GROUPS);
+    allowSet = buildAllowSet(groups, process.env.ADDITIONAL_LICENSES, process.env.DENIED_LICENSES);
+    packageExceptions = parsePackageExceptions(process.env.PACKAGE_EXCEPTIONS);
+  } catch (e) {
+    if (!(e instanceof LicenseCheckError)) throw e;
+    console.error(`::error::${e.message}`);
+    process.exit(1);
+  }
 
   console.log(`Checking licenses (groups: ${groups.join(", ")})...\n`);
   execSync("pnpm licenses list", { stdio: "inherit" });
@@ -334,4 +343,24 @@ function main() {
   process.exit(1);
 }
 
-main();
+// Only auto-run when executed directly (`node check-licenses.mjs`), not when
+// imported by the test file.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main();
+}
+
+export {
+  licenseGroups,
+  LicenseCheckError,
+  parseLicenseList,
+  resolveGroups,
+  buildAllowSet,
+  parsePackageExceptions,
+  globToRegExp,
+  matchesPattern,
+  isOrderedSubsequence,
+  collectDependencyPaths,
+  isPackageException,
+  splitMembers,
+  isLicenseAllowed,
+};
