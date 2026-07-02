@@ -211,3 +211,84 @@ jobs:
             echo "::error::Expected check-licenses to fail on an unknown license-groups value"
             exit 1
           fi
+
+  test-package-exceptions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.9.0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+          cache-dependency-path: tests/check-licenses/fail/pnpm-lock.yaml
+
+      - name: Install fake dependencies
+        working-directory: tests/check-licenses/fail
+        run: pnpm install
+
+      - name: "Test: package-exceptions allows one exact package+license pair"
+        uses: ./check-licenses
+        with:
+          working-directory: tests/check-licenses/fail
+          package-exceptions: "gpl-pkg@GPL-3.0"
+
+      - name: "Test: package-exceptions does not match on license alone"
+        id: check-wrong-license
+        continue-on-error: true
+        uses: ./check-licenses
+        with:
+          working-directory: tests/check-licenses/fail
+          package-exceptions: "gpl-pkg@MPL-2.0"
+
+      - name: "Verify: outcome must be failure"
+        env:
+          OUTCOME: ${{ steps.check-wrong-license.outcome }}
+        run: |
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::Expected check-licenses to fail when the exception's license doesn't match"
+            exit 1
+          fi
+
+      - name: "Test: package-exceptions does not match on package name alone"
+        id: check-wrong-name
+        continue-on-error: true
+        uses: ./check-licenses
+        with:
+          working-directory: tests/check-licenses/fail
+          package-exceptions: "other-pkg@GPL-3.0"
+
+      - name: "Verify: outcome must be failure"
+        env:
+          OUTCOME: ${{ steps.check-wrong-name.outcome }}
+        run: |
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::Expected check-licenses to fail when the exception's package name doesn't match"
+            exit 1
+          fi
+
+      - name: "Test: a malformed package-exceptions entry fails with a clear error"
+        id: check-malformed
+        continue-on-error: true
+        uses: ./check-licenses
+        with:
+          working-directory: tests/check-licenses/fail
+          package-exceptions: "malformed-entry-without-at-sign"
+
+      - name: "Verify: outcome must be failure"
+        env:
+          OUTCOME: ${{ steps.check-malformed.outcome }}
+        run: |
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::Expected check-licenses to fail on a malformed package-exceptions entry"
+            exit 1
+          fi

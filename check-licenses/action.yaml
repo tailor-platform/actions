@@ -28,6 +28,18 @@ inputs:
       belong to a selected group. Comma- or newline-separated.
     required: false
     default: ""
+  package-exceptions:
+    description: >-
+      Allow one specific package under one specific license, independent of
+      license-groups/additional-licenses/denied-licenses. One
+      "<exact package name>@<exact license string>" entry per line/comma
+      (e.g. `@img/sharp-libvips-linux-x64@LGPL-3.0-or-later`). Exact match
+      only — no globs — so a platform-specific dependency with multiple
+      package-name variants (e.g. per-OS/arch prebuilt binaries) needs one
+      entry per variant. Prefer this over additional-licenses when approving
+      a specific package's use of a license, not the license in general.
+    required: false
+    default: ""
   working-directory:
     description: Working directory for the project (for monorepo setups)
     required: false
@@ -43,4 +55,5 @@ runs:
         LICENSE_GROUPS: ${{ inputs.license-groups }}
         ADDITIONAL_LICENSES: ${{ inputs.additional-licenses }}
         DENIED_LICENSES: ${{ inputs.denied-licenses }}
+        PACKAGE_EXCEPTIONS: ${{ inputs.package-exceptions }}
       run: node "${{ github.action_path }}/check-licenses.mjs"

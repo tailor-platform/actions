@@ -359,6 +359,13 @@ jobs:
           license-groups: ${{ vars.LICENSE_GROUPS }}
           additional-licenses: ${{ vars.ALLOWED_LICENSES }}
           denied-licenses: ${{ vars.DENIED_LICENSES }}
+          # examples/nextjs-app pulls in @img/sharp-libvips-* (LGPL-3.0-or-later)
+          # transitively via next's built-in image optimization, used
+          # unmodified as a prebuilt binary — the standard case LGPL's
+          # dynamic-linking allowance covers.
+          package-exceptions: |
+            @img/sharp-libvips-linux-x64@LGPL-3.0-or-later
+            @img/sharp-libvips-darwin-arm64@LGPL-3.0-or-later
 ```
 
 #### Inputs
@@ -366,13 +373,14 @@ jobs:
 | Name | Required | Default | Description |
 |------|----------|---------|-------------|
 | `license-groups` | No | `reciprocal,notice,unencumbered` | Which Google licenseclassifier categories to allow. Comma- or newline-separated. Including `reciprocal` (weak-copyleft licenses like MPL/EPL/CDDL) is a licensing-policy decision, not a fixed fact, so it's configurable rather than hardcoded — source it from a `LICENSE_GROUPS` GitHub Variable. |
-| `additional-licenses` | No | | Extra individually-allowed SPDX license identifiers, beyond the selected `license-groups`. Comma- or newline-separated. Source this from the `ALLOWED_LICENSES` GitHub Variable (managed centrally in `tailor-inc/tailor-infra`) so every consuming repo shares one allowlist. |
+| `additional-licenses` | No | | Extra individually-allowed SPDX license identifiers, beyond the selected `license-groups`. Comma- or newline-separated. Source this from an `ALLOWED_LICENSES` GitHub Variable (organization-level, Terraform-managed) so every consuming repo shares one allowlist. |
 | `denied-licenses` | No | | SPDX license identifiers to remove from the allow set, even if they belong to a selected group. Comma- or newline-separated. Source this from a `DENIED_LICENSES` GitHub Variable, kept alongside `LICENSE_GROUPS` / `ALLOWED_LICENSES` even while empty, so denying a license later is a Variable update, not a workflow edit. |
+| `package-exceptions` | No | | Approve one specific package under one specific license, independent of the inputs above. One `<exact package name>@<exact license string>` entry per line/comma (e.g. `@img/sharp-libvips-linux-x64@LGPL-3.0-or-later`). Exact match only — no globs — so a platform-specific dependency with multiple package-name variants (e.g. per-OS/arch prebuilt binaries) needs one entry per variant. Prefer this over `additional-licenses` when you're approving a specific package's use of a license, not the license in general — approving one package's LGPL-licensed binary shouldn't silently bless every future LGPL dependency. Unlike the other inputs, this one is tied to one repo's specific dependency tree, so declare it directly in that repo's workflow instead of a shared GitHub Variable. |
 | `working-directory` | No | `.` | Working directory (for monorepo setups) |
 
 #### Managing the allowlist
 
-Both which license groups apply and the individual per-license exceptions are policy decisions, not implementation details — they live in GitHub Variables rather than in this action's code, so they can change without a workflow edit or a new action release. Values shared by multiple repos live in single **organization-level** variables, managed via Terraform in `tailor-inc/tailor-infra`, so they aren't duplicated per repo:
+`license-groups`, `additional-licenses`, and `denied-licenses` are policy decisions shared across repos, not implementation details — they live in GitHub Variables rather than in this action's code, so they can change without a workflow edit or a new action release. Managed via Terraform as single **organization-level** variables so the values aren't duplicated per repo:
 
 ```hcl
 resource "github_actions_organization_variable" "license_groups" {
@@ -394,7 +402,7 @@ resource "github_actions_organization_variable" "allowed_licenses" {
     data.github_repository.sdk.repo_id,
     data.github_repository.app_shell.repo_id,
   ]
-  value = "BlueOak-1.0.0,WTFPL,Unknown"
+  value = "BlueOak-1.0.0,WTFPL,Unknown,OFL-1.1"
 }
 
 # Empty for now — kept so denying a specific license later is a value
@@ -411,7 +419,7 @@ resource "github_actions_organization_variable" "denied_licenses" {
 }
 ```
 
-`vars.LICENSE_GROUPS` / `vars.ALLOWED_LICENSES` in a workflow resolve the org variable the same way they would a repo variable — a repo-level `github_actions_variable` of the same name still takes precedence if a specific repo ever needs to diverge from the shared value.
+`package-exceptions` isn't managed this way — see the Usage example above.
 
 ---
 

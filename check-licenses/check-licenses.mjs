@@ -21,6 +21,17 @@
  *   "(Apache-2.0 AND BSD-3-Clause)" (or a mix of AND/OR) requires every
  *   member license to be allowed, since precedence isn't parsed.
  *
+ * Package exceptions (PACKAGE_EXCEPTIONS, one "<exact package name>@<exact
+ * license string>" per line/comma): an allowance for one specific package
+ * under one specific license, independent of LICENSE_GROUPS/
+ * ADDITIONAL_LICENSES/DENIED_LICENSES. Unlike allowing a license outright,
+ * this doesn't silently bless every future dependency that happens to share
+ * that license — e.g. approving a package's LGPL-licensed prebuilt binary
+ * doesn't approve LGPL in general. Exact match only (no globs): a
+ * platform-specific dependency with multiple package-name variants (e.g.
+ * per-OS/arch prebuilt binaries) needs one entry per variant, so the
+ * approved set of packages stays explicit.
+ *
  * Exit codes:
  *   0 - All licenses are allowed
  *   1 - Found disallowed licenses or an error occurred
@@ -159,6 +170,27 @@ function buildAllowSet(groups) {
   return set;
 }
 
+function parsePackageExceptions(raw) {
+  const exceptions = [];
+  for (const entry of parseLicenseList(raw)) {
+    // Split on the LAST "@" — scoped package names (e.g. "@img/pkg") contain
+    // a leading "@" of their own.
+    const at = entry.lastIndexOf("@");
+    if (at <= 0) {
+      console.error(
+        `::error::Invalid PACKAGE_EXCEPTIONS entry (expected "<package-name>@<license>"): ${entry}`,
+      );
+      process.exit(1);
+    }
+    exceptions.push({ name: entry.slice(0, at), license: entry.slice(at + 1) });
+  }
+  return exceptions;
+}
+
+function isPackageException(packageName, license, exceptions) {
+  return exceptions.some((e) => e.name === packageName && e.license === license);
+}
+
 function splitMembers(expr) {
   return expr
     .split(/\s+(?:OR|AND)\s+/i)
@@ -181,6 +213,7 @@ function isLicenseAllowed(licenseString, allowSet) {
 function main() {
   const groups = resolveGroups();
   const allowSet = buildAllowSet(groups);
+  const packageExceptions = parsePackageExceptions(process.env.PACKAGE_EXCEPTIONS);
 
   console.log(`Checking licenses (groups: ${groups.join(", ")})...\n`);
   execSync("pnpm licenses list", { stdio: "inherit" });
@@ -192,6 +225,7 @@ function main() {
   for (const [license, packages] of Object.entries(licensesJson)) {
     if (!isLicenseAllowed(license, allowSet)) {
       for (const pkg of packages) {
+        if (isPackageException(pkg.name, license, packageExceptions)) continue;
         violations.push({ package: pkg.name, license });
       }
     }
