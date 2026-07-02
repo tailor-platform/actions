@@ -1,0 +1,8 @@
+{
+  "name": "mid-pkg",
+  "version": "1.0.0",
+  "license": "MIT",
+  "dependencies": {
+    "gpl-leaf": "file:../gpl-leaf"
+  }
+}

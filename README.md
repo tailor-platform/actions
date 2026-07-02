@@ -364,8 +364,7 @@ jobs:
           # unmodified as a prebuilt binary — the standard case LGPL's
           # dynamic-linking allowance covers.
           package-exceptions: |
-            @img/sharp-libvips-linux-x64@LGPL-3.0-or-later
-            @img/sharp-libvips-darwin-arm64@LGPL-3.0-or-later
+            {"LGPL-3.0-or-later": [["nextjs-app", "next"]]}
 ```
 
 #### Inputs
@@ -375,8 +374,18 @@ jobs:
 | `license-groups` | No | `reciprocal,notice,unencumbered` | Which Google licenseclassifier categories to allow. Comma- or newline-separated. Including `reciprocal` (weak-copyleft licenses like MPL/EPL/CDDL) is a licensing-policy decision, not a fixed fact, so it's configurable rather than hardcoded — source it from a `LICENSE_GROUPS` GitHub Variable. |
 | `additional-licenses` | No | | Extra individually-allowed SPDX license identifiers, beyond the selected `license-groups`. Comma- or newline-separated. Source this from an `ALLOWED_LICENSES` GitHub Variable (organization-level, Terraform-managed) so every consuming repo shares one allowlist. |
 | `denied-licenses` | No | | SPDX license identifiers to remove from the allow set, even if they belong to a selected group. Comma- or newline-separated. Source this from a `DENIED_LICENSES` GitHub Variable, kept alongside `LICENSE_GROUPS` / `ALLOWED_LICENSES` even while empty, so denying a license later is a Variable update, not a workflow edit. |
-| `package-exceptions` | No | | Approve one specific package under one specific license, independent of the inputs above. One `<exact package name>@<exact license string>` entry per line/comma (e.g. `@img/sharp-libvips-linux-x64@LGPL-3.0-or-later`). Exact match only — no globs — so a platform-specific dependency with multiple package-name variants (e.g. per-OS/arch prebuilt binaries) needs one entry per variant. Prefer this over `additional-licenses` when you're approving a specific package's use of a license, not the license in general — approving one package's LGPL-licensed binary shouldn't silently bless every future LGPL dependency. Unlike the other inputs, this one is tied to one repo's specific dependency tree, so declare it directly in that repo's workflow instead of a shared GitHub Variable. |
+| `package-exceptions` | No | | Approve specific dependency routes to an otherwise-disallowed license, independent of the inputs above. A JSON object mapping a license string to an array of dependency chains — see [Package exceptions](#package-exceptions) below. Unlike the other inputs, this one is tied to one repo's specific dependency tree, so declare it directly in that repo's workflow instead of a shared GitHub Variable. |
 | `working-directory` | No | `.` | Working directory (for monorepo setups) |
+
+#### Package exceptions
+
+Allowing a license outright (`additional-licenses`) silently blesses every future dependency under that license — approving one package's LGPL-licensed prebuilt binary shouldn't approve LGPL in general. `package-exceptions` instead approves a specific **route** to a license, expressed as a dependency chain:
+
+```json
+{ "LGPL-3.0-or-later": [["nextjs-app", "next"]] }
+```
+
+Each chain is an ordered list of package names (the workspace project name first; `*` globs allowed elsewhere). A violation is excused if its chain's elements appear, **in order**, along some path from a workspace project down to the violating package (found via `pnpm why <package> --recursive --json` — requires pnpm). Other dependencies may appear between listed names, and the chain doesn't need to end at the violating package itself: `["nextjs-app", "next"]` approves this license for anything reached via `nextjs-app`'s use of `next`, not one exact package — useful since a native dependency like `sharp`/`libvips` ships a different package name per OS/arch (`@img/sharp-libvips-linux-x64`, `@img/sharp-libvips-darwin-arm64`, ...); one chain covers all of them without enumerating every platform variant.
 
 #### Managing the allowlist
 

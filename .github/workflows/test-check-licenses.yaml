@@ -230,65 +230,94 @@ jobs:
         with:
           node-version: 24.18.0
           cache: pnpm
-          cache-dependency-path: tests/check-licenses/fail/pnpm-lock.yaml
+          cache-dependency-path: tests/check-licenses/chain/pnpm-lock.yaml
 
       - name: Install fake dependencies
-        working-directory: tests/check-licenses/fail
+        working-directory: tests/check-licenses/chain
         run: pnpm install
 
-      - name: "Test: package-exceptions allows one exact package+license pair"
+      - name: "Test: chain matches app-a -> mid-pkg -> gpl-leaf"
         uses: ./check-licenses
         with:
-          working-directory: tests/check-licenses/fail
-          package-exceptions: "gpl-pkg@GPL-3.0"
+          working-directory: tests/check-licenses/chain
+          package-exceptions: '{"GPL-3.0": [["app-a", "mid-pkg"]]}'
 
-      - name: "Test: package-exceptions does not match on license alone"
+      - name: "Test: chain matches with a glob on the violating package itself"
+        uses: ./check-licenses
+        with:
+          working-directory: tests/check-licenses/chain
+          package-exceptions: '{"GPL-3.0": [["app-a", "gpl-*"]]}'
+
+      - name: "Test: chain matches skipping the intermediate package (gaps allowed)"
+        uses: ./check-licenses
+        with:
+          working-directory: tests/check-licenses/chain
+          package-exceptions: '{"GPL-3.0": [["app-a", "gpl-leaf"]]}'
+
+      - name: "Test: wrong workspace project name does not match"
+        id: check-wrong-project
+        continue-on-error: true
+        uses: ./check-licenses
+        with:
+          working-directory: tests/check-licenses/chain
+          package-exceptions: '{"GPL-3.0": [["app-b", "mid-pkg"]]}'
+
+      - name: "Verify: outcome must be failure"
+        env:
+          OUTCOME: ${{ steps.check-wrong-project.outcome }}
+        run: |
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::Expected check-licenses to fail when the chain's workspace project doesn't match"
+            exit 1
+          fi
+
+      - name: "Test: reversed chain order does not match"
+        id: check-wrong-order
+        continue-on-error: true
+        uses: ./check-licenses
+        with:
+          working-directory: tests/check-licenses/chain
+          package-exceptions: '{"GPL-3.0": [["mid-pkg", "app-a"]]}'
+
+      - name: "Verify: outcome must be failure"
+        env:
+          OUTCOME: ${{ steps.check-wrong-order.outcome }}
+        run: |
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::Expected check-licenses to fail when the chain order is reversed"
+            exit 1
+          fi
+
+      - name: "Test: chain for a different license does not match"
         id: check-wrong-license
         continue-on-error: true
         uses: ./check-licenses
         with:
-          working-directory: tests/check-licenses/fail
-          package-exceptions: "gpl-pkg@MPL-2.0"
+          working-directory: tests/check-licenses/chain
+          package-exceptions: '{"MPL-2.0": [["app-a", "mid-pkg"]]}'
 
       - name: "Verify: outcome must be failure"
         env:
           OUTCOME: ${{ steps.check-wrong-license.outcome }}
         run: |
           if [ "$OUTCOME" != "failure" ]; then
-            echo "::error::Expected check-licenses to fail when the exception's license doesn't match"
+            echo "::error::Expected check-licenses to fail when the exception is keyed by the wrong license"
             exit 1
           fi
 
-      - name: "Test: package-exceptions does not match on package name alone"
-        id: check-wrong-name
+      - name: "Test: invalid JSON fails with a clear error"
+        id: check-invalid-json
         continue-on-error: true
         uses: ./check-licenses
         with:
-          working-directory: tests/check-licenses/fail
-          package-exceptions: "other-pkg@GPL-3.0"
+          working-directory: tests/check-licenses/chain
+          package-exceptions: "not valid json"
 
       - name: "Verify: outcome must be failure"
         env:
-          OUTCOME: ${{ steps.check-wrong-name.outcome }}
+          OUTCOME: ${{ steps.check-invalid-json.outcome }}
         run: |
           if [ "$OUTCOME" != "failure" ]; then
-            echo "::error::Expected check-licenses to fail when the exception's package name doesn't match"
-            exit 1
-          fi
-
-      - name: "Test: a malformed package-exceptions entry fails with a clear error"
-        id: check-malformed
-        continue-on-error: true
-        uses: ./check-licenses
-        with:
-          working-directory: tests/check-licenses/fail
-          package-exceptions: "malformed-entry-without-at-sign"
-
-      - name: "Verify: outcome must be failure"
-        env:
-          OUTCOME: ${{ steps.check-malformed.outcome }}
-        run: |
-          if [ "$OUTCOME" != "failure" ]; then
-            echo "::error::Expected check-licenses to fail on a malformed package-exceptions entry"
+            echo "::error::Expected check-licenses to fail on invalid package-exceptions JSON"
             exit 1
           fi

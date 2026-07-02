@@ -21,23 +21,29 @@
  *   "(Apache-2.0 AND BSD-3-Clause)" (or a mix of AND/OR) requires every
  *   member license to be allowed, since precedence isn't parsed.
  *
- * Package exceptions (PACKAGE_EXCEPTIONS, one "<exact package name>@<exact
- * license string>" per line/comma): an allowance for one specific package
- * under one specific license, independent of LICENSE_GROUPS/
- * ADDITIONAL_LICENSES/DENIED_LICENSES. Unlike allowing a license outright,
- * this doesn't silently bless every future dependency that happens to share
- * that license — e.g. approving a package's LGPL-licensed prebuilt binary
- * doesn't approve LGPL in general. Exact match only (no globs): a
- * platform-specific dependency with multiple package-name variants (e.g.
- * per-OS/arch prebuilt binaries) needs one entry per variant, so the
- * approved set of packages stays explicit.
+ * Package exceptions (PACKAGE_EXCEPTIONS, a JSON object mapping a license
+ * string to an array of dependency chains):
+ *
+ *   { "LGPL-3.0-or-later": [["nextjs-app", "next"]] }
+ *
+ * Approving a license outright (ADDITIONAL_LICENSES) would silently bless
+ * every future dependency under that license. A chain instead approves one
+ * specific route to it: `pnpm why <package> -r --json` is used to find the
+ * dependency path(s) from each workspace project down to the violating
+ * package, and a chain matches if its elements (workspace project name,
+ * then intermediate/target package names — glob patterns like
+ * "@img/sharp-libvips-*" allowed) appear as an ordered subsequence of that
+ * path (other dependencies may appear between them). The chain doesn't need
+ * to end at the violating package itself — `["nextjs-app", "next"]` approves
+ * this license for anything reached via nextjs-app's use of next, not just
+ * one exact package.
  *
  * Exit codes:
  *   0 - All licenses are allowed
  *   1 - Found disallowed licenses or an error occurred
  */
 
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 
 const licenseGroups = {
   // https://github.com/google/licenseclassifier/blob/e6a9bb99b5a6f71d5a34336b8245e305f5430f99/license_type.go#L225
@@ -171,24 +177,100 @@ function buildAllowSet(groups) {
 }
 
 function parsePackageExceptions(raw) {
-  const exceptions = [];
-  for (const entry of parseLicenseList(raw)) {
-    // Split on the LAST "@" — scoped package names (e.g. "@img/pkg") contain
-    // a leading "@" of their own.
-    const at = entry.lastIndexOf("@");
-    if (at <= 0) {
+  if (!raw || raw.trim().length === 0) return {};
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    console.error(`::error::PACKAGE_EXCEPTIONS is not valid JSON: ${e.message}`);
+    process.exit(1);
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    console.error('::error::PACKAGE_EXCEPTIONS must be a JSON object of { "<license>": [[...chain]] }');
+    process.exit(1);
+  }
+  for (const [license, chains] of Object.entries(parsed)) {
+    const valid =
+      Array.isArray(chains) &&
+      chains.every((chain) => Array.isArray(chain) && chain.every((s) => typeof s === "string"));
+    if (!valid) {
       console.error(
-        `::error::Invalid PACKAGE_EXCEPTIONS entry (expected "<package-name>@<license>"): ${entry}`,
+        `::error::PACKAGE_EXCEPTIONS["${license}"] must be an array of string arrays (dependency chains)`,
       );
       process.exit(1);
     }
-    exceptions.push({ name: entry.slice(0, at), license: entry.slice(at + 1) });
   }
-  return exceptions;
+  return parsed;
+}
+
+function globToRegExp(pattern) {
+  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
+  return new RegExp(`^${escaped}$`);
+}
+
+function matchesPattern(name, pattern) {
+  return globToRegExp(pattern).test(name);
+}
+
+// True if `chain` appears as an ordered subsequence of `path` (other
+// entries in `path` may appear between chain elements).
+function isOrderedSubsequence(chain, path) {
+  let i = 0;
+  for (const name of path) {
+    if (i < chain.length && matchesPattern(name, chain[i])) {
+      i++;
+    }
+  }
+  return i === chain.length;
+}
+
+// Recursively walks a `pnpm why` dependents tree, returning every complete
+// path from a workspace project (a node with `depField`) down to the
+// original queried package, in workspace-project-first order. Branches that
+// dead-end without reaching a workspace project (namely `deduped: true`
+// nodes, where pnpm points at an identical chain shown elsewhere in the
+// tree instead of repeating it) contribute no path — the same route is
+// still captured wherever pnpm did expand it in full.
+function collectDependencyPaths(node, pathSoFar) {
+  const path = [node.name, ...pathSoFar];
+  if (node.depField) {
+    return [path];
+  }
+  if (!Array.isArray(node.dependents) || node.dependents.length === 0) {
+    return [];
+  }
+  return node.dependents.flatMap((dependent) => collectDependencyPaths(dependent, path));
+}
+
+const whyPathsCache = new Map();
+
+function dependencyPathsFor(packageName) {
+  if (whyPathsCache.has(packageName)) {
+    return whyPathsCache.get(packageName);
+  }
+  let paths = [];
+  try {
+    const output = execFileSync("pnpm", ["why", packageName, "-r", "--json"], { encoding: "utf8" });
+    const matches = JSON.parse(output);
+    if (Array.isArray(matches)) {
+      paths = matches.flatMap((match) =>
+        Array.isArray(match.dependents)
+          ? match.dependents.flatMap((dependent) => collectDependencyPaths(dependent, [match.name]))
+          : [],
+      );
+    }
+  } catch {
+    paths = [];
+  }
+  whyPathsCache.set(packageName, paths);
+  return paths;
 }
 
 function isPackageException(packageName, license, exceptions) {
-  return exceptions.some((e) => e.name === packageName && e.license === license);
+  const chains = exceptions[license];
+  if (!chains || chains.length === 0) return false;
+  const paths = dependencyPathsFor(packageName);
+  return chains.some((chain) => paths.some((path) => isOrderedSubsequence(chain, path)));
 }
 
 function splitMembers(expr) {

@@ -30,14 +30,19 @@ inputs:
     default: ""
   package-exceptions:
     description: >-
-      Allow one specific package under one specific license, independent of
-      license-groups/additional-licenses/denied-licenses. One
-      "<exact package name>@<exact license string>" entry per line/comma
-      (e.g. `@img/sharp-libvips-linux-x64@LGPL-3.0-or-later`). Exact match
-      only — no globs — so a platform-specific dependency with multiple
-      package-name variants (e.g. per-OS/arch prebuilt binaries) needs one
-      entry per variant. Prefer this over additional-licenses when approving
-      a specific package's use of a license, not the license in general.
+      Approve specific dependency routes to an otherwise-disallowed license,
+      independent of license-groups/additional-licenses/denied-licenses. A
+      JSON object mapping a license string to an array of dependency chains,
+      e.g. `{"LGPL-3.0-or-later": [["nextjs-app", "next"]]}`. Each chain is
+      an ordered list of package names (workspace project name first;
+      "*" globs allowed) that must appear, in order, along the path from a
+      workspace project down to the violating package — found via
+      `pnpm why <package> -r --json` — though the chain need not end at the
+      violating package itself; other dependencies may appear between
+      listed names. Prefer this over additional-licenses when approving a
+      specific route to a license, not the license in general — approving
+      one package's LGPL-licensed binary shouldn't silently bless every
+      future LGPL dependency. Requires pnpm.
     required: false
     default: ""
   working-directory:

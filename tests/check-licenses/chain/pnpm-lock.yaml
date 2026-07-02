@@ -1,0 +1,31 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .: {}
+
+  apps/app-a:
+    dependencies:
+      mid-pkg:
+        specifier: file:../../fake-packages/mid-pkg
+        version: file:fake-packages/mid-pkg
+
+packages:
+
+  gpl-leaf@file:fake-packages/gpl-leaf:
+    resolution: {directory: fake-packages/gpl-leaf, type: directory}
+
+  mid-pkg@file:fake-packages/mid-pkg:
+    resolution: {directory: fake-packages/mid-pkg, type: directory}
+
+snapshots:
+
+  gpl-leaf@file:fake-packages/gpl-leaf: {}
+
+  mid-pkg@file:fake-packages/mid-pkg:
+    dependencies:
+      gpl-leaf: file:fake-packages/gpl-leaf
