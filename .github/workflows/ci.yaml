@@ -23,6 +23,23 @@ jobs:
         with:
           reporter: github-pr-review
 
+  internal-refs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Reject SHA/tag-pinned self-references to _internal actions
+        run: |
+          if grep -rnE 'uses:\s*tailor-platform/actions/_internal/' --include='*.yaml' --include='*.yml' .; then
+            echo "::error::_internal/* actions must be referenced via local path (./_internal/<name>), not a pinned tailor-platform/actions/_internal/... ref. A remote/SHA pin here can only ever point at a commit older than the one being edited, so it either drifts from the outer action or (if self-referential) turns into a dangling impostor-commit the moment the branch is amended/rebased. Local paths always resolve to the exact commit/ref the outer action was invoked at, with no separate pin-bump step required."
+            exit 1
+          fi
+          echo "OK: no pinned references to _internal/* actions found."
+
   ghalint:
     runs-on: ubuntu-latest
     timeout-minutes: 10

@@ -64,7 +64,7 @@ runs:
   using: composite
   steps:
     - name: Set up Tailor SDK
-      uses: tailor-platform/actions/_internal/sdk-setup@ef227c18ad0ad487d6aecf80a47c251472819f22
+      uses: ./_internal/sdk-setup
       with:
         platform-client-id: ${{ inputs.platform-client-id }}
         platform-client-secret: ${{ inputs.platform-client-secret }}
@@ -122,7 +122,7 @@ runs:
 
     - name: Deploy
       id: deploy
-      uses: tailor-platform/actions/_internal/deploy@ef227c18ad0ad487d6aecf80a47c251472819f22
+      uses: ./_internal/deploy
       with:
         workspace-id: ${{ steps.workspace.outputs.workspace-id }}
         working-directory: ${{ inputs.working-directory }}
