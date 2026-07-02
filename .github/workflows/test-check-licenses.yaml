@@ -321,3 +321,53 @@ jobs:
             echo "::error::Expected check-licenses to fail on invalid package-exceptions JSON"
             exit 1
           fi
+
+  test-package-exceptions-multi-path:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.9.0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+          cache-dependency-path: tests/check-licenses/chain-multi-path/pnpm-lock.yaml
+
+      - name: Install fake dependencies
+        working-directory: tests/check-licenses/chain-multi-path
+        run: pnpm install
+
+      # gpl-leaf is reachable two ways here: app-a -> mid-pkg -> gpl-leaf,
+      # and app-b -> gpl-leaf directly. Approving only one route must not
+      # excuse the other, unreviewed one.
+      - name: "Test: approving only one of two routes still fails"
+        id: check-partial
+        continue-on-error: true
+        uses: ./check-licenses
+        with:
+          working-directory: tests/check-licenses/chain-multi-path
+          package-exceptions: '{"GPL-3.0": [["app-a", "mid-pkg"]]}'
+
+      - name: "Verify: outcome must be failure"
+        env:
+          OUTCOME: ${{ steps.check-partial.outcome }}
+        run: |
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::Expected check-licenses to fail when only one of two routes is approved"
+            exit 1
+          fi
+
+      - name: "Test: approving every route passes"
+        uses: ./check-licenses
+        with:
+          working-directory: tests/check-licenses/chain-multi-path
+          package-exceptions: '{"GPL-3.0": [["app-a", "mid-pkg"], ["app-b", "gpl-leaf"]]}'

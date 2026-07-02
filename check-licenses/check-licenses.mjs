@@ -28,15 +28,17 @@
  *
  * Approving a license outright (ADDITIONAL_LICENSES) would silently bless
  * every future dependency under that license. A chain instead approves one
- * specific route to it: `pnpm why <package> -r --json` is used to find the
- * dependency path(s) from each workspace project down to the violating
- * package, and a chain matches if its elements (workspace project name,
- * then intermediate/target package names — glob patterns like
- * "@img/sharp-libvips-*" allowed) appear as an ordered subsequence of that
- * path (other dependencies may appear between them). The chain doesn't need
- * to end at the violating package itself — `["nextjs-app", "next"]` approves
- * this license for anything reached via nextjs-app's use of next, not just
- * one exact package.
+ * specific route to it: `pnpm why <package> -r --json` finds every
+ * dependency path from a workspace project down to the violating package, a
+ * chain matches a path if its elements (workspace project name, then
+ * intermediate/target package names — glob patterns like
+ * "@img/sharp-libvips-*" allowed) appear as an ordered subsequence of it
+ * (other dependencies may appear between them), and the package is excused
+ * only if EVERY one of its actual paths matches some declared chain — an
+ * approved route doesn't excuse a different, unreviewed route to the same
+ * package. The chain doesn't need to end at the violating package itself —
+ * `["nextjs-app", "next"]` approves this license for anything reached via
+ * nextjs-app's use of next, not just one exact package.
  *
  * Exit codes:
  *   0 - All licenses are allowed
@@ -266,11 +268,17 @@ function dependencyPathsFor(packageName) {
   return paths;
 }
 
+// Excused only if EVERY route to this package is covered by some declared
+// chain — one approved route doesn't excuse a different, unreviewed route
+// to the same package. If no route could be resolved at all (pnpm why
+// failed, or found nothing), there's nothing to verify, so it's not excused
+// (fail safe rather than silently pass).
 function isPackageException(packageName, license, exceptions) {
   const chains = exceptions[license];
   if (!chains || chains.length === 0) return false;
   const paths = dependencyPathsFor(packageName);
-  return chains.some((chain) => paths.some((path) => isOrderedSubsequence(chain, path)));
+  if (paths.length === 0) return false;
+  return paths.every((path) => chains.some((chain) => isOrderedSubsequence(chain, path)));
 }
 
 function splitMembers(expr) {

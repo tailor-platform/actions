@@ -1,0 +1,7 @@
+{
+  "name": "app-b",
+  "private": true,
+  "dependencies": {
+    "gpl-leaf": "file:../../fake-packages/gpl-leaf"
+  }
+}
