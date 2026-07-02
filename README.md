@@ -363,21 +363,28 @@ jobs:
 
 | Name | Required | Default | Description |
 |------|----------|---------|-------------|
-| `additional-licenses` | No | | Extra individually-allowed SPDX license identifiers, beyond the reciprocal/notice/unencumbered baseline. Comma- or newline-separated. Source this from a repository `ALLOWED_LICENSES` GitHub Variable (managed centrally in `tailor-inc/tailor-infra`) so the allowlist stays auditable per repository. |
+| `additional-licenses` | No | | Extra individually-allowed SPDX license identifiers, beyond the reciprocal/notice/unencumbered baseline. Comma- or newline-separated. Source this from the `ALLOWED_LICENSES` GitHub Variable (managed centrally in `tailor-inc/tailor-infra`) so every consuming repo shares one allowlist. |
 | `denied-licenses` | No | | SPDX license identifiers to remove from the baseline allow set, even if they belong to an allowed group. Comma- or newline-separated. |
 | `working-directory` | No | `.` | Working directory (for monorepo setups) |
 
 #### Managing the allowlist
 
-The reciprocal/notice/unencumbered groups are fixed inside the action (they rarely change). Per-repository exceptions belong in that repository's `ALLOWED_LICENSES` GitHub Variable, managed via Terraform in `tailor-inc/tailor-infra`, e.g.:
+The reciprocal/notice/unencumbered groups are fixed inside the action (they rarely change). Exceptions shared by multiple repos live in a single **organization-level** `ALLOWED_LICENSES` GitHub Variable, managed via Terraform in `tailor-inc/tailor-infra`, so the value isn't duplicated per repo:
 
 ```hcl
-resource "github_actions_variable" "allowed_licenses" {
-  repository    = github_repository.this.name
+resource "github_actions_organization_variable" "allowed_licenses" {
   variable_name = "ALLOWED_LICENSES"
-  value         = "BlueOak-1.0.0,WTFPL,Unknown"
+  visibility    = "selected"
+  selected_repository_ids = [
+    data.github_repository.erp_kit.repo_id,
+    data.github_repository.sdk.repo_id,
+    data.github_repository.app_shell.repo_id,
+  ]
+  value = "BlueOak-1.0.0,WTFPL,Unknown"
 }
 ```
+
+`vars.ALLOWED_LICENSES` in a workflow resolves the org variable the same way it would a repo variable — a repo-level `github_actions_variable` of the same name still takes precedence if a specific repo ever needs to diverge from the shared list.
 
 ---
 
