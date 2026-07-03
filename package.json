@@ -3,7 +3,8 @@
   "scripts": {
     "lint": "actionlint",
     "test": "actrun workflow run .github/workflows/test-deploy.yaml --dry-run",
-    "test:run": "actrun workflow run .github/workflows/test-deploy.yaml"
+    "test:run": "actrun workflow run .github/workflows/test-deploy.yaml",
+    "test:check-licenses": "node --test check-licenses/*.test.mjs"
   },
   "devDependencies": {
     "@mizchi/actrun": "0.22.1"

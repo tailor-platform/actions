@@ -1,0 +1,64 @@
+name: Check Licenses
+description: >-
+  Check that all dependencies use allowed licenses, based on the Google
+  licenseclassifier categories (reciprocal, notice, unencumbered). Requires
+  Node.js, pnpm, and dependencies to be installed by the caller.
+
+inputs:
+  license-groups:
+    description: >-
+      Which Google licenseclassifier categories to allow, out of reciprocal,
+      notice, unencumbered. Comma- or newline-separated. Defaults to all
+      three. Including "reciprocal" (weak-copyleft licenses like
+      MPL/EPL/CDDL) is a licensing-policy decision, not a fixed fact — source
+      this from a `LICENSE_GROUPS` GitHub Variable so it can be changed
+      without editing workflows.
+    required: false
+    default: ""
+  additional-licenses:
+    description: >-
+      Extra individually-allowed SPDX license identifiers, beyond the
+      selected license-groups. Comma- or newline-separated (e.g. from an
+      `ALLOWED_LICENSES` GitHub Variable).
+    required: false
+    default: ""
+  denied-licenses:
+    description: >-
+      SPDX license identifiers to remove from the allow set, even if they
+      belong to a selected group. Comma- or newline-separated.
+    required: false
+    default: ""
+  package-exceptions:
+    description: >-
+      Approve specific dependency routes to an otherwise-disallowed license,
+      independent of license-groups/additional-licenses/denied-licenses. A
+      JSON object mapping a license string to an array of dependency chains,
+      e.g. `{"LGPL-3.0-or-later": [["nextjs-app", "next"]]}`. Each chain is
+      an ordered list of package names (workspace project name first;
+      "*" globs allowed) that must appear, in order, along the path from a
+      workspace project down to the violating package — found via
+      `pnpm why <package> -r --json` — though the chain need not end at the
+      violating package itself; other dependencies may appear between
+      listed names. Prefer this over additional-licenses when approving a
+      specific route to a license, not the license in general — approving
+      one package's LGPL-licensed binary shouldn't silently bless every
+      future LGPL dependency. Requires pnpm.
+    required: false
+    default: ""
+  working-directory:
+    description: Working directory for the project (for monorepo setups)
+    required: false
+    default: "."
+
+runs:
+  using: composite
+  steps:
+    - name: Check licenses
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        LICENSE_GROUPS: ${{ inputs.license-groups }}
+        ADDITIONAL_LICENSES: ${{ inputs.additional-licenses }}
+        DENIED_LICENSES: ${{ inputs.denied-licenses }}
+        PACKAGE_EXCEPTIONS: ${{ inputs.package-exceptions }}
+      run: node "${{ github.action_path }}/check-licenses.mjs"

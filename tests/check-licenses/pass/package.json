@@ -1,0 +1,7 @@
+{
+  "name": "check-licenses-test-pass",
+  "private": true,
+  "dependencies": {
+    "mit-pkg": "file:../fake-packages/mit-pkg"
+  }
+}

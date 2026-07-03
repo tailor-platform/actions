@@ -1,0 +1,7 @@
+{
+  "name": "app-a",
+  "private": true,
+  "dependencies": {
+    "mid-pkg": "file:../../fake-packages/mid-pkg"
+  }
+}
