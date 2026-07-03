@@ -22,14 +22,14 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version-file: package.json
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - uses: tailor-platform/actions/deploy@v1
+      - uses: tailor-platform/actions/deploy@d3040e3b5da92f72696d89db24bc9da62e0993d8 # v1.6.0
         with:
           workspace-id: ${{ vars.TAILOR_PLATFORM_WORKSPACE_ID }}
           platform-client-id: ${{ secrets.TAILOR_PLATFORM_MACHINE_USER_CLIENT_ID }}
@@ -89,16 +89,16 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version-file: package.json
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - uses: tailor-platform/actions/plan@v1
+      - uses: tailor-platform/actions/plan@d3040e3b5da92f72696d89db24bc9da62e0993d8 # v1.6.0
         with:
           workspace-id: ${{ vars.TAILOR_PLATFORM_WORKSPACE_ID }}
           label: production
@@ -226,7 +226,7 @@ Send a deployment notification. Currently supports Slack via Bot token and chann
     steps:
       # ... deploy steps ...
       - if: always()
-        uses: tailor-platform/actions/notify@v1
+        uses: tailor-platform/actions/notify@d3040e3b5da92f72696d89db24bc9da62e0993d8 # v1.6.0
         with:
           provider: slack
           status: ${{ job.status }}
@@ -264,15 +264,15 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version-file: package.json
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - id: preview
-        uses: tailor-platform/actions/preview-deploy@v1
+        uses: tailor-platform/actions/preview-deploy@d3040e3b5da92f72696d89db24bc9da62e0993d8 # v1.6.0
         with:
           workspace-name-prefix: my-app
           region: us-west
@@ -280,7 +280,7 @@ jobs:
           platform-client-id: ${{ secrets.TAILOR_PLATFORM_MACHINE_USER_CLIENT_ID }}
           platform-client-secret: ${{ secrets.TAILOR_PLATFORM_MACHINE_USER_CLIENT_SECRET }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: tailor-platform/actions/preview-comment@v1
+      - uses: tailor-platform/actions/preview-comment@d3040e3b5da92f72696d89db24bc9da62e0993d8 # v1.6.0
         with:
           workspace-id: ${{ steps.preview.outputs.workspace-id }}
           workspace-name: ${{ steps.preview.outputs.workspace-name }}
@@ -347,14 +347,14 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version-file: package.json
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - uses: tailor-platform/actions/check-licenses@v1
+      - uses: tailor-platform/actions/check-licenses@d3040e3b5da92f72696d89db24bc9da62e0993d8 # v1.6.0
         with:
           license-groups: ${{ vars.LICENSE_GROUPS }}
           additional-licenses: ${{ vars.ALLOWED_LICENSES }}
@@ -447,14 +447,14 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version-file: package.json
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - uses: tailor-platform/actions/preview-cleanup@v1
+      - uses: tailor-platform/actions/preview-cleanup@d3040e3b5da92f72696d89db24bc9da62e0993d8 # v1.6.0
         with:
           workspace-name-prefix: my-app
           platform-client-id: ${{ secrets.TAILOR_PLATFORM_MACHINE_USER_CLIENT_ID }}
