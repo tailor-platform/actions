@@ -55,7 +55,7 @@ runs:
   steps:
     - name: Set up Tailor SDK
       if: inputs.workspace-id != ''
-      uses: tailor-platform/actions/_internal/sdk-setup@ef227c18ad0ad487d6aecf80a47c251472819f22
+      uses: tailor-platform/actions/_internal/sdk-setup@d203a37c87b7a69c6040611c33e9e50c1d564ed1
       with:
         platform-client-id: ${{ inputs.platform-client-id }}
         platform-client-secret: ${{ inputs.platform-client-secret }}
@@ -178,7 +178,7 @@ runs:
 
     - name: Post sticky plan comment
       if: inputs.workspace-id != '' && github.event_name == 'pull_request' && inputs.github-token != ''
-      uses: tailor-platform/actions/_internal/sticky-comment@ef227c18ad0ad487d6aecf80a47c251472819f22
+      uses: tailor-platform/actions/_internal/sticky-comment@d203a37c87b7a69c6040611c33e9e50c1d564ed1
       with:
         marker-prefix: ${{ steps.comment-body.outputs.marker }}
         body: ${{ steps.comment-body.outputs.body }}
