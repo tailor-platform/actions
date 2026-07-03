@@ -356,9 +356,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - uses: tailor-platform/actions/check-licenses@v1
         with:
-          license-groups: ${{ vars.LICENSE_GROUPS }}
-          additional-licenses: ${{ vars.ALLOWED_LICENSES }}
-          denied-licenses: ${{ vars.DENIED_LICENSES }}
+          license-groups: ${{ vars.CHECK_LICENSES_ALLOWED_LICENSE_GROUPS }}
+          additional-licenses: ${{ vars.CHECK_LICENSES_ALLOWED_LICENSES }}
+          denied-licenses: ${{ vars.CHECK_LICENSES_DENIED_LICENSES }}
           # examples/nextjs-app pulls in @img/sharp-libvips-* (LGPL-3.0-or-later)
           # transitively via next's built-in image optimization, used
           # unmodified as a prebuilt binary — the standard case LGPL's
