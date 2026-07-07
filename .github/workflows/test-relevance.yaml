@@ -3,7 +3,7 @@ name: Test Relevance Action
 on:
   pull_request:
     paths:
-      - "_internal/relevance/**"
+      - "relevance/**"
       - ".github/workflows/test-relevance.yaml"
   push:
     branches:
@@ -28,7 +28,7 @@ jobs:
           node-version: 24.18.0
 
       - name: Run unit tests
-        run: node --test _internal/relevance/*.test.mjs
+        run: node --test relevance/*.test.mjs
 
   test-zero-sha-is-relevant:
     runs-on: ubuntu-latest
@@ -42,7 +42,7 @@ jobs:
 
       - name: "Test: all-zero sha-base is always relevant"
         id: relevance
-        uses: ./_internal/relevance
+        uses: ./relevance
         with:
           sha-base: "0000000000000000000000000000000000000000"
           sha-head: ${{ github.sha }}
@@ -73,7 +73,7 @@ jobs:
 
       - name: "Test: a path this commit actually touched is relevant"
         id: relevant-path
-        uses: ./_internal/relevance
+        uses: ./relevance
         with:
           sha-base: ${{ steps.parent.outputs.sha }}
           sha-head: ${{ github.sha }}
@@ -92,7 +92,7 @@ jobs:
 
       - name: "Test: a path this commit did not touch is not relevant"
         id: irrelevant-path
-        uses: ./_internal/relevance
+        uses: ./relevance
         with:
           sha-base: ${{ steps.parent.outputs.sha }}
           sha-head: ${{ github.sha }}

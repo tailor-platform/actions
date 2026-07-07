@@ -2,11 +2,11 @@ name: Find a workflow run at or before a fork point
 description: >-
   Search a workflow's successful runs on a given branch, newest-first, for
   the most recent one at or before a given commit (the "fork point").
-  Internal building block for reusing a base-branch artifact at the correct
-  point in history instead of the branch's moving tip, which would
-  otherwise mix in changes made after the two commits diverged — pair with
-  the relevance action, which resolves the fork point via the compare
-  API's merge_base_commit.
+  Useful for reusing a base-branch artifact at the correct point in
+  history instead of the branch's moving tip, which would otherwise mix
+  in changes made after the two commits diverged — pair with the
+  relevance action, which resolves the fork point via the compare API's
+  merge_base_commit.
 
 inputs:
   workflow-file:

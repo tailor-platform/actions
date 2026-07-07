@@ -4,10 +4,9 @@ description: >-
   cares about, and resolve the true fork point (git merge-base) between
   them via the compare API's merge_base_commit — not sha-base's moving
   tip, which would otherwise mix in unrelated changes made to the base
-  branch after the two commits diverged. Internal building block for any
-  action that wants to skip expensive work on an irrelevant push/PR while
-  still reusing a base-branch snapshot found at the correct fork point
-  (pair with find-base-run).
+  branch after the two commits diverged. Useful for skipping expensive
+  work on an irrelevant push/PR while still reusing a base-branch snapshot
+  found at the correct fork point (pair with find-base-run).
 
 inputs:
   sha-base:

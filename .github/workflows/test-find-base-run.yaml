@@ -3,7 +3,7 @@ name: Test Find Base Run Action
 on:
   pull_request:
     paths:
-      - "_internal/find-base-run/**"
+      - "find-base-run/**"
       - ".github/workflows/test-find-base-run.yaml"
   push:
     branches:
@@ -28,7 +28,7 @@ jobs:
           node-version: 24.18.0
 
       - name: Run unit tests
-        run: node --test _internal/find-base-run/*.test.mjs
+        run: node --test find-base-run/*.test.mjs
 
   # Searches this repo's own long-lived ci.yaml run history, which runs on
   # every push/PR, so there is always a prior successful run to find.
@@ -45,7 +45,7 @@ jobs:
 
       - name: "Test: finds a run at or before the current commit"
         id: find
-        uses: ./_internal/find-base-run
+        uses: ./find-base-run
         with:
           workflow-file: ci.yaml
           base-ref: main
@@ -75,7 +75,7 @@ jobs:
 
       - name: "Test: a fork-sha with no ancestor relationship to any run returns empty"
         id: find
-        uses: ./_internal/find-base-run
+        uses: ./find-base-run
         with:
           workflow-file: ci.yaml
           base-ref: main
