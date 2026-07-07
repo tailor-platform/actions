@@ -1,0 +1,124 @@
+name: Export a TailorDB ERD schema
+description: >-
+  Run `tailor-sdk tailordb erd export` for one namespace, verify it
+  produced an output file (rather than letting a silent failure through to
+  an optional upload step's if-no-files-found: ignore), and optionally
+  upload the result as an artifact. Also reports which directories the
+  export actually loaded type files from, for callers building a dynamic
+  relevance check (pair with the relevance action) instead of a
+  hand-maintained path list. Requires Node.js, the package manager, and
+  dependencies to be installed by the caller.
+
+inputs:
+  namespace:
+    description: TailorDB (or AnalyticsDB) namespace to export
+    required: true
+  package-manager:
+    description: >-
+      Package manager used to run tailor-sdk (pnpm, npm, yarn, or bun).
+      Defaults to npx when empty.
+    required: false
+    default: ""
+  working-directory:
+    description: Working directory for the project (for monorepo setups)
+    required: false
+    default: "."
+  output-directory:
+    description: >-
+      Directory to pass as `erd export`'s --output. Defaults to a
+      subdirectory of the runner's temp directory when empty.
+    required: false
+    default: ""
+  upload:
+    description: Set to "true" to upload the exported HTML as an artifact
+    required: false
+    default: "false"
+  artifact-name:
+    description: Artifact name to upload as. Required when upload is "true".
+    required: false
+    default: ""
+  retention-days:
+    description: Artifact retention period in days
+    required: false
+    default: "90"
+
+outputs:
+  exported:
+    description: >-
+      "true" if the namespace was found and exported, "false" if
+      tailor-sdk reported the namespace doesn't exist in the local config
+      (not an error — some namespaces are expected to be absent, e.g. a
+      namespace added on one side of a diff but not the other)
+    value: ${{ steps.export.outputs.exported }}
+  html-path:
+    description: Path to the exported index.html, empty when exported is "false"
+    value: ${{ steps.export.outputs.html-path }}
+  loaded-dirs:
+    description: >-
+      Newline-separated list of directories the export loaded type files
+      from, parsed from tailor-sdk's own log output. Empty when exported is
+      "false" or no type files were loaded.
+    value: ${{ steps.export.outputs.loaded-dirs }}
+
+runs:
+  using: composite
+  steps:
+    - name: Export
+      id: export
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        NAMESPACE: ${{ inputs.namespace }}
+        PACKAGE_MANAGER: ${{ inputs.package-manager }}
+        OUTPUT_DIR: ${{ inputs.output-directory }}
+      run: |
+        case "$PACKAGE_MANAGER" in
+          pnpm) RUN="pnpm exec" ;;
+          yarn) RUN="yarn" ;;
+          bun)  RUN="bunx" ;;
+          npm|"") RUN="npx" ;;
+          *)
+            echo "::error::Unsupported package-manager '$PACKAGE_MANAGER' (expected pnpm, npm, yarn, or bun)"
+            exit 1
+            ;;
+        esac
+
+        OUTPUT_DIR="${OUTPUT_DIR:-$RUNNER_TEMP/erd-export}"
+        log="$RUNNER_TEMP/erd-export-$NAMESPACE.log"
+        if ! $RUN tailor-sdk tailordb erd export --namespace "$NAMESPACE" --output "$OUTPUT_DIR" \
+          >"$log" 2>&1; then
+          cat "$log"
+          if grep -q 'not found in local config.db' "$log"; then
+            echo "ERD namespace '$NAMESPACE' not found; skipping export."
+            echo "exported=false" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          exit 1
+        elif [ -s "$log" ]; then
+          cat "$log"
+        fi
+
+        html_path="$OUTPUT_DIR/$NAMESPACE/dist/index.html"
+        if [ ! -s "$html_path" ]; then
+          echo "::error::ERD export for namespace '$NAMESPACE' produced no output file."
+          exit 1
+        fi
+
+        loaded_dirs=$(grep -oP 'loaded from \K[^/]+(?=/)' "$log" | sort -u || true)
+        EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+        {
+          echo "exported=true"
+          echo "html-path=$html_path"
+          echo "loaded-dirs<<$EOF"
+          echo "$loaded_dirs"
+          echo "$EOF"
+        } >>"$GITHUB_OUTPUT"
+
+    - name: Upload artifact
+      if: inputs.upload == 'true' && steps.export.outputs.exported == 'true'
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ steps.export.outputs.html-path }}
+        if-no-files-found: error
+        retention-days: ${{ inputs.retention-days }}

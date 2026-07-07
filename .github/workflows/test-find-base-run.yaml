@@ -1,0 +1,92 @@
+name: Test Find Base Run Action
+
+on:
+  pull_request:
+    paths:
+      - "_internal/find-base-run/**"
+      - ".github/workflows/test-find-base-run.yaml"
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.18.0
+
+      - name: Run unit tests
+        run: node --test _internal/find-base-run/*.test.mjs
+
+  # Searches this repo's own long-lived ci.yaml run history, which runs on
+  # every push/PR, so there is always a prior successful run to find.
+  test-finds-a-real-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: "Test: finds a run at or before the current commit"
+        id: find
+        uses: ./_internal/find-base-run
+        with:
+          workflow-file: ci.yaml
+          base-ref: main
+          fork-sha: ${{ github.sha }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "Verify: run-id is non-empty"
+        env:
+          RUN_ID: ${{ steps.find.outputs.run-id }}
+        run: |
+          if [ -z "$RUN_ID" ]; then
+            echo "::error::Expected a non-empty run-id (ci.yaml has run on main before this commit)"
+            exit 1
+          fi
+          echo "Found run: $RUN_ID"
+
+  test-no-match-returns-empty:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: "Test: a fork-sha with no ancestor relationship to any run returns empty"
+        id: find
+        uses: ./_internal/find-base-run
+        with:
+          workflow-file: ci.yaml
+          base-ref: main
+          fork-sha: "0000000000000000000000000000000000000000"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "Verify: run-id is empty"
+        env:
+          RUN_ID: ${{ steps.find.outputs.run-id }}
+        run: |
+          if [ -n "$RUN_ID" ]; then
+            echo "::error::Expected empty run-id, got '$RUN_ID'"
+            exit 1
+          fi
