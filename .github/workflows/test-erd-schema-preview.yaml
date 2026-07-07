@@ -1,0 +1,246 @@
+name: Test ERD Schema Export/Preview/Comment Actions
+
+on:
+  pull_request:
+    paths:
+      - "erd-schema-export/**"
+      - "erd-schema-preview/**"
+      - "erd-schema-comment/**"
+      - "tests/erd-schema-preview/**"
+      - ".github/workflows/test-erd-schema-preview.yaml"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  test-export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.9.0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+          cache-dependency-path: tests/erd-schema-preview/pnpm-lock.yaml
+
+      - name: Install fake tailor-sdk
+        working-directory: tests/erd-schema-preview
+        run: pnpm install
+
+      - name: "Test: export and upload"
+        id: export
+        uses: ./erd-schema-export
+        with:
+          namespace: tailordb
+          package-manager: pnpm
+          working-directory: tests/erd-schema-preview
+          artifact-name: test-erd-schema-export-${{ github.run_id }}
+          retention-days: "1"
+
+      - name: "Verify: exported=true"
+        env:
+          EXPORTED: ${{ steps.export.outputs.exported }}
+        run: |
+          [ "$EXPORTED" = "true" ] || { echo "::error::Expected exported=true, got '$EXPORTED'"; exit 1; }
+
+  # export-workflow-file points at this very workflow, which only triggers
+  # on pull_request/workflow_dispatch — never push to main — so a
+  # branch=main search for its runs deterministically finds nothing,
+  # every time, without depending on run history that changes over time.
+  test-preview-relevant-no-base:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+
+      - name: Resolve parent commit
+        id: parent
+        run: echo "sha=$(git rev-parse HEAD~1)" >> "$GITHUB_OUTPUT"
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.9.0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+          cache-dependency-path: tests/erd-schema-preview/pnpm-lock.yaml
+
+      - name: Install fake tailor-sdk
+        working-directory: tests/erd-schema-preview
+        run: pnpm install
+
+      - name: "Test: relevant namespace with no matching base run renders as added"
+        id: preview
+        uses: ./erd-schema-preview
+        with:
+          namespace: tailordb
+          package-manager: pnpm
+          working-directory: tests/erd-schema-preview
+          sha-base: ${{ steps.parent.outputs.sha }}
+          sha-head: ${{ github.sha }}
+          base-ref: main
+          export-workflow-file: test-erd-schema-preview.yaml
+          base-artifact-name: unused-in-this-test
+          preview-artifact-name: test-erd-schema-preview-no-base-${{ github.run_id }}
+          preview-retention-days: "1"
+          always-relevant-paths: |
+            .github/workflows/test-erd-schema-preview.yaml
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "Verify: relevant=true"
+        env:
+          RELEVANT: ${{ steps.preview.outputs.relevant }}
+        run: |
+          [ "$RELEVANT" = "true" ] || { echo "::error::Expected relevant=true, got '$RELEVANT'"; exit 1; }
+
+  test-preview-irrelevant:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+
+      - name: Resolve parent commit
+        id: parent
+        run: echo "sha=$(git rev-parse HEAD~1)" >> "$GITHUB_OUTPUT"
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.9.0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+          cache-dependency-path: tests/erd-schema-preview/pnpm-lock.yaml
+
+      - name: Install fake tailor-sdk
+        working-directory: tests/erd-schema-preview
+        run: pnpm install
+
+      - name: "Test: no relevant path skips rendering"
+        id: preview
+        uses: ./erd-schema-preview
+        with:
+          namespace: tailordb
+          package-manager: pnpm
+          working-directory: tests/erd-schema-preview
+          sha-base: ${{ steps.parent.outputs.sha }}
+          sha-head: ${{ github.sha }}
+          base-ref: main
+          export-workflow-file: test-erd-schema-preview.yaml
+          base-artifact-name: unused-in-this-test
+          preview-artifact-name: test-erd-schema-preview-irrelevant-${{ github.run_id }}
+          always-relevant-paths: |
+            some/path/that/does/not/exist/
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "Verify: relevant=false"
+        env:
+          RELEVANT: ${{ steps.preview.outputs.relevant }}
+        run: |
+          [ "$RELEVANT" = "false" ] || { echo "::error::Expected relevant=false, got '$RELEVANT'"; exit 1; }
+
+  test-preview-and-comment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+
+      - name: Resolve parent commit
+        id: parent
+        run: echo "sha=$(git rev-parse HEAD~1)" >> "$GITHUB_OUTPUT"
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.9.0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+          cache-dependency-path: tests/erd-schema-preview/pnpm-lock.yaml
+
+      - name: Install fake tailor-sdk
+        working-directory: tests/erd-schema-preview
+        run: pnpm install
+
+      - name: Render preview
+        id: preview
+        uses: ./erd-schema-preview
+        with:
+          namespace: tailordb
+          package-manager: pnpm
+          working-directory: tests/erd-schema-preview
+          sha-base: ${{ steps.parent.outputs.sha }}
+          sha-head: ${{ github.sha }}
+          base-ref: main
+          export-workflow-file: test-erd-schema-preview.yaml
+          base-artifact-name: unused-in-this-test
+          preview-artifact-name: tailordb.html
+          preview-retention-days: "1"
+          always-relevant-paths: |
+            .github/workflows/test-erd-schema-preview.yaml
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "Test: post the aggregated comment"
+        id: comment
+        uses: ./erd-schema-comment
+        with:
+          base-ref: main
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pr-number: ${{ github.event.pull_request.number }}
+
+      - name: "Verify: comment-id is set and links to the tailordb artifact"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMENT_ID: ${{ steps.comment.outputs.comment-id }}
+        run: |
+          if [ -z "$COMMENT_ID" ]; then
+            echo "::error::comment-id should be set after posting"
+            exit 1
+          fi
+          BODY=$(gh api "repos/$GITHUB_REPOSITORY/issues/comments/$COMMENT_ID" --jq .body)
+          case "$BODY" in
+            *"tailordb"*) ;;
+            *) echo "::error::Expected comment body to link the tailordb artifact"; exit 1 ;;
+          esac
+
+      - name: Cleanup — delete test comment
+        if: always() && steps.comment.outputs.comment-id != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMENT_ID: ${{ steps.comment.outputs.comment-id }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/issues/comments/$COMMENT_ID" -X DELETE
+          echo "Deleted comment $COMMENT_ID"

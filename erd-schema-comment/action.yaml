@@ -1,0 +1,67 @@
+name: Post ERD schema preview links for a pull request
+description: >-
+  List this run's uploaded *.html artifacts and post or update a sticky PR
+  comment linking to each one, labeled by artifact name minus the .html
+  extension. Run this once per PR (e.g. in a job that needs: every
+  erd-schema-preview matrix leg), after uploading each namespace's
+  artifact with a name like "<namespace>.html". A namespace erd-schema-preview
+  skipped as irrelevant simply has no matching artifact and is naturally
+  omitted — no explicit namespace list required here.
+
+inputs:
+  base-ref:
+    description: >-
+      Base branch name to mention in the comment (e.g. "the diff is
+      against main"). Omit to skip that phrase.
+    required: false
+    default: ""
+  run-id:
+    description: Run whose artifacts to list. Defaults to the current run.
+    required: false
+    default: ${{ github.run_id }}
+  github-token:
+    description: GitHub token with pull-requests:write and actions:read permission
+    required: true
+  pr-number:
+    description: Pull request number. Defaults to the current PR number.
+    required: false
+    default: ""
+
+outputs:
+  comment-id:
+    description: ID of the created or updated comment
+    value: ${{ steps.comment.outputs.comment-id }}
+
+runs:
+  using: composite
+  steps:
+    - name: List preview artifacts
+      id: list
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        RUN_ID: ${{ inputs.run-id }}
+        SERVER_URL: ${{ github.server_url }}
+        REPO: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+        LINKS=$(gh api --paginate --slurp "repos/$REPO/actions/runs/$RUN_ID/artifacts" | \
+          jq --arg server_url "$SERVER_URL" --arg repo "$REPO" --arg run_id "$RUN_ID" \
+          '[ .[].artifacts[] | select(.name | endswith(".html")) ] | sort_by(.name) |
+           [ .[] | {label: (.name | rtrimstr(".html")), url: ($server_url + "/" + $repo + "/actions/runs/" + $run_id + "/artifacts/" + (.id | tostring))} ]')
+
+        EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+        {
+          echo "links<<$EOF"
+          echo "$LINKS"
+          echo "$EOF"
+        } >>"$GITHUB_OUTPUT"
+
+    - name: Post or update comment
+      id: comment
+      uses: ./_internal/erd-comment
+      with:
+        links: ${{ steps.list.outputs.links }}
+        base-ref: ${{ inputs.base-ref }}
+        github-token: ${{ inputs.github-token }}
+        pr-number: ${{ inputs.pr-number }}
