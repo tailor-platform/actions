@@ -79,6 +79,13 @@ runs:
           exit 1
         fi
 
+        case "$NAMESPACE" in
+          ""|.|..|*/*)
+            echo "::error::namespace must be a non-empty name without path separators (got: '$NAMESPACE')"
+            exit 1
+            ;;
+        esac
+
         case "$PACKAGE_MANAGER" in
           pnpm) RUN="pnpm exec" ;;
           yarn) RUN="yarn" ;;
@@ -91,6 +98,10 @@ runs:
         esac
 
         OUTPUT_DIR="${OUTPUT_DIR:-$RUNNER_TEMP/erd-export}"
+        if [ "$OUTPUT_DIR" = "/" ]; then
+          echo "::error::output-directory must not be '/' (got: '$OUTPUT_DIR')"
+          exit 1
+        fi
         # A stale index.html from a prior export of this namespace into the
         # same output directory must not survive to mask a run that produces
         # nothing this time.
