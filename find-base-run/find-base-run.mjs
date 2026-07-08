@@ -84,7 +84,11 @@ async function main() {
     try {
       const { status } = await githubApi(`repos/${GITHUB_REPOSITORY}/compare/${base}...${head}`);
       return status;
-    } catch {
+    } catch (err) {
+      // Treated as a non-match rather than aborting the whole search (see
+      // file header), but logged so a permission/rate-limit/transient
+      // failure isn't indistinguishable from a genuine divergence.
+      console.error(`compare ${base}...${head} failed, treating as diverged: ${err.message}`);
       return "diverged";
     }
   }

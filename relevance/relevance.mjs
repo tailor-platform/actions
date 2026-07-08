@@ -27,7 +27,7 @@ export function parseRelevantPaths(relevantPathsText) {
  * @param {string} params.shaBase
  * @param {string} params.shaHead
  * @param {string[]} params.relevantPaths - exact paths, or prefixes ending in "/"
- * @param {(base: string, head: string) => Promise<{ files?: { filename: string }[], merge_base_commit: { sha: string } }>} params.compareCommits
+ * @param {(base: string, head: string) => Promise<{ files?: { filename: string, previous_filename?: string }[], merge_base_commit: { sha: string } }>} params.compareCommits
  * @returns {Promise<{ relevant: boolean, forkSha?: string, reason: string }>}
  */
 export async function determineRelevance({ shaBase, shaHead, relevantPaths, compareCommits }) {
@@ -47,7 +47,12 @@ export async function determineRelevance({ shaBase, shaHead, relevantPaths, comp
     };
   }
 
-  const changedFiles = files.map((f) => f.filename);
+  // Renames carry both the new filename and (via previous_filename) the old
+  // one; matching only the new name would miss a relevant path a file was
+  // renamed out of.
+  const changedFiles = files.flatMap((f) =>
+    f.previous_filename ? [f.filename, f.previous_filename] : [f.filename],
+  );
   const relevant = changedFiles.some((f) =>
     relevantPaths.some((p) => (p.endsWith("/") ? f.startsWith(p) : f === p)),
   );

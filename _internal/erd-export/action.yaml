@@ -84,6 +84,10 @@ runs:
         esac
 
         OUTPUT_DIR="${OUTPUT_DIR:-$RUNNER_TEMP/erd-export}"
+        # A stale index.html from a prior export of this namespace into the
+        # same output directory must not survive to mask a run that produces
+        # nothing this time.
+        rm -rf "$OUTPUT_DIR/$NAMESPACE"
         log="$RUNNER_TEMP/erd-export-$NAMESPACE.log"
         if ! $RUN tailor-sdk tailordb erd export --namespace "$NAMESPACE" --output "$OUTPUT_DIR" \
           >"$log" 2>&1; then

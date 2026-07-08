@@ -93,4 +93,16 @@ describe("determineRelevance", () => {
     });
     assert.equal(result.relevant, false);
   });
+
+  test("a file renamed out of a relevant path is still relevant", async () => {
+    const result = await determineRelevance({
+      shaBase: "base",
+      shaHead: "head",
+      relevantPaths: ["src/"],
+      compareCommits: compareCommits([
+        { filename: "docs/moved.ts", previous_filename: "src/moved.ts" },
+      ]),
+    });
+    assert.equal(result.relevant, true);
+  });
 });
