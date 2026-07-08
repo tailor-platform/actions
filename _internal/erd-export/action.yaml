@@ -71,7 +71,14 @@ runs:
         NAMESPACE: ${{ inputs.namespace }}
         PACKAGE_MANAGER: ${{ inputs.package-manager }}
         OUTPUT_DIR: ${{ inputs.output-directory }}
+        UPLOAD: ${{ inputs.upload }}
+        ARTIFACT_NAME: ${{ inputs.artifact-name }}
       run: |
+        if [ "$UPLOAD" = "true" ] && [ -z "$ARTIFACT_NAME" ]; then
+          echo "::error::artifact-name is required when upload is \"true\""
+          exit 1
+        fi
+
         case "$PACKAGE_MANAGER" in
           pnpm) RUN="pnpm exec" ;;
           yarn) RUN="yarn" ;;
@@ -108,7 +115,7 @@ runs:
           exit 1
         fi
 
-        loaded_dirs=$(grep -oP 'loaded from \K[^/]+(?=/)' "$log" | sort -u || true)
+        loaded_dirs=$(sed -n 's#.*loaded from \([^/]*\)/.*#\1#p' "$log" | sort -u)
         EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
         {
           echo "exported=true"
