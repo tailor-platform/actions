@@ -49,6 +49,13 @@ runs:
           exit 1
         fi
 
+        if ! printf '%s' "$LINKS" | jq -e \
+          '[.[] | (type == "object") and ((.label | type) == "string") and ((.label | length) > 0) and ((.url | type) == "string") and ((.url | length) > 0)] | all' \
+          >/dev/null; then
+          echo "::error::each links entry must be an object with non-empty string label and url fields"
+          exit 1
+        fi
+
         LINKS_COUNT=$(printf '%s' "$LINKS" | jq 'length')
         if [ "$LINKS_COUNT" -eq 0 ]; then
           BODY="${MARKER}"$'\n'"## 🗺️ ERD preview"$'\n\n'"No relevant ERD changes in this update."

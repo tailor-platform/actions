@@ -8,6 +8,7 @@
 // possibly truncated, and kept relevant unconditionally, since the API
 // gives no total count to detect truncation by.
 import { appendFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 
 export const ZERO_SHA = "0".repeat(40);
 
@@ -94,6 +95,6 @@ async function main() {
   setOutput("relevant", String(relevant));
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   await main();
 }

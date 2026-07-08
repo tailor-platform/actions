@@ -11,6 +11,7 @@
 // exists to avoid; callers should treat an empty run-id as "no usable base"
 // and degrade accordingly, not as an error.
 import { appendFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 
 export const DEFAULT_MAX_CANDIDATE_RUNS = 1000;
 export const DEFAULT_RETENTION_DAYS = 90;
@@ -119,6 +120,6 @@ async function main() {
   setOutput("run-id", runId);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   await main();
 }
