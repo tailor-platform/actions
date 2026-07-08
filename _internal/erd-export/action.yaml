@@ -98,10 +98,21 @@ runs:
         esac
 
         OUTPUT_DIR="${OUTPUT_DIR:-$RUNNER_TEMP/erd-export}"
-        case "$OUTPUT_DIR" in
-          "$RUNNER_TEMP"|"$RUNNER_TEMP"/*) ;;
+        if [ -z "$RUNNER_TEMP" ]; then
+          echo "::error::RUNNER_TEMP is not set"
+          exit 1
+        fi
+        # A case-based prefix check on the raw strings would be bypassable by
+        # a value like "$RUNNER_TEMP/../etc" (a textual prefix match, but a
+        # different physical location), so resolve both to their real,
+        # symlink-free paths first and compare those instead.
+        mkdir -p "$OUTPUT_DIR"
+        REAL_OUTPUT_DIR=$(cd "$OUTPUT_DIR" && pwd -P)
+        REAL_RUNNER_TEMP=$(cd "$RUNNER_TEMP" && pwd -P)
+        case "$REAL_OUTPUT_DIR" in
+          "$REAL_RUNNER_TEMP"|"$REAL_RUNNER_TEMP"/*) ;;
           *)
-            echo "::error::output-directory must be RUNNER_TEMP ($RUNNER_TEMP) or a subdirectory of it, got: '$OUTPUT_DIR'"
+            echo "::error::output-directory must resolve to RUNNER_TEMP ($REAL_RUNNER_TEMP) or a subdirectory of it, got: '$REAL_OUTPUT_DIR' (from '$OUTPUT_DIR')"
             exit 1
             ;;
         esac

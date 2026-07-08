@@ -340,6 +340,25 @@ jobs:
             exit 1
           fi
 
+      - name: "Test: a textual RUNNER_TEMP prefix that escapes via '..' is rejected"
+        id: export-traversal
+        continue-on-error: true
+        uses: ./_internal/erd-export
+        with:
+          namespace: tailordb
+          package-manager: pnpm
+          working-directory: tests/erd-export
+          output-directory: ${{ runner.temp }}/../erd-export-traversal
+
+      - name: "Verify: outcome must be failure"
+        env:
+          OUTCOME: ${{ steps.export-traversal.outcome }}
+        run: |
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::Expected erd-export to fail when output-directory textually starts with RUNNER_TEMP but resolves outside it via '..'"
+            exit 1
+          fi
+
   test-upload:
     runs-on: ubuntu-latest
     timeout-minutes: 5
