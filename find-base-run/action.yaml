@@ -35,7 +35,7 @@ inputs:
     required: false
     default: "90"
   github-token:
-    description: GitHub token with actions:read permission
+    description: 'GitHub token with "actions: read" permission'
     required: true
 
 outputs:
