@@ -44,18 +44,18 @@ runs:
       run: |
         MARKER="<!-- tailor-erd-preview -->"
 
-        if ! echo "$LINKS" | jq -e 'type == "array"' >/dev/null; then
+        if ! printf '%s' "$LINKS" | jq -e 'type == "array"' >/dev/null; then
           echo "::error::links must be a JSON array"
           exit 1
         fi
 
-        LINKS_COUNT=$(echo "$LINKS" | jq 'length')
+        LINKS_COUNT=$(printf '%s' "$LINKS" | jq 'length')
         if [ "$LINKS_COUNT" -eq 0 ]; then
           BODY="${MARKER}"$'\n'"## 🗺️ ERD preview"$'\n\n'"No relevant ERD changes in this update."
         else
           DIFF_NOTE=""
           [ -n "$BASE_REF" ] && DIFF_NOTE=" Each viewer can switch between the current schema and a diff against base branch \`$BASE_REF\`."
-          LIST=$(echo "$LINKS" | jq -r '.[] | "- **\(.label)**: [view](\(.url))"')
+          LIST=$(printf '%s' "$LINKS" | jq -r '.[] | "- **\(.label)**: [view](\(.url))"')
           BODY="${MARKER}"$'\n'"## 🗺️ ERD preview"$'\n\n'"Self-contained ERD viewer HTML built for this run.${DIFF_NOTE}"$'\n'"${LIST}"
         fi
 

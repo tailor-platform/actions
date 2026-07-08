@@ -303,7 +303,7 @@ jobs:
         run: pnpm install
 
       - name: "Test: an output-directory of '/' is rejected before the recursive delete"
-        id: export
+        id: export-root
         continue-on-error: true
         uses: ./_internal/erd-export
         with:
@@ -314,10 +314,29 @@ jobs:
 
       - name: "Verify: outcome must be failure"
         env:
-          OUTCOME: ${{ steps.export.outcome }}
+          OUTCOME: ${{ steps.export-root.outcome }}
         run: |
           if [ "$OUTCOME" != "failure" ]; then
             echo "::error::Expected erd-export to fail when output-directory is '/'"
+            exit 1
+          fi
+
+      - name: "Test: an output-directory outside RUNNER_TEMP is rejected"
+        id: export-outside-temp
+        continue-on-error: true
+        uses: ./_internal/erd-export
+        with:
+          namespace: tailordb
+          package-manager: pnpm
+          working-directory: tests/erd-export
+          output-directory: ${{ github.workspace }}/erd-export-outside-temp
+
+      - name: "Verify: outcome must be failure"
+        env:
+          OUTCOME: ${{ steps.export-outside-temp.outcome }}
+        run: |
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::Expected erd-export to fail when output-directory is outside RUNNER_TEMP"
             exit 1
           fi
 
