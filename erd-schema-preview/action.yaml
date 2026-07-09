@@ -113,6 +113,10 @@ runs:
       run: |
         DYNAMIC=""
         if [ -n "$LOADED_DIRS" ]; then
+          case "$PREFIX" in
+            ""|*/) ;;
+            *) PREFIX="$PREFIX/" ;;
+          esac
           DYNAMIC=$(printf '%s\n' "$LOADED_DIRS" | while IFS= read -r dir; do
             [ -n "$dir" ] && printf '%s%s/\n' "$PREFIX" "$dir"
           done)
@@ -137,6 +141,20 @@ runs:
         sha-head: ${{ inputs.sha-head }}
         relevant-paths: ${{ steps.paths.outputs.paths }}
         github-token: ${{ inputs.github-token }}
+
+    - name: Validate preview-artifact-name
+      if: steps.relevance.outputs.relevant != 'false'
+      shell: bash
+      env:
+        PREVIEW_ARTIFACT_NAME: ${{ inputs.preview-artifact-name }}
+      run: |
+        case "$PREVIEW_ARTIFACT_NAME" in
+          *.html) ;;
+          *)
+            echo "::error::preview-artifact-name must end in '.html' (got: '$PREVIEW_ARTIFACT_NAME') — erd-schema-comment identifies preview artifacts by that suffix and would silently ignore this one."
+            exit 1
+            ;;
+        esac
 
     - name: Find base run
       id: find-base

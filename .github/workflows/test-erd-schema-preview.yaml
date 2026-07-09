@@ -99,7 +99,7 @@ jobs:
           base-ref: main
           export-workflow-file: test-erd-schema-preview.yaml
           base-artifact-name: unused-in-this-test
-          preview-artifact-name: test-erd-schema-preview-no-base-${{ github.run_id }}
+          preview-artifact-name: test-erd-schema-preview-no-base-${{ github.run_id }}.html
           preview-retention-days: "1"
           always-relevant-paths: |
             .github/workflows/test-erd-schema-preview.yaml
@@ -153,7 +153,7 @@ jobs:
           base-ref: main
           export-workflow-file: test-erd-schema-preview.yaml
           base-artifact-name: unused-in-this-test
-          preview-artifact-name: test-erd-schema-preview-irrelevant-${{ github.run_id }}
+          preview-artifact-name: test-erd-schema-preview-irrelevant-${{ github.run_id }}.html
           always-relevant-paths: |
             some/path/that/does/not/exist/
           github-token: ${{ secrets.GITHUB_TOKEN }}
