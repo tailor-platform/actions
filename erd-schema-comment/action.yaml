@@ -59,7 +59,7 @@ runs:
 
     - name: Post or update comment
       id: comment
-      uses: ./_internal/erd-comment
+      uses: tailor-platform/actions/_internal/erd-comment@09a301b422b2af2923b4ffac174102b0622e07e2
       with:
         links: ${{ steps.list.outputs.links }}
         base-ref: ${{ inputs.base-ref }}

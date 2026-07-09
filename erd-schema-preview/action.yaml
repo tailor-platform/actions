@@ -93,7 +93,7 @@ runs:
   steps:
     - name: Export head schema
       id: head-export
-      uses: ./_internal/erd-export
+      uses: tailor-platform/actions/_internal/erd-export@09a301b422b2af2923b4ffac174102b0622e07e2
       with:
         namespace: ${{ inputs.namespace }}
         package-manager: ${{ inputs.package-manager }}
@@ -125,7 +125,7 @@ runs:
     # compute both the relevance verdict and the PR's true fork point.
     - name: Check relevance
       id: relevance
-      uses: ./relevance
+      uses: tailor-platform/actions/relevance@09a301b422b2af2923b4ffac174102b0622e07e2
       with:
         sha-base: ${{ inputs.sha-base }}
         sha-head: ${{ inputs.sha-head }}
@@ -135,7 +135,7 @@ runs:
     - name: Find base run
       id: find-base
       if: steps.relevance.outputs.relevant != 'false'
-      uses: ./find-base-run
+      uses: tailor-platform/actions/find-base-run@09a301b422b2af2923b4ffac174102b0622e07e2
       with:
         workflow-file: ${{ inputs.export-workflow-file }}
         base-ref: ${{ inputs.base-ref }}
