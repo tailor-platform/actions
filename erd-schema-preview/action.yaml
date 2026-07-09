@@ -150,6 +150,12 @@ runs:
         PREVIEW_ARTIFACT_NAME: ${{ inputs.preview-artifact-name }}
       run: |
         case "$PREVIEW_ARTIFACT_NAME" in
+          */*)
+            echo "::error::preview-artifact-name must be a plain filename without '/' (got: '$PREVIEW_ARTIFACT_NAME') — it is used as-is as the rendered output's filename."
+            exit 1
+            ;;
+        esac
+        case "$PREVIEW_ARTIFACT_NAME" in
           *.html) ;;
           *)
             echo "::error::preview-artifact-name must end in '.html' (got: '$PREVIEW_ARTIFACT_NAME') — erd-schema-comment identifies preview artifacts by that suffix and would silently ignore this one."
@@ -179,12 +185,18 @@ runs:
         ARTIFACT_NAME: ${{ inputs.base-artifact-name }}
       run: |
         set -euo pipefail
+        log="$RUNNER_TEMP/erd-schema-preview-download.log"
         if gh run download "$RUN_ID" --repo "${{ github.repository }}" \
-          --name "$ARTIFACT_NAME" --dir "$RUNNER_TEMP/erd-schema-preview/base"; then
+          --name "$ARTIFACT_NAME" --dir "$RUNNER_TEMP/erd-schema-preview/base" >"$log" 2>&1; then
           echo "found=true" >>"$GITHUB_OUTPUT"
-        else
+        elif grep -q 'no artifact matches any of the names or patterns provided' "$log"; then
+          cat "$log"
           echo "found=false" >>"$GITHUB_OUTPUT"
           echo "Export run $RUN_ID has no artifact named '$ARTIFACT_NAME'; rendering current objects as added."
+        else
+          cat "$log"
+          echo "::error::gh run download failed for run $RUN_ID for a reason other than a missing artifact; see log above."
+          exit 1
         fi
 
     - name: Render diff
@@ -197,6 +209,7 @@ runs:
         HEAD_MISSING: ${{ steps.head-export.outputs.exported == 'false' }}
         HEAD_HTML: ${{ steps.head-export.outputs.html-path }}
         BASE_FOUND: ${{ steps.base.outputs.found }}
+        PREVIEW_ARTIFACT_NAME: ${{ inputs.preview-artifact-name }}
       run: |
         set -euo pipefail
         case "$PACKAGE_MANAGER" in
@@ -219,13 +232,13 @@ runs:
         fi
 
         mkdir -p "$RUNNER_TEMP/erd-schema-preview/out"
-        diff_args=(--namespace "$NAMESPACE" --output "$RUNNER_TEMP/erd-schema-preview/out/$NAMESPACE.html")
+        diff_args=(--namespace "$NAMESPACE" --output "$RUNNER_TEMP/erd-schema-preview/out/$PREVIEW_ARTIFACT_NAME")
         [ "$HEAD_MISSING" = "false" ] && diff_args+=(--head-html "$HEAD_HTML")
         [ "$base_missing" = "false" ] && diff_args+=(--base-html "$RUNNER_TEMP/erd-schema-preview/base/index.html")
 
         "${RUN[@]}" tailor-sdk tailordb erd diff "${diff_args[@]}"
 
-        html_path="$RUNNER_TEMP/erd-schema-preview/out/$NAMESPACE.html"
+        html_path="$RUNNER_TEMP/erd-schema-preview/out/$PREVIEW_ARTIFACT_NAME"
         if [ ! -s "$html_path" ]; then
           echo "::error::ERD diff render for namespace '$NAMESPACE' produced no output file."
           exit 1
@@ -233,13 +246,15 @@ runs:
 
     # archive: false (upload-artifact v7+) keeps the file unzipped so the HTML
     # can be viewed directly in the browser from the run's artifact list. Only
-    # a single file may be uploaded per artifact when archive is false.
+    # a single file may be uploaded per artifact when archive is false, and
+    # the artifact takes the uploaded file's basename as its name (the `name`
+    # input is ignored in this mode) — so the rendered output above is
+    # written directly to preview-artifact-name, not $NAMESPACE.html.
     - name: Upload preview artifact
       if: steps.relevance.outputs.relevant != 'false'
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
-        name: ${{ inputs.preview-artifact-name }}
-        path: ${{ runner.temp }}/erd-schema-preview/out/${{ inputs.namespace }}.html
+        path: ${{ runner.temp }}/erd-schema-preview/out/${{ inputs.preview-artifact-name }}
         if-no-files-found: error
         archive: false
         retention-days: ${{ inputs.preview-retention-days }}
