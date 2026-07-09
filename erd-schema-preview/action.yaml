@@ -89,7 +89,7 @@ inputs:
 outputs:
   relevant:
     description: "'true' or 'false' — whether this namespace's diff was rendered"
-    value: ${{ steps.relevance.outputs.relevant }}
+    value: ${{ steps.effective-relevance.outputs.relevant }}
 
 runs:
   using: composite
@@ -131,9 +131,8 @@ runs:
         } >>"$GITHUB_OUTPUT"
 
     # head-export succeeds with exported=false when the namespace isn't
-    # found (removing a namespace entirely is inherently relevant), so
-    # this step runs normally and computes both the relevance verdict
-    # and the PR's true fork point.
+    # found, so this step runs normally and computes both the relevance
+    # verdict and the PR's true fork point.
     - name: Check relevance
       id: relevance
       uses: tailor-platform/actions/relevance@09a301b422b2af2923b4ffac174102b0622e07e2
@@ -143,8 +142,29 @@ runs:
         relevant-paths: ${{ steps.paths.outputs.paths }}
         github-token: ${{ inputs.github-token }}
 
+    # loaded-dirs is empty both when the namespace was removed entirely and
+    # when its last type file was removed — either way there is nothing left
+    # to build a dynamic relevant path from, so the check above only saw
+    # always-relevant-paths and can misjudge a real deletion as irrelevant.
+    # Force relevant here so a namespace going away is never silently
+    # skipped; the Render diff step's own head/base-missing check still
+    # catches the case where the namespace never existed on either side.
+    - name: Force relevance when the head export loaded nothing
+      id: effective-relevance
+      shell: bash
+      env:
+        RELEVANT: ${{ steps.relevance.outputs.relevant }}
+        LOADED_DIRS: ${{ steps.head-export.outputs.loaded-dirs }}
+      run: |
+        set -euo pipefail
+        if [ -z "$LOADED_DIRS" ]; then
+          echo "relevant=true" >>"$GITHUB_OUTPUT"
+        else
+          echo "relevant=$RELEVANT" >>"$GITHUB_OUTPUT"
+        fi
+
     - name: Validate preview-artifact-name
-      if: steps.relevance.outputs.relevant != 'false'
+      if: steps.effective-relevance.outputs.relevant != 'false'
       shell: bash
       env:
         PREVIEW_ARTIFACT_NAME: ${{ inputs.preview-artifact-name }}
@@ -165,7 +185,7 @@ runs:
 
     - name: Find base run
       id: find-base
-      if: steps.relevance.outputs.relevant != 'false'
+      if: steps.effective-relevance.outputs.relevant != 'false'
       uses: tailor-platform/actions/find-base-run@09a301b422b2af2923b4ffac174102b0622e07e2
       with:
         workflow-file: ${{ inputs.export-workflow-file }}
@@ -177,7 +197,7 @@ runs:
 
     - name: Download base schema
       id: base
-      if: steps.relevance.outputs.relevant != 'false' && steps.find-base.outputs.run-id != ''
+      if: steps.effective-relevance.outputs.relevant != 'false' && steps.find-base.outputs.run-id != ''
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
@@ -200,7 +220,7 @@ runs:
         fi
 
     - name: Render diff
-      if: steps.relevance.outputs.relevant != 'false'
+      if: steps.effective-relevance.outputs.relevant != 'false'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
@@ -251,7 +271,7 @@ runs:
     # input is ignored in this mode) — so the rendered output above is
     # written directly to preview-artifact-name, not $NAMESPACE.html.
     - name: Upload preview artifact
-      if: steps.relevance.outputs.relevant != 'false'
+      if: steps.effective-relevance.outputs.relevant != 'false'
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         path: ${{ runner.temp }}/erd-schema-preview/out/${{ inputs.preview-artifact-name }}
