@@ -1,0 +1,280 @@
+name: Render an ERD schema diff preview for a pull request
+description: >-
+  For one namespace, decide whether this PR actually touches it (using
+  what the export itself loaded, not a hand-maintained path list), and if
+  so render a diff against the schema recorded at the PR's true fork
+  point (not the base branch's moving tip, which would mix in unrelated
+  changes merged after the PR branched) and upload it as a self-contained
+  HTML artifact. Skips rendering entirely when irrelevant — leaves no
+  artifact for this namespace, so erd-schema-comment naturally omits it.
+  Pair with erd-schema-export (run on pushes to your base branch) and
+  erd-schema-comment (aggregates every namespace's artifact into one PR
+  comment). Requires Node.js, the package manager, and dependencies to be
+  installed by the caller.
+
+inputs:
+  namespace:
+    description: TailorDB (or AnalyticsDB) namespace to preview
+    required: true
+  sha-base:
+    description: PR base commit (e.g. github.event.pull_request.base.sha)
+    required: true
+  sha-head:
+    description: PR head commit (e.g. github.event.pull_request.head.sha)
+    required: true
+  base-ref:
+    description: >-
+      PR base branch name (e.g. github.event.pull_request.base.ref), to
+      search for a base run on
+    required: true
+  export-workflow-file:
+    description: >-
+      Filename of the workflow that runs erd-schema-export (e.g.
+      erd-schema-export.yaml), not its display name
+    required: true
+  base-artifact-name:
+    description: >-
+      Artifact name erd-schema-export uploaded the base schema as for
+      this namespace
+    required: true
+  preview-artifact-name:
+    description: >-
+      Artifact name to upload the rendered diff HTML as. Must end in
+      ".html" — erd-schema-comment identifies preview artifacts by that
+      suffix and silently ignores any that don't have it.
+    required: true
+  always-relevant-paths:
+    description: >-
+      Newline-separated list of paths that always make this namespace
+      relevant, regardless of what the export loaded (e.g. your
+      tailor.config.ts). Same matching rules as the relevance action: a
+      line ending in "/" matches as a prefix.
+    required: false
+    default: ""
+  relevant-path-prefix:
+    description: >-
+      Prefix to prepend to each directory the export loaded type files
+      from, before checking it against the PR's changed files (e.g.
+      "example/" if your TailorDB types live under example/<dir>/).
+    required: false
+    default: ""
+  package-manager:
+    description: >-
+      Package manager used to run tailor-sdk (pnpm, npm, yarn, or bun).
+      Defaults to npx when empty.
+    required: false
+    default: ""
+  working-directory:
+    description: Working directory for the project (for monorepo setups)
+    required: false
+    default: "."
+  max-candidate-runs:
+    description: Passed through to find-base-run
+    required: false
+    default: "1000"
+  retention-days:
+    description: >-
+      Passed through to find-base-run. Keep this in sync with the
+      retention-days you passed to erd-schema-export.
+    required: false
+    default: "90"
+  preview-retention-days:
+    description: Retention period in days for the uploaded preview artifact
+    required: false
+    default: "7"
+  github-token:
+    description: GitHub token with actions:read permission
+    required: true
+
+outputs:
+  relevant:
+    description: "'true' or 'false' — whether this namespace's diff was rendered"
+    value: ${{ steps.effective-relevance.outputs.relevant }}
+
+runs:
+  using: composite
+  steps:
+    - name: Export head schema
+      id: head-export
+      uses: tailor-platform/actions/_internal/erd-export@09a301b422b2af2923b4ffac174102b0622e07e2
+      with:
+        namespace: ${{ inputs.namespace }}
+        package-manager: ${{ inputs.package-manager }}
+        working-directory: ${{ inputs.working-directory }}
+        output-directory: ${{ runner.temp }}/erd-schema-preview/head
+
+    - name: Build relevant paths
+      id: paths
+      shell: bash
+      env:
+        ALWAYS_RELEVANT_PATHS: ${{ inputs.always-relevant-paths }}
+        LOADED_DIRS: ${{ steps.head-export.outputs.loaded-dirs }}
+        PREFIX: ${{ inputs.relevant-path-prefix }}
+      run: |
+        set -euo pipefail
+        DYNAMIC=""
+        if [ -n "$LOADED_DIRS" ]; then
+          case "$PREFIX" in
+            ""|*/) ;;
+            *) PREFIX="$PREFIX/" ;;
+          esac
+          DYNAMIC=$(printf '%s\n' "$LOADED_DIRS" | while IFS= read -r dir; do
+            [ -n "$dir" ] && printf '%s%s/\n' "$PREFIX" "$dir"
+          done)
+        fi
+        EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+        {
+          printf 'paths<<%s\n' "$EOF"
+          printf '%s\n' "$ALWAYS_RELEVANT_PATHS"
+          printf '%s\n' "$DYNAMIC"
+          printf '%s\n' "$EOF"
+        } >>"$GITHUB_OUTPUT"
+
+    # head-export succeeds with exported=false when the namespace isn't
+    # found, so this step runs normally and computes both the relevance
+    # verdict and the PR's true fork point.
+    - name: Check relevance
+      id: relevance
+      uses: tailor-platform/actions/relevance@09a301b422b2af2923b4ffac174102b0622e07e2
+      with:
+        sha-base: ${{ inputs.sha-base }}
+        sha-head: ${{ inputs.sha-head }}
+        relevant-paths: ${{ steps.paths.outputs.paths }}
+        github-token: ${{ inputs.github-token }}
+
+    # loaded-dirs is empty both when the namespace was removed entirely and
+    # when its last type file was removed — either way there is nothing left
+    # to build a dynamic relevant path from, so the check above only saw
+    # always-relevant-paths and can misjudge a real deletion as irrelevant.
+    # Force relevant here so a namespace going away is never silently
+    # skipped; the Render diff step's own head/base-missing check still
+    # catches the case where the namespace never existed on either side.
+    - name: Force relevance when the head export loaded nothing
+      id: effective-relevance
+      shell: bash
+      env:
+        RELEVANT: ${{ steps.relevance.outputs.relevant }}
+        LOADED_DIRS: ${{ steps.head-export.outputs.loaded-dirs }}
+      run: |
+        set -euo pipefail
+        if [ -z "$LOADED_DIRS" ]; then
+          echo "relevant=true" >>"$GITHUB_OUTPUT"
+        else
+          echo "relevant=$RELEVANT" >>"$GITHUB_OUTPUT"
+        fi
+
+    - name: Validate preview-artifact-name
+      if: steps.effective-relevance.outputs.relevant != 'false'
+      shell: bash
+      env:
+        PREVIEW_ARTIFACT_NAME: ${{ inputs.preview-artifact-name }}
+      run: |
+        case "$PREVIEW_ARTIFACT_NAME" in
+          */*)
+            echo "::error::preview-artifact-name must be a plain filename without '/' (got: '$PREVIEW_ARTIFACT_NAME') — it is used as-is as the rendered output's filename."
+            exit 1
+            ;;
+        esac
+        case "$PREVIEW_ARTIFACT_NAME" in
+          *.html) ;;
+          *)
+            echo "::error::preview-artifact-name must end in '.html' (got: '$PREVIEW_ARTIFACT_NAME') — erd-schema-comment identifies preview artifacts by that suffix and would silently ignore this one."
+            exit 1
+            ;;
+        esac
+
+    - name: Find base run
+      id: find-base
+      if: steps.effective-relevance.outputs.relevant != 'false'
+      uses: tailor-platform/actions/find-base-run@09a301b422b2af2923b4ffac174102b0622e07e2
+      with:
+        workflow-file: ${{ inputs.export-workflow-file }}
+        base-ref: ${{ inputs.base-ref }}
+        fork-sha: ${{ steps.relevance.outputs.fork-sha }}
+        max-candidate-runs: ${{ inputs.max-candidate-runs }}
+        retention-days: ${{ inputs.retention-days }}
+        github-token: ${{ inputs.github-token }}
+
+    - name: Download base schema
+      id: base
+      if: steps.effective-relevance.outputs.relevant != 'false' && steps.find-base.outputs.run-id != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        RUN_ID: ${{ steps.find-base.outputs.run-id }}
+        ARTIFACT_NAME: ${{ inputs.base-artifact-name }}
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/erd-schema-preview-download.log"
+        if gh run download "$RUN_ID" --repo "${{ github.repository }}" \
+          --name "$ARTIFACT_NAME" --dir "$RUNNER_TEMP/erd-schema-preview/base" >"$log" 2>&1; then
+          echo "found=true" >>"$GITHUB_OUTPUT"
+        elif grep -q 'no artifact matches any of the names or patterns provided' "$log"; then
+          cat "$log"
+          echo "found=false" >>"$GITHUB_OUTPUT"
+          echo "Export run $RUN_ID has no artifact named '$ARTIFACT_NAME'; rendering current objects as added."
+        else
+          cat "$log"
+          echo "::error::gh run download failed for run $RUN_ID for a reason other than a missing artifact; see log above."
+          exit 1
+        fi
+
+    - name: Render diff
+      if: steps.effective-relevance.outputs.relevant != 'false'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        NAMESPACE: ${{ inputs.namespace }}
+        PACKAGE_MANAGER: ${{ inputs.package-manager }}
+        HEAD_MISSING: ${{ steps.head-export.outputs.exported == 'false' }}
+        HEAD_HTML: ${{ steps.head-export.outputs.html-path }}
+        BASE_FOUND: ${{ steps.base.outputs.found }}
+        PREVIEW_ARTIFACT_NAME: ${{ inputs.preview-artifact-name }}
+      run: |
+        set -euo pipefail
+        case "$PACKAGE_MANAGER" in
+          pnpm) RUN=(pnpm exec) ;;
+          yarn) RUN=(yarn) ;;
+          bun)  RUN=(bunx) ;;
+          npm|"") RUN=(npx --no-install) ;;
+          *)
+            echo "::error::Unsupported package-manager '$PACKAGE_MANAGER' (expected pnpm, npm, yarn, or bun)"
+            exit 1
+            ;;
+        esac
+
+        base_missing="true"
+        [ "$BASE_FOUND" = "true" ] && base_missing="false"
+
+        if [ "$HEAD_MISSING" = "true" ] && [ "$base_missing" = "true" ]; then
+          echo "::error::ERD namespace '$NAMESPACE' was not found in head or the base export."
+          exit 1
+        fi
+
+        mkdir -p "$RUNNER_TEMP/erd-schema-preview/out"
+        diff_args=(--namespace "$NAMESPACE" --output "$RUNNER_TEMP/erd-schema-preview/out/$PREVIEW_ARTIFACT_NAME")
+        [ "$HEAD_MISSING" = "false" ] && diff_args+=(--head-html "$HEAD_HTML")
+        [ "$base_missing" = "false" ] && diff_args+=(--base-html "$RUNNER_TEMP/erd-schema-preview/base/index.html")
+
+        "${RUN[@]}" tailor-sdk tailordb erd diff "${diff_args[@]}"
+
+        html_path="$RUNNER_TEMP/erd-schema-preview/out/$PREVIEW_ARTIFACT_NAME"
+        if [ ! -s "$html_path" ]; then
+          echo "::error::ERD diff render for namespace '$NAMESPACE' produced no output file."
+          exit 1
+        fi
+
+    # archive: false (upload-artifact v7+) keeps the file unzipped so the HTML
+    # can be viewed directly in the browser from the run's artifact list. Only
+    # a single file may be uploaded per artifact when archive is false, and
+    # the artifact takes the uploaded file's basename as its name (the `name`
+    # input is ignored in this mode) — so the rendered output above is
+    # written directly to preview-artifact-name, not $NAMESPACE.html.
+    - name: Upload preview artifact
+      if: steps.effective-relevance.outputs.relevant != 'false'
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        path: ${{ runner.temp }}/erd-schema-preview/out/${{ inputs.preview-artifact-name }}
+        if-no-files-found: error
+        archive: false
+        retention-days: ${{ inputs.preview-retention-days }}

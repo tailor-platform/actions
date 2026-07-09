@@ -1,0 +1,59 @@
+name: Export and record a TailorDB ERD schema
+description: >-
+  Export a namespace's ERD schema and upload it as an artifact, for reuse
+  by erd-schema-preview on later pull requests. Uploads unconditionally on
+  a successful export — every run within find-base-run's retention window
+  is then guaranteed to have a usable artifact, so the base-run search
+  never needs to know which runs skipped uploading. Run this on pushes to
+  your base branch (e.g. main). Requires Node.js, the package manager, and
+  dependencies to be installed by the caller.
+
+inputs:
+  namespace:
+    description: TailorDB (or AnalyticsDB) namespace to export
+    required: true
+  artifact-name:
+    description: >-
+      Artifact name to upload as. erd-schema-preview looks this artifact
+      up by name on a matching base run, so keep it stable across runs
+      (e.g. include the namespace but not the run id).
+    required: true
+  package-manager:
+    description: >-
+      Package manager used to run tailor-sdk (pnpm, npm, yarn, or bun).
+      Defaults to npx when empty.
+    required: false
+    default: ""
+  working-directory:
+    description: Working directory for the project (for monorepo setups)
+    required: false
+    default: "."
+  retention-days:
+    description: >-
+      Artifact retention period in days. Keep this in sync with the
+      retention-days you pass to erd-schema-preview's find-base-run
+      search — a run outside that window has nothing left to download
+      regardless of whether it matches.
+    required: false
+    default: "90"
+
+outputs:
+  exported:
+    description: >-
+      "true" if the namespace was found and exported, "false" if
+      tailor-sdk reported the namespace doesn't exist in the local config
+    value: ${{ steps.export.outputs.exported }}
+
+runs:
+  using: composite
+  steps:
+    - name: Export and upload
+      id: export
+      uses: tailor-platform/actions/_internal/erd-export@09a301b422b2af2923b4ffac174102b0622e07e2
+      with:
+        namespace: ${{ inputs.namespace }}
+        package-manager: ${{ inputs.package-manager }}
+        working-directory: ${{ inputs.working-directory }}
+        upload: "true"
+        artifact-name: ${{ inputs.artifact-name }}
+        retention-days: ${{ inputs.retention-days }}

@@ -1,0 +1,7 @@
+{
+  "name": "erd-schema-preview-test",
+  "private": true,
+  "dependencies": {
+    "tailor-sdk": "file:./fake-sdk"
+  }
+}
