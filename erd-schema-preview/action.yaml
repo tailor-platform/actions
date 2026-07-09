@@ -38,7 +38,10 @@ inputs:
       this namespace
     required: true
   preview-artifact-name:
-    description: Artifact name to upload the rendered diff HTML as
+    description: >-
+      Artifact name to upload the rendered diff HTML as. Must end in
+      ".html" — erd-schema-comment identifies preview artifacts by that
+      suffix and silently ignores any that don't have it.
     required: true
   always-relevant-paths:
     description: >-
@@ -110,7 +113,9 @@ runs:
       run: |
         DYNAMIC=""
         if [ -n "$LOADED_DIRS" ]; then
-          DYNAMIC=$(echo "$LOADED_DIRS" | sed "s#^#${PREFIX}#; s#\$#/#")
+          DYNAMIC=$(printf '%s\n' "$LOADED_DIRS" | while IFS= read -r dir; do
+            [ -n "$dir" ] && printf '%s%s/\n' "$PREFIX" "$dir"
+          done)
         fi
         EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
         {
@@ -120,9 +125,10 @@ runs:
           echo "$EOF"
         } >>"$GITHUB_OUTPUT"
 
-    # Always runs (even when head-export failed to find the namespace,
-    # since removing a namespace entirely is inherently relevant) to
-    # compute both the relevance verdict and the PR's true fork point.
+    # head-export succeeds with exported=false when the namespace isn't
+    # found (removing a namespace entirely is inherently relevant), so
+    # this step runs normally and computes both the relevance verdict
+    # and the PR's true fork point.
     - name: Check relevance
       id: relevance
       uses: tailor-platform/actions/relevance@09a301b422b2af2923b4ffac174102b0622e07e2
@@ -178,7 +184,7 @@ runs:
           pnpm) RUN="pnpm exec" ;;
           yarn) RUN="yarn" ;;
           bun)  RUN="bunx" ;;
-          npm|"") RUN="npx" ;;
+          npm|"") RUN="npx --no-install" ;;
           *)
             echo "::error::Unsupported package-manager '$PACKAGE_MANAGER' (expected pnpm, npm, yarn, or bun)"
             exit 1
