@@ -1,0 +1,83 @@
+name: Post ERD preview links as a sticky PR comment
+description: >-
+  Post or update a PR comment linking to ERD viewer artifacts. When links
+  is an empty array, updates the comment to say no relevant ERD changes are
+  in this update instead of posting an empty comment — matching
+  preview-cleanup's convention of updating the sticky comment's status
+  rather than deleting it, so the comment stays a stable place to check.
+
+inputs:
+  links:
+    description: >-
+      JSON array of `{"label": string, "url": string}` objects to render
+      as a bullet list. An empty array (`[]`) posts a "no relevant
+      changes" status instead.
+    required: true
+  base-ref:
+    description: >-
+      Base branch name to mention in the comment (e.g. "the diff is
+      against main"). Omit to skip that phrase.
+    required: false
+    default: ""
+  github-token:
+    description: GitHub token with pull-requests:write permission
+    required: true
+  pr-number:
+    description: Pull request number. Defaults to the current PR number.
+    required: false
+    default: ""
+
+outputs:
+  comment-id:
+    description: ID of the created or updated comment
+    value: ${{ steps.post.outputs.comment-id }}
+
+runs:
+  using: composite
+  steps:
+    - name: Build comment body
+      id: build
+      shell: bash
+      env:
+        LINKS: ${{ inputs.links }}
+        BASE_REF: ${{ inputs.base-ref }}
+      run: |
+        MARKER="<!-- tailor-erd-preview -->"
+
+        if ! printf '%s' "$LINKS" | jq -e 'type == "array"' >/dev/null; then
+          echo "::error::links must be a JSON array"
+          exit 1
+        fi
+
+        if ! printf '%s' "$LINKS" | jq -e \
+          '[.[] | (type == "object") and ((.label | type) == "string") and ((.label | length) > 0) and ((.url | type) == "string") and ((.url | length) > 0)] | all' \
+          >/dev/null; then
+          echo "::error::each links entry must be an object with non-empty string label and url fields"
+          exit 1
+        fi
+
+        LINKS_COUNT=$(printf '%s' "$LINKS" | jq 'length')
+        if [ "$LINKS_COUNT" -eq 0 ]; then
+          BODY="${MARKER}"$'\n'"## 🗺️ ERD preview"$'\n\n'"No relevant ERD changes in this update."
+        else
+          DIFF_NOTE=""
+          [ -n "$BASE_REF" ] && DIFF_NOTE=" Each viewer can switch between the current schema and a diff against base branch \`$BASE_REF\`."
+          LIST=$(printf '%s' "$LINKS" | jq -r '.[] | "- **\(.label)**: [view](\(.url))"')
+          BODY="${MARKER}"$'\n'"## 🗺️ ERD preview"$'\n\n'"Self-contained ERD viewer HTML built for this run.${DIFF_NOTE}"$'\n'"${LIST}"
+        fi
+
+        EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+        {
+          echo "body<<$EOF"
+          echo "$BODY"
+          echo "$EOF"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Post or update comment
+      id: post
+      uses: tailor-platform/actions/_internal/sticky-comment@d203a37c87b7a69c6040611c33e9e50c1d564ed1
+      with:
+        marker-prefix: "<!-- tailor-erd-preview -->"
+        body: ${{ steps.build.outputs.body }}
+        github-token: ${{ inputs.github-token }}
+        pr-number: ${{ inputs.pr-number }}

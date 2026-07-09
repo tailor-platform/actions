@@ -1,0 +1,394 @@
+name: Test ERD Export Action
+
+on:
+  pull_request:
+    paths:
+      - "_internal/erd-export/**"
+      - "tests/erd-export/**"
+      - ".github/workflows/test-erd-export.yaml"
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  test-happy-path:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.9.0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+          cache-dependency-path: tests/erd-export/pnpm-lock.yaml
+
+      - name: Install fake tailor-sdk
+        working-directory: tests/erd-export
+        run: pnpm install
+
+      - name: "Test: exports a namespace"
+        id: export
+        uses: ./_internal/erd-export
+        with:
+          namespace: tailordb
+          package-manager: pnpm
+          working-directory: tests/erd-export
+
+      - name: "Verify: outputs are set correctly"
+        env:
+          EXPORTED: ${{ steps.export.outputs.exported }}
+          HTML_PATH: ${{ steps.export.outputs.html-path }}
+          LOADED_DIRS: ${{ steps.export.outputs.loaded-dirs }}
+        run: |
+          [ "$EXPORTED" = "true" ] || { echo "::error::Expected exported=true, got '$EXPORTED'"; exit 1; }
+          [ -s "$HTML_PATH" ] || { echo "::error::Expected html-path '$HTML_PATH' to exist and be non-empty"; exit 1; }
+          [ "$LOADED_DIRS" = "tailordb" ] || { echo "::error::Expected loaded-dirs='tailordb', got '$LOADED_DIRS'"; exit 1; }
+
+  test-namespace-not-found:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.9.0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+          cache-dependency-path: tests/erd-export/pnpm-lock.yaml
+
+      - name: Install fake tailor-sdk
+        working-directory: tests/erd-export
+        run: pnpm install
+
+      - name: "Test: missing namespace is a graceful non-failure"
+        id: export
+        env:
+          FAKE_NAMESPACE_MISSING: "1"
+        uses: ./_internal/erd-export
+        with:
+          namespace: missing
+          package-manager: pnpm
+          working-directory: tests/erd-export
+
+      - name: "Verify: exported=false and html-path is empty"
+        env:
+          EXPORTED: ${{ steps.export.outputs.exported }}
+          HTML_PATH: ${{ steps.export.outputs.html-path }}
+        run: |
+          [ "$EXPORTED" = "false" ] || { echo "::error::Expected exported=false, got '$EXPORTED'"; exit 1; }
+          [ -z "$HTML_PATH" ] || { echo "::error::Expected empty html-path, got '$HTML_PATH'"; exit 1; }
+
+  test-no-output-file-fails-loudly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.9.0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+          cache-dependency-path: tests/erd-export/pnpm-lock.yaml
+
+      - name: Install fake tailor-sdk
+        working-directory: tests/erd-export
+        run: pnpm install
+
+      - name: "Test: a successful run with no output file fails loudly"
+        id: export
+        continue-on-error: true
+        env:
+          FAKE_NO_OUTPUT: "1"
+        uses: ./_internal/erd-export
+        with:
+          namespace: tailordb
+          package-manager: pnpm
+          working-directory: tests/erd-export
+
+      - name: "Verify: outcome must be failure"
+        env:
+          OUTCOME: ${{ steps.export.outcome }}
+        run: |
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::Expected erd-export to fail when the export produces no output file"
+            exit 1
+          fi
+
+  test-stale-output-not-reused:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.9.0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+          cache-dependency-path: tests/erd-export/pnpm-lock.yaml
+
+      - name: Install fake tailor-sdk
+        working-directory: tests/erd-export
+        run: pnpm install
+
+      - name: "Setup: a first export writes a real output file"
+        uses: ./_internal/erd-export
+        with:
+          namespace: tailordb
+          package-manager: pnpm
+          working-directory: tests/erd-export
+
+      - name: "Test: a second run producing no output must not be masked by the stale file"
+        id: export
+        continue-on-error: true
+        env:
+          FAKE_NO_OUTPUT: "1"
+        uses: ./_internal/erd-export
+        with:
+          namespace: tailordb
+          package-manager: pnpm
+          working-directory: tests/erd-export
+
+      - name: "Verify: outcome must be failure"
+        env:
+          OUTCOME: ${{ steps.export.outcome }}
+        run: |
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::Expected erd-export to fail when a stale output file from a prior run masks the current run producing nothing"
+            exit 1
+          fi
+
+  test-upload-without-artifact-name-fails:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.9.0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+          cache-dependency-path: tests/erd-export/pnpm-lock.yaml
+
+      - name: Install fake tailor-sdk
+        working-directory: tests/erd-export
+        run: pnpm install
+
+      - name: "Test: upload=true without artifact-name fails fast"
+        id: export
+        continue-on-error: true
+        uses: ./_internal/erd-export
+        with:
+          namespace: tailordb
+          package-manager: pnpm
+          working-directory: tests/erd-export
+          upload: "true"
+
+      - name: "Verify: outcome must be failure"
+        env:
+          OUTCOME: ${{ steps.export.outcome }}
+        run: |
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::Expected erd-export to fail when upload=true is set without artifact-name"
+            exit 1
+          fi
+
+  test-unsafe-namespace-rejected:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.9.0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+          cache-dependency-path: tests/erd-export/pnpm-lock.yaml
+
+      - name: Install fake tailor-sdk
+        working-directory: tests/erd-export
+        run: pnpm install
+
+      - name: "Test: a namespace of '..' is rejected before the recursive delete"
+        id: export
+        continue-on-error: true
+        uses: ./_internal/erd-export
+        with:
+          namespace: ".."
+          package-manager: pnpm
+          working-directory: tests/erd-export
+
+      - name: "Verify: outcome must be failure"
+        env:
+          OUTCOME: ${{ steps.export.outcome }}
+        run: |
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::Expected erd-export to fail when namespace is '..'"
+            exit 1
+          fi
+
+  test-unsafe-output-directory-rejected:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.9.0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+          cache-dependency-path: tests/erd-export/pnpm-lock.yaml
+
+      - name: Install fake tailor-sdk
+        working-directory: tests/erd-export
+        run: pnpm install
+
+      - name: "Test: an output-directory of '/' is rejected before the recursive delete"
+        id: export-root
+        continue-on-error: true
+        uses: ./_internal/erd-export
+        with:
+          namespace: tailordb
+          package-manager: pnpm
+          working-directory: tests/erd-export
+          output-directory: "/"
+
+      - name: "Verify: outcome must be failure"
+        env:
+          OUTCOME: ${{ steps.export-root.outcome }}
+        run: |
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::Expected erd-export to fail when output-directory is '/'"
+            exit 1
+          fi
+
+      - name: "Test: an output-directory outside RUNNER_TEMP is rejected"
+        id: export-outside-temp
+        continue-on-error: true
+        uses: ./_internal/erd-export
+        with:
+          namespace: tailordb
+          package-manager: pnpm
+          working-directory: tests/erd-export
+          output-directory: ${{ github.workspace }}/erd-export-outside-temp
+
+      - name: "Verify: outcome must be failure"
+        env:
+          OUTCOME: ${{ steps.export-outside-temp.outcome }}
+        run: |
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::Expected erd-export to fail when output-directory is outside RUNNER_TEMP"
+            exit 1
+          fi
+
+      - name: "Test: a textual RUNNER_TEMP prefix that escapes via '..' is rejected"
+        id: export-traversal
+        continue-on-error: true
+        uses: ./_internal/erd-export
+        with:
+          namespace: tailordb
+          package-manager: pnpm
+          working-directory: tests/erd-export
+          output-directory: ${{ runner.temp }}/../erd-export-traversal
+
+      - name: "Verify: outcome must be failure"
+        env:
+          OUTCOME: ${{ steps.export-traversal.outcome }}
+        run: |
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::Expected erd-export to fail when output-directory textually starts with RUNNER_TEMP but resolves outside it via '..'"
+            exit 1
+          fi
+
+  test-upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.9.0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+          cache-dependency-path: tests/erd-export/pnpm-lock.yaml
+
+      - name: Install fake tailor-sdk
+        working-directory: tests/erd-export
+        run: pnpm install
+
+      - name: "Test: upload=true uploads the exported HTML"
+        uses: ./_internal/erd-export
+        with:
+          namespace: tailordb
+          package-manager: pnpm
+          working-directory: tests/erd-export
+          upload: "true"
+          artifact-name: test-erd-export-${{ github.run_id }}
+          retention-days: "1"

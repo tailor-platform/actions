@@ -1,0 +1,23 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      tailor-sdk:
+        specifier: file:./fake-sdk
+        version: file:fake-sdk
+
+packages:
+
+  tailor-sdk@file:fake-sdk:
+    resolution: {directory: fake-sdk, type: directory}
+    hasBin: true
+
+snapshots:
+
+  tailor-sdk@file:fake-sdk: {}

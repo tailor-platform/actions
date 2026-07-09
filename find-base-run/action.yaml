@@ -1,0 +1,64 @@
+name: Find a workflow run at or before a fork point
+description: >-
+  Search a workflow's successful runs on a given branch, newest-first, for
+  the most recent one at or before a given commit (the "fork point").
+  Useful for reusing a base-branch artifact at the correct point in
+  history instead of the branch's moving tip, which would otherwise mix
+  in changes made after the two commits diverged — pair with the
+  relevance action, which resolves the fork point via the compare API's
+  merge_base_commit.
+
+inputs:
+  workflow-file:
+    description: >-
+      Filename of the workflow whose run history to search (e.g.
+      erd-schema.yaml), not its display name
+    required: true
+  base-ref:
+    description: Branch to search runs on
+    required: true
+  fork-sha:
+    description: Commit to find a run at or before
+    required: true
+  max-candidate-runs:
+    description: >-
+      Safety cap on how many candidate runs to check, on top of
+      retention-days. Must be a positive integer.
+    required: false
+    default: "1000"
+  retention-days:
+    description: >-
+      Only consider runs created within this many days. Set this to match
+      whatever artifact retention period the caller's runs use — a run
+      outside that window has nothing left to download regardless of
+      whether it matches. Must be a positive integer.
+    required: false
+    default: "90"
+  github-token:
+    description: 'GitHub token with "actions: read" permission'
+    required: true
+
+outputs:
+  run-id:
+    description: >-
+      ID of the matching run, or empty if none of the checked candidates
+      are at or before fork-sha. An empty value is not an error — treat it
+      as "no usable base" and degrade accordingly (e.g. render everything
+      as newly added).
+    value: ${{ steps.find.outputs.run-id }}
+
+runs:
+  using: composite
+  steps:
+    - name: Find base run
+      id: find
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        WORKFLOW_FILE: ${{ inputs.workflow-file }}
+        BASE_REF: ${{ inputs.base-ref }}
+        FORK_SHA: ${{ inputs.fork-sha }}
+        MAX_CANDIDATE_RUNS: ${{ inputs.max-candidate-runs }}
+        RETENTION_DAYS: ${{ inputs.retention-days }}
+      run: node "${{ github.action_path }}/find-base-run.mjs"

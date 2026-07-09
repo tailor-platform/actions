@@ -475,6 +475,97 @@ jobs:
 
 ---
 
+### [`relevance`](relevance/action.yaml)
+
+Decide whether the diff between two commits touches any path you care about, and resolve the true fork point (git merge-base) between them via the compare API's `merge_base_commit` — not `sha-base`'s moving tip, which would otherwise mix in unrelated changes made to the base branch after the two commits diverged. Useful for skipping expensive work on an irrelevant push/PR while still reusing a base-branch snapshot found at the correct fork point (pair with [`find-base-run`](#find-base-run)).
+
+#### Usage
+
+```yaml
+jobs:
+  check-relevance:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: tailor-platform/actions/relevance@v1
+        id: relevance
+        with:
+          sha-base: ${{ github.event.pull_request.base.sha }}
+          sha-head: ${{ github.event.pull_request.head.sha }}
+          relevant-paths: |
+            tailor.config.ts
+            tailordb/
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+    outputs:
+      relevant: ${{ steps.relevance.outputs.relevant }}
+      fork-sha: ${{ steps.relevance.outputs.fork-sha }}
+```
+
+#### Inputs
+
+| Name | Required | Default | Description |
+|------|----------|---------|-------------|
+| `sha-base` | Yes | | Base commit to diff from. Pass the all-zero SHA (`0000000000000000000000000000000000000000`, as GitHub does for a branch's first push) to always treat the diff as relevant. |
+| `sha-head` | Yes | | Head commit to diff to |
+| `relevant-paths` | No | | Newline-separated list of paths that make the diff relevant. A line ending in `/` matches as a prefix against changed file paths; anything else must match a changed file path exactly. Empty means no path makes the diff relevant on its own — only `sha-base` being the all-zero SHA, or the compare API's file list hitting its 300-entry cap (treated as possibly truncated), will set `relevant=true`. |
+| `github-token` | Yes | | GitHub token for the compare API call |
+
+#### Outputs
+
+| Name | Description |
+|------|-------------|
+| `relevant` | `"true"` or `"false"` |
+| `fork-sha` | The true fork point (merge-base) between `sha-base` and `sha-head`. Empty when `sha-base` is the all-zero SHA (no prior commit to compare against, so there is no fork point to resolve). |
+
+---
+
+### [`find-base-run`](find-base-run/action.yaml)
+
+Search a workflow's successful runs on a given branch, newest-first, for the most recent one at or before a given commit (the "fork point"). Useful for reusing a base-branch artifact at the correct point in history instead of the branch's moving tip, which would otherwise mix in changes made after the two commits diverged — pair with [`relevance`](#relevance), which resolves the fork point via the compare API's `merge_base_commit`.
+
+Deliberately returns no match (rather than falling back to the latest run) when nothing at-or-before the fork point is found among the checked candidates — a later run could include changes merged into the branch after the fork point, which is the exact mismatch this action exists to avoid. Treat an empty `run-id` as "no usable base" and degrade accordingly (e.g. render everything as newly added), not as an error.
+
+#### Usage
+
+```yaml
+jobs:
+  find-base:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: tailor-platform/actions/find-base-run@v1
+        id: find
+        with:
+          workflow-file: schema-export.yaml
+          base-ref: ${{ github.event.pull_request.base.ref }}
+          fork-sha: ${{ steps.relevance.outputs.fork-sha }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+    outputs:
+      run-id: ${{ steps.find.outputs.run-id }}
+```
+
+#### Inputs
+
+| Name | Required | Default | Description |
+|------|----------|---------|-------------|
+| `workflow-file` | Yes | | Filename of the workflow whose run history to search (e.g. `schema-export.yaml`), not its display name |
+| `base-ref` | Yes | | Branch to search runs on |
+| `fork-sha` | Yes | | Commit to find a run at or before |
+| `max-candidate-runs` | No | `1000` | Safety cap on how many candidate runs to check, on top of `retention-days`. Must be a positive integer. |
+| `retention-days` | No | `90` | Only consider runs created within this many days. Set this to match whatever artifact retention period your runs use — a run outside that window has nothing left to download regardless of whether it matches. Must be a positive integer. |
+| `github-token` | Yes | | GitHub token with `actions: read` permission |
+
+#### Outputs
+
+| Name | Description |
+|------|-------------|
+| `run-id` | ID of the matching run, or empty if none of the checked candidates are at or before `fork-sha`. |
+
+---
+
 ## License
 
 MIT

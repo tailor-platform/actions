@@ -1,0 +1,58 @@
+name: Determine path relevance and fork point
+description: >-
+  Decide whether the diff between two commits touches any path the caller
+  cares about, and resolve the true fork point (git merge-base) between
+  them via the compare API's merge_base_commit — not sha-base's moving
+  tip, which would otherwise mix in unrelated changes made to the base
+  branch after the two commits diverged. Useful for skipping expensive
+  work on an irrelevant push/PR while still reusing a base-branch snapshot
+  found at the correct fork point (pair with find-base-run).
+
+inputs:
+  sha-base:
+    description: >-
+      Base commit to diff from. Pass the all-zero SHA
+      (0000000000000000000000000000000000000000, as GitHub does for a
+      branch's first push) to always treat the diff as relevant.
+    required: true
+  sha-head:
+    description: Head commit to diff to
+    required: true
+  relevant-paths:
+    description: >-
+      Newline-separated list of paths that make the diff relevant. A line
+      ending in "/" matches as a prefix against changed file paths;
+      anything else must match a changed file path exactly. Empty means no
+      path makes the diff relevant on its own — only sha-base being the
+      all-zero SHA, or the compare API's file list hitting its 300-entry
+      cap (treated as possibly truncated), will set relevant=true.
+    required: false
+    default: ""
+  github-token:
+    description: GitHub token for the compare API call
+    required: true
+
+outputs:
+  relevant:
+    description: "'true' or 'false'"
+    value: ${{ steps.determine.outputs.relevant }}
+  fork-sha:
+    description: >-
+      The true fork point (merge-base) between sha-base and sha-head.
+      Empty when sha-base is the all-zero SHA (no prior commit to compare
+      against, so there is no fork point to resolve).
+    value: ${{ steps.determine.outputs.fork-sha }}
+
+runs:
+  using: composite
+  steps:
+    - name: Determine relevance
+      id: determine
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        SHA_BASE: ${{ inputs.sha-base }}
+        SHA_HEAD: ${{ inputs.sha-head }}
+        RELEVANT_PATHS: ${{ inputs.relevant-paths }}
+      run: node "${{ github.action_path }}/relevance.mjs"

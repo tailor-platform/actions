@@ -1,0 +1,91 @@
+name: Test ERD Comment Action
+
+on:
+  pull_request:
+    paths:
+      - "_internal/erd-comment/**"
+      - ".github/workflows/test-erd-comment.yaml"
+  workflow_dispatch:
+    inputs:
+      pr-number:
+        description: PR number to post test comments on
+        required: true
+        type: number
+
+permissions: {}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: "Test: posts links when links is non-empty"
+        id: post
+        uses: ./_internal/erd-comment
+        with:
+          links: '[{"label": "tailordb", "url": "https://example.com/tailordb.html"}]'
+          base-ref: main
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pr-number: ${{ github.event.pull_request.number || inputs.pr-number }}
+
+      - name: "Verify: comment-id is set"
+        env:
+          COMMENT_ID: ${{ steps.post.outputs.comment-id }}
+        run: |
+          if [ -z "$COMMENT_ID" ]; then
+            echo "::error::comment-id should be set after posting"
+            exit 1
+          fi
+
+      - name: "Verify: comment body contains the link"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMENT_ID: ${{ steps.post.outputs.comment-id }}
+        run: |
+          BODY=$(gh api "repos/$GITHUB_REPOSITORY/issues/comments/$COMMENT_ID" --jq .body)
+          case "$BODY" in
+            *"tailordb"*"https://example.com/tailordb.html"*) ;;
+            *) echo "::error::Expected comment body to contain the tailordb link"; exit 1 ;;
+          esac
+
+      - name: "Test: updates to a no-changes status when links is empty"
+        id: update
+        uses: ./_internal/erd-comment
+        with:
+          links: "[]"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pr-number: ${{ github.event.pull_request.number || inputs.pr-number }}
+
+      - name: "Verify: same comment-id, and no-changes text is present"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          POST_ID: ${{ steps.post.outputs.comment-id }}
+          UPDATE_ID: ${{ steps.update.outputs.comment-id }}
+        run: |
+          if [ "$POST_ID" != "$UPDATE_ID" ]; then
+            echo "::error::Expected the same comment-id when updating to the no-changes status"
+            echo "  post:   $POST_ID"
+            echo "  update: $UPDATE_ID"
+            exit 1
+          fi
+          BODY=$(gh api "repos/$GITHUB_REPOSITORY/issues/comments/$UPDATE_ID" --jq .body)
+          case "$BODY" in
+            *"No relevant ERD changes"*) ;;
+            *) echo "::error::Expected the no-changes status text"; exit 1 ;;
+          esac
+
+      - name: Cleanup — delete test comment
+        if: always() && steps.post.outputs.comment-id != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMENT_ID: ${{ steps.post.outputs.comment-id }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/issues/comments/$COMMENT_ID" -X DELETE
+          echo "Deleted comment $COMMENT_ID"
