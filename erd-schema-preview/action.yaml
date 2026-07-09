@@ -111,6 +111,7 @@ runs:
         LOADED_DIRS: ${{ steps.head-export.outputs.loaded-dirs }}
         PREFIX: ${{ inputs.relevant-path-prefix }}
       run: |
+        set -euo pipefail
         DYNAMIC=""
         if [ -n "$LOADED_DIRS" ]; then
           case "$PREFIX" in
@@ -123,10 +124,10 @@ runs:
         fi
         EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
         {
-          echo "paths<<$EOF"
-          echo "$ALWAYS_RELEVANT_PATHS"
-          echo "$DYNAMIC"
-          echo "$EOF"
+          printf 'paths<<%s\n' "$EOF"
+          printf '%s\n' "$ALWAYS_RELEVANT_PATHS"
+          printf '%s\n' "$DYNAMIC"
+          printf '%s\n' "$EOF"
         } >>"$GITHUB_OUTPUT"
 
     # head-export succeeds with exported=false when the namespace isn't
@@ -199,10 +200,10 @@ runs:
       run: |
         set -euo pipefail
         case "$PACKAGE_MANAGER" in
-          pnpm) RUN="pnpm exec" ;;
-          yarn) RUN="yarn" ;;
-          bun)  RUN="bunx" ;;
-          npm|"") RUN="npx --no-install" ;;
+          pnpm) RUN=(pnpm exec) ;;
+          yarn) RUN=(yarn) ;;
+          bun)  RUN=(bunx) ;;
+          npm|"") RUN=(npx --no-install) ;;
           *)
             echo "::error::Unsupported package-manager '$PACKAGE_MANAGER' (expected pnpm, npm, yarn, or bun)"
             exit 1
@@ -222,7 +223,7 @@ runs:
         [ "$HEAD_MISSING" = "false" ] && diff_args+=(--head-html "$HEAD_HTML")
         [ "$base_missing" = "false" ] && diff_args+=(--base-html "$RUNNER_TEMP/erd-schema-preview/base/index.html")
 
-        $RUN tailor-sdk tailordb erd diff "${diff_args[@]}"
+        "${RUN[@]}" tailor-sdk tailordb erd diff "${diff_args[@]}"
 
         html_path="$RUNNER_TEMP/erd-schema-preview/out/$NAMESPACE.html"
         if [ ! -s "$html_path" ]; then
