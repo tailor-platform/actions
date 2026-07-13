@@ -33,7 +33,7 @@ inputs:
     default: "."
   package-manager:
     description: >-
-      Package manager used to run tailor-sdk (pnpm, npm, yarn, or bun).
+      Package manager used to run tailor (pnpm, npm, yarn, or bun).
       Defaults to npx when empty.
     required: false
     default: ""
@@ -109,7 +109,7 @@ runs:
           CREATE_ARGS=(workspace create --name "$WORKSPACE_NAME" --region "$REGION" --json)
           [ -n "$ORG_ID" ] && CREATE_ARGS+=(--organization-id "$ORG_ID")
           [ -n "$FOLDER_ID" ] && CREATE_ARGS+=(--folder-id "$FOLDER_ID")
-          WORKSPACE_ID=$($TAILOR_SDK_RUN tailor-sdk "${CREATE_ARGS[@]}" | jq -r '.id // empty')
+          WORKSPACE_ID=$($TAILOR_RUN tailor "${CREATE_ARGS[@]}" | jq -r '.id // empty')
           if [ -z "$WORKSPACE_ID" ]; then
             echo "::error::Failed to create preview workspace '$WORKSPACE_NAME'"
             exit 1

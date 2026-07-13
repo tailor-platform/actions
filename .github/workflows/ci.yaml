@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - v2
 
 permissions: {}
 
@@ -33,10 +34,16 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - name: Ensure _internal actions are SHA-pinned to a commit already on main
+      - name: Ensure _internal actions are SHA-pinned to a commit already on the base branch
+        env:
+          # On a pull_request, the base branch is the PR's target (base_ref); on a
+          # direct push, it's the branch that was pushed (ref_name). Hardcoding "main"
+          # here would make this check meaningless on any other long-lived line (e.g.
+          # a "v2" branch), since its own commits are never ancestors of origin/main.
+          BASE_BRANCH: ${{ github.event_name == 'pull_request' && github.base_ref || github.ref_name }}
         run: |
           set -uo pipefail
-          git fetch origin main --quiet
+          git fetch origin "$BASE_BRANCH" --quiet
           FAILED=0
 
           # Local-path refs (./_internal/...) resolve relative to the CALLER's checkout,
@@ -53,14 +60,15 @@ jobs:
             done < <(grep -nE 'uses:[[:space:]]*\./_internal/' "${ACTION_FILES[@]}")
           fi
 
-          # Every pin must already be reachable from origin/main, never a commit that only
-          # lives on the branch/PR being edited right now — otherwise a later amend/rebase
-          # orphans it (impostor-commit) after CI already went green on the doomed SHA.
+          # Every pin must already be reachable from origin/$BASE_BRANCH, never a commit
+          # that only lives on the branch/PR being edited right now — otherwise a later
+          # amend/rebase orphans it (impostor-commit) after CI already went green on the
+          # doomed SHA.
           while IFS=: read -r file line rest; do
             sha=$(printf '%s' "$rest" | grep -oE '_internal/[a-zA-Z0-9_-]+@[0-9a-f]{40}' | grep -oE '[0-9a-f]{40}$')
             [ -z "$sha" ] && continue
-            if ! git merge-base --is-ancestor "$sha" origin/main 2>/dev/null; then
-              echo "::error file=$file,line=$line::_internal ref $sha is not part of origin/main's history yet. Pinning to a commit that only exists on this branch/PR is fragile: rebasing or amending later orphans it. Merge the _internal change to main first, then bump this pin to point at the resulting main commit."
+            if ! git merge-base --is-ancestor "$sha" "origin/$BASE_BRANCH" 2>/dev/null; then
+              echo "::error file=$file,line=$line::_internal ref $sha is not part of origin/$BASE_BRANCH's history yet. Pinning to a commit that only exists on this branch/PR is fragile: rebasing or amending later orphans it. Merge the _internal change to $BASE_BRANCH first, then bump this pin to point at the resulting commit."
               FAILED=1
             fi
           done < <(grep -rnE 'uses:[[:space:]]*tailor-platform/actions/_internal/' --include='*.yaml' --include='*.yml' .)
@@ -68,7 +76,7 @@ jobs:
           if [ "$FAILED" -eq 1 ]; then
             exit 1
           fi
-          echo "OK: all _internal/* references are SHA-pinned and already on origin/main."
+          echo "OK: all _internal/* references are SHA-pinned and already on origin/$BASE_BRANCH."
 
   ghalint:
     runs-on: ubuntu-latest

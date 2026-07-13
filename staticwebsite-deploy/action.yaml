@@ -22,7 +22,7 @@ inputs:
     default: "."
   package-manager:
     description: >-
-      Package manager used to run tailor-sdk (pnpm, npm, yarn, or bun).
+      Package manager used to run tailor (pnpm, npm, yarn, or bun).
       Defaults to npx when empty.
     required: false
     default: ""
@@ -35,7 +35,7 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Resolve tailor-sdk runner
+    - name: Resolve tailor runner
       shell: bash
       env:
         PACKAGE_MANAGER: ${{ inputs.package-manager }}
@@ -52,7 +52,7 @@ runs:
             exit 1
             ;;
         esac
-        echo "TAILOR_SDK_RUN=$RUN" >> "$GITHUB_ENV"
+        echo "TAILOR_RUN=$RUN" >> "$GITHUB_ENV"
 
     - name: Deploy static website
       id: deploy
@@ -63,7 +63,7 @@ runs:
         SITE_NAME: ${{ inputs.name }}
         DIST_DIR: ${{ inputs.dist-dir }}
       run: |
-        RESULT=$($TAILOR_SDK_RUN tailor-sdk staticwebsite deploy \
+        RESULT=$($TAILOR_RUN tailor staticwebsite deploy \
           --workspace-id "$WORKSPACE_ID" \
           --name "$SITE_NAME" \
           --dir "$DIST_DIR" \

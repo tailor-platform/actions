@@ -9,6 +9,7 @@ on:
   push:
     branches:
       - main
+      - v2
   workflow_dispatch:
 
 permissions: {}
@@ -34,7 +35,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: tests/generate-check/pnpm-lock.yaml
 
-      - name: Install fake tailor-sdk
+      - name: Install fake tailor
         working-directory: tests/generate-check
         run: pnpm install
 
@@ -64,7 +65,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: tests/generate-check/pnpm-lock.yaml
 
-      - name: Install fake tailor-sdk
+      - name: Install fake tailor
         working-directory: tests/generate-check
         run: pnpm install
 
@@ -97,7 +98,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: tests/generate-check/pnpm-lock.yaml
 
-      - name: Install fake tailor-sdk
+      - name: Install fake tailor
         working-directory: tests/generate-check
         run: pnpm install
 

@@ -17,7 +17,7 @@ inputs:
     default: "."
   package-manager:
     description: >-
-      Package manager used to run tailor-sdk (pnpm, npm, yarn, or bun).
+      Package manager used to run tailor (pnpm, npm, yarn, or bun).
       Defaults to npx when empty.
     required: false
     default: ""
@@ -74,7 +74,7 @@ runs:
         fi
 
         echo "Deleting preview workspace: $WORKSPACE_NAME ($WORKSPACE_ID)"
-        $TAILOR_SDK_RUN tailor-sdk workspace delete --workspace-id "$WORKSPACE_ID" --yes
+        $TAILOR_RUN tailor workspace delete --workspace-id "$WORKSPACE_ID" --yes
 
         echo "workspace-id=$WORKSPACE_ID" >> "$GITHUB_OUTPUT"
         echo "workspace-name=$WORKSPACE_NAME" >> "$GITHUB_OUTPUT"

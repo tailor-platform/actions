@@ -1,9 +1,9 @@
 #!/bin/sh
-# Fake tailor-sdk for erd-schema-export/preview/comment integration tests.
+# Fake tailor for erd-schema-export/preview/comment integration tests.
 # Set FAKE_NAMESPACE_MISSING=1 to simulate a namespace not found in config
 # (applies to both export and diff).
 if [ "$1" != "tailordb" ] || [ "$2" != "erd" ]; then
-  echo "::error::fake tailor-sdk: unsupported command: $*" >&2
+  echo "::error::fake tailor: unsupported command: $*" >&2
   exit 1
 fi
 SUBCOMMAND="$3"
@@ -45,7 +45,7 @@ case "$SUBCOMMAND" in
     } > "$OUTPUT"
     ;;
   *)
-    echo "::error::fake tailor-sdk: unsupported erd subcommand: $SUBCOMMAND" >&2
+    echo "::error::fake tailor: unsupported erd subcommand: $SUBCOMMAND" >&2
     exit 1
     ;;
 esac

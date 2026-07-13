@@ -1,7 +1,7 @@
 name: Plan Tailor Platform Changes
 description: >-
   Show planned changes by running dry-run against the target workspace.
-  Merges base branch and runs tailor-sdk apply --dry-run, then comments the result on the PR.
+  Merges base branch and runs tailor deploy --dry-run, then comments the result on the PR.
   Requires Node.js and dependencies to be installed by the caller.
 
 inputs:
@@ -25,7 +25,7 @@ inputs:
     default: "."
   package-manager:
     description: >-
-      Package manager used to run tailor-sdk (pnpm, npm, yarn, or bun).
+      Package manager used to run tailor (pnpm, npm, yarn, or bun).
       Defaults to npx when empty, so Bun uses its own runtime instead of
       relying on an ambient Node, and the locally-installed version is used.
     required: false
@@ -80,7 +80,7 @@ runs:
         TAILOR_PLATFORM_WORKSPACE_ID: ${{ inputs.workspace-id }}
       run: |
         set +e
-        OUTPUT=$($TAILOR_SDK_RUN tailor-sdk apply --dry-run --yes 2>&1)
+        OUTPUT=$($TAILOR_RUN tailor deploy --dry-run --yes 2>&1)
         EXIT_CODE=$?
         set -e
 

@@ -20,7 +20,7 @@ inputs:
     required: true
   package-manager:
     description: >-
-      Package manager used to run tailor-sdk (pnpm, npm, yarn, or bun).
+      Package manager used to run tailor (pnpm, npm, yarn, or bun).
       Defaults to npx when empty.
     required: false
     default: ""
@@ -41,7 +41,7 @@ outputs:
   exported:
     description: >-
       "true" if the namespace was found and exported, "false" if
-      tailor-sdk reported the namespace doesn't exist in the local config
+      tailor reported the namespace doesn't exist in the local config
     value: ${{ steps.export.outputs.exported }}
 
 runs:

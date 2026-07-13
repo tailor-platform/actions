@@ -1,6 +1,6 @@
 name: Set up Tailor SDK
 description: >-
-  Mask credentials, resolve the tailor-sdk runner (writes TAILOR_SDK_RUN to env),
+  Mask credentials, resolve the tailor runner (writes TAILOR_RUN to env),
   and log in to Tailor Platform. Internal action — use via deploy, plan, or preview actions.
 
 inputs:
@@ -11,7 +11,7 @@ inputs:
     description: OAuth2 client secret for Tailor Platform machine user
     required: true
   package-manager:
-    description: Package manager used to run tailor-sdk (pnpm, npm, yarn, or bun). Defaults to npx when empty.
+    description: Package manager used to run tailor (pnpm, npm, yarn, or bun). Defaults to npx when empty.
     required: false
     default: ""
   working-directory:
@@ -31,7 +31,7 @@ runs:
         echo "::add-mask::$CLIENT_ID"
         echo "::add-mask::$CLIENT_SECRET"
 
-    - name: Resolve tailor-sdk runner
+    - name: Resolve tailor runner
       shell: bash
       env:
         PACKAGE_MANAGER: ${{ inputs.package-manager }}
@@ -48,7 +48,7 @@ runs:
             exit 1
             ;;
         esac
-        echo "TAILOR_SDK_RUN=$RUN" >> "$GITHUB_ENV"
+        echo "TAILOR_RUN=$RUN" >> "$GITHUB_ENV"
 
     - name: Login to Tailor Platform
       shell: bash
@@ -56,4 +56,4 @@ runs:
       env:
         TAILOR_PLATFORM_MACHINE_USER_CLIENT_ID: ${{ inputs.platform-client-id }}
         TAILOR_PLATFORM_MACHINE_USER_CLIENT_SECRET: ${{ inputs.platform-client-secret }}
-      run: $TAILOR_SDK_RUN tailor-sdk login --machineuser
+      run: $TAILOR_RUN tailor login --machine-user

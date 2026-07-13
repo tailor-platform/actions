@@ -15,7 +15,7 @@ inputs:
     default: "."
   package-manager:
     description: >-
-      Package manager used to run tailor-sdk (pnpm, npm, yarn, or bun).
+      Package manager used to run tailor (pnpm, npm, yarn, or bun).
       Defaults to npx when empty, so Bun uses its own runtime instead of
       relying on an ambient Node, and the locally-installed version is used.
     required: false

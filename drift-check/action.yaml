@@ -1,14 +1,14 @@
 name: Check Tailor Platform workflow drift
 description: >-
   Detect drift between the generated GitHub Actions workflows and the current
-  config/repo state by running tailor-sdk setup check --ci.
+  config/repo state by running tailor setup check --ci.
   Emits ::warning:: annotations and writes a step summary, but never fails the job.
   Use the 'ignore' input to suppress known intentional deviations.
   Requires Node.js and dependencies to be installed by the caller.
 
 inputs:
   package-manager:
-    description: Package manager used to run tailor-sdk (pnpm, npm, yarn, or bun)
+    description: Package manager used to run tailor (pnpm, npm, yarn, or bun)
     required: true
   working-directory:
     description: Working directory for the project (for monorepo setups)
@@ -44,7 +44,7 @@ runs:
         esac
 
         set +e
-        OUTPUT=$($RUN tailor-sdk setup check --ci 2>&1)
+        OUTPUT=$($RUN tailor setup check --ci 2>&1)
         CHECK_EXIT=$?
         set -e
 
@@ -83,7 +83,7 @@ runs:
         done <<< "$OUTPUT"
 
         if [ "$WARNED" -eq 0 ] && [ "$SUPPRESSED" -eq 0 ]; then
-          echo "::warning::[drift-check] tailor-sdk setup check --ci exited $CHECK_EXIT but produced no parseable findings — check failed unexpectedly (auth/network/config error?)"
+          echo "::warning::[drift-check] tailor setup check --ci exited $CHECK_EXIT but produced no parseable findings — check failed unexpectedly (auth/network/config error?)"
         fi
 
         {
@@ -97,5 +97,5 @@ runs:
             | sed 's/^[^[]*//' \
             | sed 's/^/- /'
           echo ""
-          echo "Re-run \`tailor-sdk setup\` to regenerate, or add a rule key to the \`ignore\` input to silence a known deviation."
+          echo "Re-run \`tailor setup\` to regenerate, or add a rule key to the \`ignore\` input to silence a known deviation."
         } >> "$GITHUB_STEP_SUMMARY"
