@@ -55,7 +55,7 @@ runs:
   steps:
     - name: Set up Tailor SDK
       if: inputs.workspace-id != ''
-      uses: tailor-platform/actions/_internal/sdk-setup@d203a37c87b7a69c6040611c33e9e50c1d564ed1
+      uses: tailor-platform/actions/_internal/sdk-setup@053ee1c31460fc04639c466e5f483ea3150a9a31
       with:
         platform-client-id: ${{ inputs.platform-client-id }}
         platform-client-secret: ${{ inputs.platform-client-secret }}
