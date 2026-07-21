@@ -9,6 +9,7 @@ on:
   push:
     branches:
       - main
+      - maintenance/v1
   workflow_dispatch:
 
 permissions: {}
