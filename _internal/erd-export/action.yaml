@@ -1,6 +1,6 @@
 name: Export a TailorDB ERD schema
 description: >-
-  Run `tailor-sdk tailordb erd export` for one namespace, verify it
+  Run `tailor tailordb erd export` for one namespace, verify it
   produced an output file (rather than letting a silent failure through to
   an optional upload step's if-no-files-found: ignore), and optionally
   upload the result as an artifact. Also reports which directories the
@@ -15,7 +15,7 @@ inputs:
     required: true
   package-manager:
     description: >-
-      Package manager used to run tailor-sdk (pnpm, npm, yarn, or bun).
+      Package manager used to run tailor (pnpm, npm, yarn, or bun).
       Defaults to npx when empty.
     required: false
     default: ""
@@ -46,7 +46,7 @@ outputs:
   exported:
     description: >-
       "true" if the namespace was found and exported, "false" if
-      tailor-sdk reported the namespace doesn't exist in the local config
+      tailor reported the namespace doesn't exist in the local config
       (not an error — some namespaces are expected to be absent, e.g. a
       namespace added on one side of a diff but not the other)
     value: ${{ steps.export.outputs.exported }}
@@ -56,7 +56,7 @@ outputs:
   loaded-dirs:
     description: >-
       Newline-separated list of directories the export loaded type files
-      from, parsed from tailor-sdk's own log output. Empty when exported is
+      from, parsed from tailor's own log output. Empty when exported is
       "false" or no type files were loaded.
     value: ${{ steps.export.outputs.loaded-dirs }}
 
@@ -121,7 +121,7 @@ runs:
         # nothing this time.
         rm -rf "$OUTPUT_DIR/$NAMESPACE"
         log="$RUNNER_TEMP/erd-export-$NAMESPACE.log"
-        if ! $RUN tailor-sdk tailordb erd export --namespace "$NAMESPACE" --output "$OUTPUT_DIR" \
+        if ! $RUN tailor tailordb erd export --namespace "$NAMESPACE" --output "$OUTPUT_DIR" \
           >"$log" 2>&1; then
           cat "$log"
           if grep -q 'not found in local config.db' "$log"; then

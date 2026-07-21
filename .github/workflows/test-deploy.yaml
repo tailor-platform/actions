@@ -10,6 +10,7 @@ on:
   push:
     branches:
       - main
+      - v2
   workflow_dispatch:
 
 concurrency:
@@ -52,13 +53,13 @@ jobs:
           TAILOR_PLATFORM_ORGANIZATION_ID: ${{ vars.TAILOR_PLATFORM_ORGANIZATION_ID }}
           TAILOR_PLATFORM_FOLDER_ID: ${{ vars.TAILOR_PLATFORM_FOLDER_ID }}
         run: |
-          npx tailor-sdk login --machineuser
+          npx tailor login --machine-user
 
           CREATE_ARGS=(--name "actions-test-${{ github.run_id }}" --region asia-northeast --organization-id "$TAILOR_PLATFORM_ORGANIZATION_ID")
           if [ -n "$TAILOR_PLATFORM_FOLDER_ID" ]; then
             CREATE_ARGS+=(--folder-id "$TAILOR_PLATFORM_FOLDER_ID")
           fi
-          WORKSPACE_ID=$(npx tailor-sdk workspace create -j "${CREATE_ARGS[@]}" | jq -r '.id')
+          WORKSPACE_ID=$(npx tailor workspace create -j "${CREATE_ARGS[@]}" | jq -r '.id')
           echo "workspace-id=$WORKSPACE_ID" >> "$GITHUB_OUTPUT"
           echo "Created test workspace: $WORKSPACE_ID"
 
@@ -91,4 +92,4 @@ jobs:
         working-directory: tests/deploy
         env:
           WORKSPACE_ID: ${{ steps.setup.outputs.workspace-id }}
-        run: npx tailor-sdk workspace delete --workspace-id "$WORKSPACE_ID" --yes
+        run: npx tailor workspace delete --workspace-id "$WORKSPACE_ID" --yes

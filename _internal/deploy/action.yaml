@@ -1,8 +1,8 @@
-name: Apply and resolve app URL
+name: Deploy and resolve app URL
 description: >-
-  Run tailor-sdk apply and show for a given workspace.
+  Run tailor deploy and show for a given workspace.
   Internal action shared by deploy and preview-deploy.
-  Requires TAILOR_SDK_RUN to be set (by sdk-setup) before this action runs.
+  Requires TAILOR_RUN to be set (by sdk-setup) before this action runs.
 
 inputs:
   workspace-id:
@@ -26,7 +26,7 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       env:
         TAILOR_PLATFORM_WORKSPACE_ID: ${{ inputs.workspace-id }}
-      run: $TAILOR_SDK_RUN tailor-sdk apply --yes
+      run: $TAILOR_RUN tailor deploy --yes
 
     - name: Resolve app URL
       id: show
@@ -35,7 +35,7 @@ runs:
       env:
         TAILOR_PLATFORM_WORKSPACE_ID: ${{ inputs.workspace-id }}
       run: |
-        if APP_JSON=$($TAILOR_SDK_RUN tailor-sdk show --json 2>/dev/null); then
+        if APP_JSON=$($TAILOR_RUN tailor show --json 2>/dev/null); then
           APP_URL=$(echo "$APP_JSON" | jq -r '.url // ""')
         else
           APP_URL=""

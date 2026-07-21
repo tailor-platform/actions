@@ -3,6 +3,6 @@
   "version": "0.0.1",
   "private": true,
   "bin": {
-    "tailor-sdk": "bin/tailor-sdk.sh"
+    "tailor": "bin/tailor.sh"
   }
 }

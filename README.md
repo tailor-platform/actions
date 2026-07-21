@@ -29,7 +29,7 @@ jobs:
           node-version-file: package.json
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - uses: tailor-platform/actions/deploy@v1
+      - uses: tailor-platform/actions/deploy@v2
         with:
           workspace-id: ${{ vars.TAILOR_PLATFORM_WORKSPACE_ID }}
           platform-client-id: ${{ secrets.TAILOR_PLATFORM_MACHINE_USER_CLIENT_ID }}
@@ -65,13 +65,13 @@ gh variable set TAILOR_PLATFORM_WORKSPACE_ID --env production
 
 #### Scaffold with Tailor SDK CLI
 
-The [`tailor-sdk setup`](https://github.com/tailor-platform/sdk) command generates a workflow file using this action together with the [`install`](#install) action, with package manager auto-detection.
+The [`tailor setup`](https://github.com/tailor-platform/sdk) command generates a workflow file using this action together with the [`install`](#install) action, with package manager auto-detection.
 
 ---
 
 ### [`plan`](plan/action.yaml)
 
-Show planned changes by running dry-run against the target workspace. Merges the base branch and runs `tailor-sdk apply --dry-run`, then comments the result on the PR.
+Show planned changes by running dry-run against the target workspace. Merges the base branch and runs `tailor deploy --dry-run`, then comments the result on the PR.
 
 The action targets the workspace by `workspace-id` only. When `workspace-id` is empty (workspace not yet provisioned), the action skips the dry-run and reports that the workspace is not provisioned yet — the job succeeds. This covers the chicken-and-egg situation of running `plan` on a PR before the first deploy.
 
@@ -98,7 +98,7 @@ jobs:
           node-version-file: package.json
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - uses: tailor-platform/actions/plan@v1
+      - uses: tailor-platform/actions/plan@v2
         with:
           workspace-id: ${{ vars.TAILOR_PLATFORM_WORKSPACE_ID }}
           label: production
@@ -150,7 +150,7 @@ Set up the Tailor Platform toolchain (Node.js and package manager). Does not ins
 
 ### [`generate-check`](generate-check/action.yaml)
 
-Run `tailor-sdk generate` and fail if it produces uncommitted changes. Catches generated files (seed data, enum constants, etc.) that were regenerated but not committed.
+Run `tailor generate` and fail if it produces uncommitted changes. Catches generated files (seed data, enum constants, etc.) that were regenerated but not committed.
 
 #### Inputs
 
@@ -184,7 +184,7 @@ Detect drift between the generated GitHub Actions workflows and the current conf
 
 ### [`seed-validate`](seed-validate/action.yaml)
 
-Validate seed data against the generated schema, detecting JSONL records that do not match their target type. Requires `tailor-sdk generate` to have run first.
+Validate seed data against the generated schema, detecting JSONL records that do not match their target type. Requires `tailor generate` to have run first.
 
 #### Inputs
 
@@ -226,7 +226,7 @@ Send a deployment notification. Currently supports Slack via Bot token and chann
     steps:
       # ... deploy steps ...
       - if: always()
-        uses: tailor-platform/actions/notify@v1
+        uses: tailor-platform/actions/notify@v2
         with:
           provider: slack
           status: ${{ job.status }}
@@ -272,7 +272,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - id: preview
-        uses: tailor-platform/actions/preview-deploy@v1
+        uses: tailor-platform/actions/preview-deploy@v2
         with:
           workspace-name-prefix: my-app
           region: us-west
@@ -280,7 +280,7 @@ jobs:
           platform-client-id: ${{ secrets.TAILOR_PLATFORM_MACHINE_USER_CLIENT_ID }}
           platform-client-secret: ${{ secrets.TAILOR_PLATFORM_MACHINE_USER_CLIENT_SECRET }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: tailor-platform/actions/preview-comment@v1
+      - uses: tailor-platform/actions/preview-comment@v2
         with:
           workspace-id: ${{ steps.preview.outputs.workspace-id }}
           workspace-name: ${{ steps.preview.outputs.workspace-name }}
@@ -354,7 +354,7 @@ jobs:
           node-version-file: package.json
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - uses: tailor-platform/actions/check-licenses@v1
+      - uses: tailor-platform/actions/check-licenses@v2
         with:
           license-groups: ${{ vars.LICENSE_GROUPS }}
           additional-licenses: ${{ vars.ALLOWED_LICENSES }}
@@ -454,7 +454,7 @@ jobs:
           node-version-file: package.json
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - uses: tailor-platform/actions/preview-cleanup@v1
+      - uses: tailor-platform/actions/preview-cleanup@v2
         with:
           workspace-name-prefix: my-app
           platform-client-id: ${{ secrets.TAILOR_PLATFORM_MACHINE_USER_CLIENT_ID }}
@@ -488,7 +488,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: tailor-platform/actions/relevance@v1
+      - uses: tailor-platform/actions/relevance@v2
         id: relevance
         with:
           sha-base: ${{ github.event.pull_request.base.sha }}
@@ -536,7 +536,7 @@ jobs:
       contents: read
       actions: read
     steps:
-      - uses: tailor-platform/actions/find-base-run@v1
+      - uses: tailor-platform/actions/find-base-run@v2
         id: find
         with:
           workflow-file: schema-export.yaml

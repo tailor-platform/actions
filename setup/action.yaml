@@ -1,7 +1,7 @@
 name: Set up Tailor Platform toolchain
 description: >-
   Set up the package manager and Node.js (or Bun) so subsequent steps can run
-  tailor-sdk. Does not install project dependencies — use the 'install' action
+  tailor. Does not install project dependencies — use the 'install' action
   for that. The caller is responsible for checking out the repository first.
 
 inputs:

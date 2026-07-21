@@ -1,13 +1,13 @@
 name: Check Tailor Platform migration drift
 description: >-
-  Detect drift in TailorDB migration files by running tailor-sdk tailordb migration generate
+  Detect drift in TailorDB migration files by running tailor tailordb migration generate
   and failing if it produces changes. Catches migration files that were not regenerated
   and committed after schema changes. Requires Node.js and dependencies to be installed
   by the caller.
 
 inputs:
   package-manager:
-    description: Package manager used to run tailor-sdk (pnpm, npm, yarn, or bun)
+    description: Package manager used to run tailor (pnpm, npm, yarn, or bun)
     required: true
   working-directory:
     description: Working directory for the project (for monorepo setups)
@@ -33,10 +33,10 @@ runs:
         PACKAGE_MANAGER: ${{ inputs.package-manager }}
       run: |
         case "$PACKAGE_MANAGER" in
-          pnpm) pnpm exec tailor-sdk tailordb migration generate --yes ;;
-          npm)  npx tailor-sdk tailordb migration generate --yes ;;
-          yarn) yarn tailor-sdk tailordb migration generate --yes ;;
-          bun)  bunx tailor-sdk tailordb migration generate --yes ;;
+          pnpm) pnpm exec tailor tailordb migration generate --yes ;;
+          npm)  npx tailor tailordb migration generate --yes ;;
+          yarn) yarn tailor tailordb migration generate --yes ;;
+          bun)  bunx tailor tailordb migration generate --yes ;;
           *)
             echo "::error::Unsupported package-manager '$PACKAGE_MANAGER' (expected pnpm, npm, yarn, or bun)"
             exit 1
@@ -51,6 +51,6 @@ runs:
         git add -A
         if ! git diff --cached --quiet; then
           git --no-pager diff --cached --stat
-          echo "::error::Migration files are out of date. Run 'tailor-sdk tailordb migration generate' locally and commit the result."
+          echo "::error::Migration files are out of date. Run 'tailor tailordb migration generate' locally and commit the result."
           exit 1
         fi

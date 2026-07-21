@@ -33,7 +33,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: tests/erd-schema-preview/pnpm-lock.yaml
 
-      - name: Install fake tailor-sdk
+      - name: Install fake tailor
         working-directory: tests/erd-schema-preview
         run: pnpm install
 
@@ -83,7 +83,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: tests/erd-schema-preview/pnpm-lock.yaml
 
-      - name: Install fake tailor-sdk
+      - name: Install fake tailor
         working-directory: tests/erd-schema-preview
         run: pnpm install
 
@@ -137,7 +137,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: tests/erd-schema-preview/pnpm-lock.yaml
 
-      - name: Install fake tailor-sdk
+      - name: Install fake tailor
         working-directory: tests/erd-schema-preview
         run: pnpm install
 
@@ -202,7 +202,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: tests/erd-schema-preview/pnpm-lock.yaml
 
-      - name: Install fake tailor-sdk
+      - name: Install fake tailor
         working-directory: tests/erd-schema-preview
         run: pnpm install
 
@@ -259,7 +259,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: tests/erd-schema-preview/pnpm-lock.yaml
 
-      - name: Install fake tailor-sdk
+      - name: Install fake tailor
         working-directory: tests/erd-schema-preview
         run: pnpm install
 

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Fake tailor-sdk for generate-check tests.
+# Fake tailor for generate-check tests.
 # Set FAKE_GENERATE_DIRTY=1 to simulate a generate run that produces uncommitted changes.
 case "$1" in
   generate)
@@ -8,7 +8,7 @@ case "$1" in
     fi
     ;;
   *)
-    echo "::error::fake tailor-sdk: unsupported command: $1" >&2
+    echo "::error::fake tailor: unsupported command: $1" >&2
     exit 1
     ;;
 esac

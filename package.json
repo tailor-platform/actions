@@ -4,9 +4,11 @@
     "lint": "actionlint",
     "test": "actrun workflow run .github/workflows/test-deploy.yaml --dry-run",
     "test:run": "actrun workflow run .github/workflows/test-deploy.yaml",
-    "test:check-licenses": "node --test check-licenses/*.test.mjs"
+    "test:check-licenses": "node --test check-licenses/*.test.mjs",
+    "test:cli-bin-contract": "node --test tests/cli-bin-contract.test.mjs"
   },
   "devDependencies": {
-    "@mizchi/actrun": "0.22.1"
+    "@mizchi/actrun": "0.22.1",
+    "yaml": "2.9.0"
   }
 }

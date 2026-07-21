@@ -33,7 +33,7 @@ inputs:
     default: "."
   package-manager:
     description: >-
-      Package manager used to run tailor-sdk (pnpm, npm, yarn, or bun).
+      Package manager used to run tailor (pnpm, npm, yarn, or bun).
       Defaults to npx when empty.
     required: false
     default: ""
@@ -64,7 +64,7 @@ runs:
   using: composite
   steps:
     - name: Set up Tailor SDK
-      uses: tailor-platform/actions/_internal/sdk-setup@d203a37c87b7a69c6040611c33e9e50c1d564ed1
+      uses: tailor-platform/actions/_internal/sdk-setup@053ee1c31460fc04639c466e5f483ea3150a9a31
       with:
         platform-client-id: ${{ inputs.platform-client-id }}
         platform-client-secret: ${{ inputs.platform-client-secret }}
@@ -109,7 +109,7 @@ runs:
           CREATE_ARGS=(workspace create --name "$WORKSPACE_NAME" --region "$REGION" --json)
           [ -n "$ORG_ID" ] && CREATE_ARGS+=(--organization-id "$ORG_ID")
           [ -n "$FOLDER_ID" ] && CREATE_ARGS+=(--folder-id "$FOLDER_ID")
-          WORKSPACE_ID=$($TAILOR_SDK_RUN tailor-sdk "${CREATE_ARGS[@]}" | jq -r '.id // empty')
+          WORKSPACE_ID=$($TAILOR_RUN tailor "${CREATE_ARGS[@]}" | jq -r '.id // empty')
           if [ -z "$WORKSPACE_ID" ]; then
             echo "::error::Failed to create preview workspace '$WORKSPACE_NAME'"
             exit 1
@@ -122,7 +122,7 @@ runs:
 
     - name: Deploy
       id: deploy
-      uses: tailor-platform/actions/_internal/deploy@d203a37c87b7a69c6040611c33e9e50c1d564ed1
+      uses: tailor-platform/actions/_internal/deploy@053ee1c31460fc04639c466e5f483ea3150a9a31
       with:
         workspace-id: ${{ steps.workspace.outputs.workspace-id }}
         working-directory: ${{ inputs.working-directory }}

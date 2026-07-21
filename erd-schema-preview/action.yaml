@@ -60,7 +60,7 @@ inputs:
     default: ""
   package-manager:
     description: >-
-      Package manager used to run tailor-sdk (pnpm, npm, yarn, or bun).
+      Package manager used to run tailor (pnpm, npm, yarn, or bun).
       Defaults to npx when empty.
     required: false
     default: ""
@@ -96,7 +96,7 @@ runs:
   steps:
     - name: Export head schema
       id: head-export
-      uses: tailor-platform/actions/_internal/erd-export@09a301b422b2af2923b4ffac174102b0622e07e2
+      uses: tailor-platform/actions/_internal/erd-export@053ee1c31460fc04639c466e5f483ea3150a9a31
       with:
         namespace: ${{ inputs.namespace }}
         package-manager: ${{ inputs.package-manager }}
@@ -256,7 +256,7 @@ runs:
         [ "$HEAD_MISSING" = "false" ] && diff_args+=(--head-html "$HEAD_HTML")
         [ "$base_missing" = "false" ] && diff_args+=(--base-html "$RUNNER_TEMP/erd-schema-preview/base/index.html")
 
-        "${RUN[@]}" tailor-sdk tailordb erd diff "${diff_args[@]}"
+        "${RUN[@]}" tailor tailordb erd diff "${diff_args[@]}"
 
         html_path="$RUNNER_TEMP/erd-schema-preview/out/$PREVIEW_ARTIFACT_NAME"
         if [ ! -s "$html_path" ]; then

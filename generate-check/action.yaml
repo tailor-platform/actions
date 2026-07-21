@@ -1,12 +1,12 @@
 name: Check Tailor Platform generated files
 description: >-
-  Run tailor-sdk generate and fail if it produces changes, catching generated
+  Run tailor generate and fail if it produces changes, catching generated
   files (seed data, enum constants, etc.) that were not regenerated and
   committed. Requires Node.js and dependencies to be installed by the caller.
 
 inputs:
   package-manager:
-    description: Package manager used to run tailor-sdk (pnpm, npm, yarn, or bun)
+    description: Package manager used to run tailor (pnpm, npm, yarn, or bun)
     required: true
   working-directory:
     description: Working directory for the project (for monorepo setups)
@@ -28,14 +28,14 @@ runs:
       env:
         PACKAGE_MANAGER: ${{ inputs.package-manager }}
       run: |
-        # Run the locally-installed tailor-sdk with each package manager's own
+        # Run the locally-installed tailor with each package manager's own
         # runner, so the pinned version is used and Bun does not depend on an
         # ambient Node/npx being present on the runner.
         case "$PACKAGE_MANAGER" in
-          pnpm) pnpm exec tailor-sdk generate ;;
-          npm)  npx tailor-sdk generate ;;
-          yarn) yarn tailor-sdk generate ;;
-          bun)  bunx tailor-sdk generate ;;
+          pnpm) pnpm exec tailor generate ;;
+          npm)  npx tailor generate ;;
+          yarn) yarn tailor generate ;;
+          bun)  bunx tailor generate ;;
           *)
             echo "::error::Unsupported package-manager '$PACKAGE_MANAGER' (expected pnpm, npm, yarn, or bun)"
             exit 1
@@ -65,6 +65,6 @@ runs:
 
         if ! git diff --cached --quiet; then
           git --no-pager diff --cached --stat
-          echo "::error::Generated files are out of date. Run 'tailor-sdk generate' locally and commit the result."
+          echo "::error::Generated files are out of date. Run 'tailor generate' locally and commit the result."
           exit 1
         fi
