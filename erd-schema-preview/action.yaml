@@ -96,7 +96,7 @@ runs:
   steps:
     - name: Export head schema
       id: head-export
-      uses: tailor-platform/actions/_internal/erd-export@053ee1c31460fc04639c466e5f483ea3150a9a31
+      uses: tailor-platform/actions/_internal/erd-export@09a301b422b2af2923b4ffac174102b0622e07e2
       with:
         namespace: ${{ inputs.namespace }}
         package-manager: ${{ inputs.package-manager }}
