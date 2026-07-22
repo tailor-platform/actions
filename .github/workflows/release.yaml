@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - maintenance/v1
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+
+permissions: {}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: package.json
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # With no pending changesets, this only opens/updates the "Version Packages" PR
+      # (bumping package.json and CHANGELOG.md from accumulated changesets) and does
+      # nothing else — no tag, no release. That happens below, once that PR merges.
+      - name: Create Release Pull Request
+        id: changesets
+        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
+
+      # Fires once the Version Packages PR (or any other push to maintenance/v1 with no
+      # pending changesets) lands. Guarded by checking for an existing release with this
+      # tag, since a later unrelated push also has hasChangesets == 'false' and would
+      # otherwise try to recreate the same release.
+      - name: Tag and create GitHub release
+        if: steps.changesets.outputs.hasChangesets == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v$VERSION"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; nothing to do."
+            exit 0
+          fi
+
+          NOTES=$(awk -v heading="## $VERSION" '
+            $0 == heading { found=1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md)
+
+          if [ -n "$(echo "$NOTES" | tr -d '[:space:]')" ]; then
+            gh release create "$TAG" --title "$TAG" --target maintenance/v1 --notes "$NOTES"
+          else
+            echo "::warning::No CHANGELOG.md section found for $VERSION; falling back to --generate-notes."
+            gh release create "$TAG" --title "$TAG" --target maintenance/v1 --generate-notes
+          fi

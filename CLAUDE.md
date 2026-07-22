@@ -26,21 +26,39 @@ to it (i.e. once a PR merges), the same way it runs on `main`.
 
 ## Release Procedure
 
-This repository uses GitHub Releases with automatic major version tag updates.
+Releases on this branch are automated with [Changesets](https://github.com/changesets/changesets),
+the same way `main` (v2) is — see `main`'s `CLAUDE.md` for the general shape of the
+flow. The only difference is which branch it runs on.
 
 ### Steps
 
-1. Create a GitHub release with a semver tag (e.g., `v1.8.0`), targeting this branch
-   explicitly — `gh release create` targets the repository's default branch (`main`,
-   the v2 line) unless told otherwise:
+1. In the PR making the change, add a changeset describing it and its bump type
+   (`patch`/`minor`/`major`):
    ```bash
-   gh release create v1.8.0 --target maintenance/v1 --title "v1.8.0" --generate-notes
+   pnpm changeset
    ```
-2. The `update-major-tag.yaml` workflow automatically updates the major version tag (`v1`) to point to the new release. It only looks at the tag name, so this works the same regardless of which branch the release was cut from.
-3. Users reference actions via the major version tag (e.g., `tailor-platform/actions/deploy@v1`), so no downstream changes are needed for patch/minor releases.
+   This writes a file under `.changeset/`; commit it with the rest of the PR.
+2. Once merged to `maintenance/v1`, `.github/workflows/release.yaml`
+   ([`changesets/action`](https://github.com/changesets/action)) opens or updates a
+   "Version Packages" PR that bumps `package.json`'s version and `CHANGELOG.md` from
+   the accumulated changesets. Merge it like any other PR (review required).
+3. Once that PR merges, the same workflow tags the new version (`vX.Y.Z`) and creates
+   a GitHub release from the `CHANGELOG.md` entry, targeting `maintenance/v1`
+   explicitly (`gh release create --target maintenance/v1 ...` under the hood) — no
+   manual release step.
+4. The `update-major-tag.yaml` workflow automatically updates the major version tag
+   (`v1`) to point to the new release. It only looks at the tag name, so this works
+   the same regardless of which branch the release was cut from.
+5. Users reference actions via the major version tag (e.g.,
+   `tailor-platform/actions/deploy@v1`), so no downstream changes are needed for
+   patch/minor releases.
 
 ### Notes
 
-- Tag format MUST be `vX.Y.Z` (strict semver). The workflow validates this and fails on non-conforming tags.
-- Use `--generate-notes` to auto-generate release notes from merged PRs, or write notes manually with `--notes`.
-- Always pass `--target maintenance/v1` for releases cut from this branch — omitting it releases whatever commit is currently at the tip of `main` instead.
+- A PR with no changeset doesn't trigger a release — `release.yaml` only tags/releases
+  when there are no pending changesets *and* the current `package.json` version isn't
+  already released (guarded by checking `gh release view vX.Y.Z` first).
+- Tag format is still `vX.Y.Z` (strict semver) — `update-major-tag.yaml` validates this
+  regardless of how the tag/release was created.
+- This branch's `package.json` `name`/`version` are tracked independently from
+  `main`'s — they're separate lines, so their version numbers advance independently.
