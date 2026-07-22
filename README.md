@@ -2,6 +2,14 @@
 
 Reusable GitHub Actions for [Tailor Platform](https://tailor.tech/).
 
+## Versioning
+
+Pin usage to a major tag (e.g. `tailor-platform/actions/deploy@v2`) or a full commit
+SHA — see each release's notes for the exact SHA. `v2` targets the Tailor Platform
+SDK's `tailor` CLI. If you're still on the SDK's pre-rename `tailor-sdk` CLI, use `@v1`
+instead; that line is maintained on the [`maintenance/v1`](https://github.com/tailor-platform/actions/tree/maintenance/v1)
+branch, not `main`.
+
 ## Actions
 
 ### [`deploy`](deploy/action.yaml)
