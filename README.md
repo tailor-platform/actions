@@ -2,6 +2,13 @@
 
 Reusable GitHub Actions for [Tailor Platform](https://tailor.tech/).
 
+> **This is the `maintenance/v1` branch.** It targets the Tailor Platform SDK's
+> now-removed `tailor-sdk` CLI and is maintained only for `v1.x.y` patch releases
+> (major tag `@v1`). Active development happens on
+> [`main`](https://github.com/tailor-platform/actions/tree/main) (major tag `@v2`,
+> targets the `tailor` CLI) — see this branch's `CLAUDE.md` for how to patch and
+> release from here.
+
 ## Actions
 
 ### [`deploy`](deploy/action.yaml)
