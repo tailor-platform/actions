@@ -5,10 +5,12 @@
 `main` is the current major line (v2 — actions target the Tailor Platform SDK's
 `tailor` CLI). `maintenance/v1` holds the pre-v2 line (actions target the removed
 `tailor-sdk` CLI) so the v1.x.y release series can still receive patches. It predates
-the `v1` -> `v2` rename and is not merged into `main`. Push commits/PRs for v1 fixes
-directly to `maintenance/v1` — see its own `CLAUDE.md` for that branch's release steps.
-`maintenance/v1` isn't branch-protected, so direct pushes are fine; its own CI
-(`ci.yaml` / `test-*.yaml`) runs on pushes to it the same way it does on `main`.
+the `v1` -> `v2` rename and is not merged into `main`. `maintenance/v1` is protected
+the same way `main` is (PR required, at least one approving review, no
+force-push/deletion, signed commits) — send v1 fixes as a PR against it, not a direct
+push. See its own `CLAUDE.md` for that branch's release steps. Its CI (`ci.yaml` /
+`test-*.yaml`) runs on PRs against it and on pushes to it, the same way it does on
+`main`.
 
 ## Release Procedure
 
