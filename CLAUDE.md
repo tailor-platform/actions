@@ -6,20 +6,23 @@ This is the `maintenance/v1` branch: the v1 line (actions target the Tailor Plat
 SDK's now-removed `tailor-sdk` CLI). It predates the `tailor-sdk` -> `tailor` rename
 that lives on `main` (v2) and is not merged into `main` — they're independent lines.
 
-This branch is **not** protected by any GitHub ruleset, so commits/PRs can go straight
-to it:
+This branch is protected the same way `main` is (PR required, at least one approving
+review, no force-push/deletion, signed commits) — direct pushes are rejected. Make
+changes via a PR:
 
 ```bash
 # using the wt helper (or any other way to check out this branch)
 wt maintenance/v1
 
+git checkout -b fix/whatever
 git add <files>
 git commit -m "fix: ..."
-git push origin maintenance/v1
+git push -u origin fix/whatever
+gh pr create --base maintenance/v1 --title "fix: ..." --body "..."
 ```
 
-Pushing directly runs this branch's own CI (`ci.yaml` / `test-*.yaml`) the same way it
-runs on `main`.
+This branch's own CI (`ci.yaml` / `test-*.yaml`) runs on PRs against it and on pushes
+to it (i.e. once a PR merges), the same way it runs on `main`.
 
 ## Release Procedure
 
