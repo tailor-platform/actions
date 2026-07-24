@@ -8,18 +8,9 @@ on:
 permissions: {}
 
 jobs:
-  # Opens/updates the "Version Packages" PR from accumulated changesets — no tag, no
-  # release (that's the tag-release job below). Kept in its own concurrency group since
-  # concurrent runs would otherwise race to push to the same Version Packages PR
-  # branch. GitHub's concurrency queue keeps only the latest pending run per group and
-  # cancels older ones, but that's harmless here: a skipped run here just means the PR
-  # update is picked up by the next run instead, recomputed from the same
-  # currently-accumulated changesets either way.
-  changesets:
+  release:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    concurrency:
-      group: changesets-${{ github.ref }}
     permissions:
       contents: write
       pull-requests: write
@@ -39,78 +30,46 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # commit-mode github-api makes the bot's commits (on the Version Packages PR
-      # branch) verified/GPG-signed, so they aren't blocked by main's required-signatures
-      # rule when that PR is merged (the default git-cli mode pushes unsigned commits).
-      - uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
+      # With pending changesets, opens/updates the "Version Packages" PR that bumps
+      # package.json/CHANGELOG.md — no tag, no release yet. With none (that PR having
+      # merged), runs `changeset publish` instead: this package is `"private": true`
+      # and `.changeset/config.json`'s `privatePackages.tag: true` tells it to skip an
+      # actual npm publish but still create the git tag — changesets/action (v1.9.0)
+      # detects the "New tag:" line this prints, then pushes that tag itself and
+      # creates the GitHub release, generating notes from CHANGELOG.md, the same
+      # tested path used for real npm publishes.
+      #
+      # commitMode github-api makes the bot's commits (on the Version Packages PR
+      # branch, and the tag pushed after `changeset publish`) verified/GPG-signed, so
+      # they aren't blocked by main's required-signatures rule when that PR is merged
+      # (the default git-cli mode pushes unsigned commits). Note: this action's input
+      # and output names are camelCase (commitMode, publish, publishedPackages), not
+      # the kebab-case used by its own `main` branch docs — GitHub Actions silently
+      # ignores a `with:` key an action doesn't declare, so a casing mismatch here
+      # doesn't error, it just no-ops.
+      #
+      # Deliberately no `concurrency:` group on this job: GitHub's concurrency queue
+      # keeps only the latest *pending* run per group and cancels older ones, which
+      # would silently skip a version's release if pushes to main landed close
+      # together. The (rare) alternative risk of two truly concurrent runs racing to
+      # push to the same Version Packages PR branch is self-evident (one push fails
+      # loudly) and self-corrects on the next push, rather than silently losing a
+      # release.
+      - id: changesets
+        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
         with:
-          commit-mode: github-api
+          commitMode: github-api
+          publish: pnpm exec changeset publish
 
-  # Fires on every push to main, independently of the changesets job above (no `needs`,
-  # no shared concurrency group) — unlike a run stuck behind the changesets job's
-  # concurrency queue, this one is never cancelled, so a version's release can't be
-  # silently skipped just because pushes to main landed close together.
-  tag-release:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      # Guarded by checking for an existing release with this tag, since a later
-      # unrelated push to main with no pending changesets would otherwise try to
-      # recreate the same release.
-      - name: Tag and create GitHub release
-        id: release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-
-          PENDING=$(find .changeset -maxdepth 1 -name '*.md' ! -name 'README.md' 2>/dev/null | head -1)
-          if [ -n "$PENDING" ]; then
-            echo "Pending changesets exist; nothing to release yet."
-            exit 0
-          fi
-
-          VERSION=$(node -p "require('./package.json').version")
-          TAG="v$VERSION"
-
-          EXISTING_COMMIT=$(gh release view "$TAG" --json targetCommitish --jq .targetCommitish 2>/dev/null || true)
-          if [ -n "$EXISTING_COMMIT" ]; then
-            echo "Release $TAG already exists; nothing to do."
-            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-            echo "commit=$EXISTING_COMMIT" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          NOTES=$(awk -v heading="## $VERSION" '
-            $0 == heading { found=1; next }
-            found && /^## / { exit }
-            found { print }
-          ' CHANGELOG.md)
-
-          # Target this run's own commit explicitly — it's exactly what introduced this
-          # version's CHANGELOG.md section (that's why there are no pending changesets)
-          # — rather than defaulting to whatever main's tip resolves to when the API
-          # call runs.
-          if [ -n "$(echo "$NOTES" | tr -d '[:space:]')" ]; then
-            gh release create "$TAG" --title "$TAG" --target "$GITHUB_SHA" --notes "$NOTES"
-          else
-            echo "::warning::No CHANGELOG.md section found for $VERSION; falling back to --generate-notes."
-            gh release create "$TAG" --title "$TAG" --target "$GITHUB_SHA" --generate-notes
-          fi
-
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "commit=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
-
+      # A release created with this job's own GITHUB_TOKEN doesn't fire
+      # update-major-tag.yaml's `release: published` trigger, so it can't rely on that
+      # separate workflow — update the major tag right here instead.
+      # update-major-tag.yaml still exists as a fallback for any release created by
+      # other means (e.g. manually via the GitHub UI).
       - name: Update major version tag
-        if: steps.release.outputs.commit != ''
+        if: steps.changesets.outputs.published == 'true'
         uses: ./.github/actions/update-major-tag
         with:
-          release-tag: ${{ steps.release.outputs.tag }}
-          ref: ${{ steps.release.outputs.commit }}
+          release-tag: v${{ fromJson(steps.changesets.outputs.publishedPackages)[0].version }}
+          ref: ${{ github.sha }}
           github-token: ${{ github.token }}
