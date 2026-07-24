@@ -21,6 +21,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Full history, so the backfill step below can locate the commit that
+          # introduced any given CHANGELOG.md version section via `git log -S`.
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
         with:
@@ -36,37 +39,78 @@ jobs:
       # With no pending changesets, this only opens/updates the "Version Packages" PR
       # (bumping package.json and CHANGELOG.md from accumulated changesets) and does
       # nothing else — no tag, no release. That happens below, once that PR merges.
+      # commit-mode github-api makes the bot's commits (on the Version Packages PR
+      # branch) verified/GPG-signed, so they aren't blocked by main's required-signatures
+      # rule when that PR is merged (the default git-cli mode pushes unsigned commits).
       - name: Create Release Pull Request
         id: changesets
         uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
+        with:
+          commit-mode: github-api
 
       # Fires once the Version Packages PR (or any other push to main with no pending
-      # changesets) lands. Guarded by checking for an existing release with this tag,
-      # since a later unrelated push to main also has hasChangesets == 'false' and
-      # would otherwise try to recreate the same release.
-      - name: Tag and create GitHub release
+      # changesets) lands. Backfills a release/tag for every CHANGELOG.md version that
+      # doesn't have one yet, not just the current package.json version: main's default
+      # single-pending-slot concurrency queue can cancel a run before it reaches this
+      # step (if a later push arrives while it's queued behind an in-progress run),
+      # which would otherwise leave that version permanently un-tagged.
+      - name: Tag and create GitHub releases
+        id: releases
         if: steps.changesets.outputs.hasChangesets == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          VERSION=$(node -p "require('./package.json').version")
-          TAG="v$VERSION"
 
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists; nothing to do."
+          if [ ! -f CHANGELOG.md ]; then
+            echo "::warning::No CHANGELOG.md found; nothing to release."
             exit 0
           fi
 
-          NOTES=$(awk -v heading="## $VERSION" '
-            $0 == heading { found=1; next }
-            found && /^## / { exit }
-            found { print }
-          ' CHANGELOG.md)
-
-          if [ -n "$(echo "$NOTES" | tr -d '[:space:]')" ]; then
-            gh release create "$TAG" --title "$TAG" --notes "$NOTES"
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          CURRENT_COMMIT=$(git log -S"## $CURRENT_VERSION" --format=%H -- CHANGELOG.md | tail -1)
+          if [ -n "$CURRENT_COMMIT" ]; then
+            echo "current-tag=v$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
+            echo "current-commit=$CURRENT_COMMIT" >> "$GITHUB_OUTPUT"
           else
-            echo "::warning::No CHANGELOG.md section found for $VERSION; falling back to --generate-notes."
-            gh release create "$TAG" --title "$TAG" --generate-notes
+            echo "::warning::Could not find the commit that introduced CHANGELOG.md section '## $CURRENT_VERSION'; major version tag won't be updated."
           fi
+
+          # Oldest to newest, so an already-released newer version is never re-tagged
+          # at an older commit if it happens to precede a freshly backfilled one.
+          mapfile -t VERSIONS < <(grep -oE '^## [0-9]+\.[0-9]+\.[0-9]+' CHANGELOG.md | sed 's/^## //' | tac)
+
+          for VERSION in "${VERSIONS[@]}"; do
+            TAG="v$VERSION"
+
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              continue
+            fi
+
+            COMMIT=$(git log -S"## $VERSION" --format=%H -- CHANGELOG.md | tail -1)
+            if [ -z "$COMMIT" ]; then
+              echo "::warning::Could not find the commit that introduced CHANGELOG.md section '## $VERSION'; skipping."
+              continue
+            fi
+
+            NOTES=$(awk -v heading="## $VERSION" '
+              $0 == heading { found=1; next }
+              found && /^## / { exit }
+              found { print }
+            ' CHANGELOG.md)
+
+            if [ -n "$(echo "$NOTES" | tr -d '[:space:]')" ]; then
+              gh release create "$TAG" --title "$TAG" --target "$COMMIT" --notes "$NOTES"
+            else
+              echo "::warning::No CHANGELOG.md section found for $VERSION; falling back to --generate-notes."
+              gh release create "$TAG" --title "$TAG" --target "$COMMIT" --generate-notes
+            fi
+          done
+
+      - name: Update major version tag
+        if: steps.changesets.outputs.hasChangesets == 'false' && steps.releases.outputs.current-commit != ''
+        uses: ./.github/actions/update-major-tag
+        with:
+          release-tag: ${{ steps.releases.outputs.current-tag }}
+          ref: ${{ steps.releases.outputs.current-commit }}
+          github-token: ${{ github.token }}

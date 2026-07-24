@@ -15,8 +15,12 @@ push. See its own `CLAUDE.md` for that branch's release steps. Its CI (`ci.yaml`
 ## Release Procedure
 
 Releases on `main` (the v2 line) are automated with [Changesets](https://github.com/changesets/changesets).
-`maintenance/v1` and any future `maintenance/vN` branch still release manually — see
-their own `CLAUDE.md` for that.
+`maintenance/v1` is automated the same way, via its own copy of
+`.github/workflows/release.yaml` — `main` and `maintenance/v1` are independent lines
+(neither merges into the other), so each carries its own copy rather than sharing one.
+Any future `maintenance/vN` branch should set up the same automation when it's branched
+off; see `maintenance/v1`'s own `CLAUDE.md` for that branch's specific steps (e.g. it
+passes `--target maintenance/v1` to `gh release create`).
 
 ### Steps (main)
 
@@ -32,8 +36,11 @@ their own `CLAUDE.md` for that.
    the accumulated changesets. Merge it like any other PR (review required).
 3. Once that PR merges, the same workflow tags the new version (`vX.Y.Z`) and creates
    a GitHub release from the `CHANGELOG.md` entry — no manual `gh release create` step.
-4. The `update-major-tag.yaml` workflow automatically updates the major version tag
-   (`v2`) to point to the new release.
+4. `release.yaml` itself then updates the major version tag (`v2`) to point to the new
+   release, right after creating it — a release created with the workflow's own
+   `GITHUB_TOKEN` doesn't fire `update-major-tag.yaml`'s `release: published` trigger,
+   so it can't rely on that separate workflow. `update-major-tag.yaml` still exists as
+   a fallback for any release created by other means (e.g. manually via the GitHub UI).
 5. Users reference actions via the major version tag (e.g.,
    `tailor-platform/actions/deploy@v2`), so no downstream changes are needed for
    patch/minor releases.
@@ -41,8 +48,11 @@ their own `CLAUDE.md` for that.
 ### Notes
 
 - A PR with no changeset doesn't trigger a release — `release.yaml` only tags/releases
-  when there are no pending changesets *and* the current `package.json` version isn't
-  already released (guarded by checking `gh release view vX.Y.Z` first).
+  when there are no pending changesets. When it does, it backfills a tag/release for
+  every `CHANGELOG.md` version that doesn't have one yet (not just the current
+  `package.json` version, guarded by checking `gh release view vX.Y.Z` first), so an
+  older version never stays permanently un-tagged if main's concurrency queue ever
+  cancels the run that would have released it.
 - For breaking changes, use a `major` changeset (e.g. bumps `2.x.y` -> `3.0.0`). Update
   README usage examples to reference the new major tag, and branch the outgoing major
   version into its own `maintenance/vN` branch first (see `maintenance/v1` for the
