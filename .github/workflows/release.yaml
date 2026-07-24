@@ -90,11 +90,18 @@ jobs:
               continue
             fi
 
-            COMMIT=$(git log -S"## $VERSION" --format=%H -- CHANGELOG.md | tail -1)
-            if [ -z "$COMMIT" ]; then
-              echo "::warning::Could not find the commit that introduced CHANGELOG.md section '## $VERSION'; skipping."
-              FAILED=1
-              continue
+            if [ "$VERSION" = "$CURRENT_VERSION" ]; then
+              # This run's own commit is exactly what introduced the current version's
+              # CHANGELOG.md section (that's why hasChangesets is false) — use it
+              # directly instead of searching history, so resolving it can't fail.
+              COMMIT="$GITHUB_SHA"
+            else
+              COMMIT=$(git log -S"## $VERSION" --format=%H -- CHANGELOG.md | tail -1)
+              if [ -z "$COMMIT" ]; then
+                echo "::warning::Could not find the commit that introduced CHANGELOG.md section '## $VERSION'; skipping."
+                FAILED=1
+                continue
+              fi
             fi
 
             NOTES=$(awk -v heading="## $VERSION" '
