@@ -68,13 +68,8 @@ jobs:
           fi
 
           CURRENT_VERSION=$(node -p "require('./package.json').version")
-          CURRENT_COMMIT=$(git log -S"## $CURRENT_VERSION" --format=%H -- CHANGELOG.md | tail -1)
-          if [ -n "$CURRENT_COMMIT" ]; then
-            echo "current-tag=v$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
-            echo "current-commit=$CURRENT_COMMIT" >> "$GITHUB_OUTPUT"
-          else
-            echo "::warning::Could not find the commit that introduced CHANGELOG.md section '## $CURRENT_VERSION'; major version tag won't be updated."
-          fi
+          CURRENT_COMMIT=""
+          FAILED=0
 
           # Oldest to newest, so an already-released newer version is never re-tagged
           # at an older commit if it happens to precede a freshly backfilled one.
@@ -84,12 +79,16 @@ jobs:
             TAG="v$VERSION"
 
             if gh release view "$TAG" >/dev/null 2>&1; then
+              if [ "$VERSION" = "$CURRENT_VERSION" ]; then
+                CURRENT_COMMIT=$(git log -S"## $VERSION" --format=%H -- CHANGELOG.md | tail -1)
+              fi
               continue
             fi
 
             COMMIT=$(git log -S"## $VERSION" --format=%H -- CHANGELOG.md | tail -1)
             if [ -z "$COMMIT" ]; then
               echo "::warning::Could not find the commit that introduced CHANGELOG.md section '## $VERSION'; skipping."
+              FAILED=1
               continue
             fi
 
@@ -99,13 +98,41 @@ jobs:
               found { print }
             ' CHANGELOG.md)
 
+            # A failure here (e.g. a transient API error) shouldn't stop the loop from
+            # backfilling other versions — it's recorded and re-raised at the end
+            # instead, so a later rerun only has to retry what actually failed.
+            CREATED=0
             if [ -n "$(echo "$NOTES" | tr -d '[:space:]')" ]; then
-              gh release create "$TAG" --title "$TAG" --target "$COMMIT" --notes "$NOTES"
+              gh release create "$TAG" --title "$TAG" --target "$COMMIT" --notes "$NOTES" || CREATED=1
             else
               echo "::warning::No CHANGELOG.md section found for $VERSION; falling back to --generate-notes."
-              gh release create "$TAG" --title "$TAG" --target "$COMMIT" --generate-notes
+              gh release create "$TAG" --title "$TAG" --target "$COMMIT" --generate-notes || CREATED=1
+            fi
+
+            if [ "$CREATED" -ne 0 ]; then
+              echo "::error::Failed to create release $TAG."
+              FAILED=1
+              continue
+            fi
+
+            if [ "$VERSION" = "$CURRENT_VERSION" ]; then
+              CURRENT_COMMIT="$COMMIT"
             fi
           done
+
+          # Only ever advance the major tag to a version whose release is confirmed to
+          # exist (just created above, or already there) — never to one that merely
+          # resolved a commit but failed to actually get released.
+          if [ -n "$CURRENT_COMMIT" ]; then
+            echo "current-tag=v$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
+            echo "current-commit=$CURRENT_COMMIT" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Release for current version v$CURRENT_VERSION isn't available yet; major version tag won't be updated."
+          fi
+
+          if [ "$FAILED" -ne 0 ]; then
+            exit 1
+          fi
 
       - name: Update major version tag
         if: steps.changesets.outputs.hasChangesets == 'false' && steps.releases.outputs.current-commit != ''
