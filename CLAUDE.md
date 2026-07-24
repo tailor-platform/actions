@@ -48,11 +48,14 @@ passes `--target maintenance/v1` to `gh release create`).
 ### Notes
 
 - A PR with no changeset doesn't trigger a release — `release.yaml` only tags/releases
-  when there are no pending changesets. When it does, it backfills a tag/release for
-  every `CHANGELOG.md` version that doesn't have one yet (not just the current
-  `package.json` version, guarded by checking `gh release view vX.Y.Z` first), so an
-  older version never stays permanently un-tagged if main's concurrency queue ever
-  cancels the run that would have released it.
+  when there are no pending changesets *and* the current `package.json` version isn't
+  already released (guarded by checking `gh release view vX.Y.Z` first).
+- This only ever tags/releases the current `package.json` version, at the commit this
+  run itself checked out (`$GITHUB_SHA`) — it doesn't backfill older versions. In the
+  rare case where a run that would have released a version gets cancelled by main's
+  single-pending-slot concurrency queue (a later push arrives while it's queued behind
+  an in-progress run), that version's release is skipped; the *next* Version Packages
+  merge still tags/releases normally at its own (newer) version.
 - For breaking changes, use a `major` changeset (e.g. bumps `2.x.y` -> `3.0.0`). Update
   README usage examples to reference the new major tag, and branch the outgoing major
   version into its own `maintenance/vN` branch first (see `maintenance/v1` for the

@@ -21,9 +21,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # Full history, so the backfill step below can locate the commit that
-          # introduced any given CHANGELOG.md version section via `git log -S`.
-          fetch-depth: 0
 
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
         with:
@@ -49,107 +46,50 @@ jobs:
           commit-mode: github-api
 
       # Fires once the Version Packages PR (or any other push to main with no pending
-      # changesets) lands. Backfills a release/tag for every CHANGELOG.md version that
-      # doesn't have one yet, not just the current package.json version: main's default
-      # single-pending-slot concurrency queue can cancel a run before it reaches this
-      # step (if a later push arrives while it's queued behind an in-progress run),
-      # which would otherwise leave that version permanently un-tagged.
-      - name: Tag and create GitHub releases
-        id: releases
+      # changesets) lands. Guarded by checking for an existing release with this tag,
+      # since a later unrelated push to main also has hasChangesets == 'false' and
+      # would otherwise try to recreate the same release.
+      - name: Tag and create GitHub release
+        id: release
         if: steps.changesets.outputs.hasChangesets == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v$VERSION"
 
-          if [ ! -f CHANGELOG.md ]; then
-            echo "::warning::No CHANGELOG.md found; nothing to release."
+          EXISTING_COMMIT=$(gh release view "$TAG" --json targetCommitish --jq .targetCommitish 2>/dev/null || true)
+          if [ -n "$EXISTING_COMMIT" ]; then
+            echo "Release $TAG already exists; nothing to do."
+            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+            echo "commit=$EXISTING_COMMIT" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          CURRENT_VERSION=$(node -p "require('./package.json').version")
-          CURRENT_COMMIT=""
-          FAILED=0
+          NOTES=$(awk -v heading="## $VERSION" '
+            $0 == heading { found=1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md)
 
-          # Oldest to newest, so an already-released newer version is never re-tagged
-          # at an older commit if it happens to precede a freshly backfilled one.
-          mapfile -t VERSIONS < <(grep -oE '^## [0-9]+\.[0-9]+\.[0-9]+' CHANGELOG.md | sed 's/^## //' | tac)
-
-          for VERSION in "${VERSIONS[@]}"; do
-            TAG="v$VERSION"
-
-            # Use the release's own recorded target rather than re-deriving it via
-            # `git log -S` again — the latter is only a best-effort guess for a
-            # version that has no release yet, and re-running it on every invocation
-            # risks drifting from whatever commit the existing release actually points to.
-            EXISTING_COMMIT=$(gh release view "$TAG" --json targetCommitish --jq .targetCommitish 2>/dev/null || true)
-            if [ -n "$EXISTING_COMMIT" ]; then
-              if [ "$VERSION" = "$CURRENT_VERSION" ]; then
-                CURRENT_COMMIT="$EXISTING_COMMIT"
-              fi
-              continue
-            fi
-
-            if [ "$VERSION" = "$CURRENT_VERSION" ]; then
-              # This run's own commit is exactly what introduced the current version's
-              # CHANGELOG.md section (that's why hasChangesets is false) — use it
-              # directly instead of searching history, so resolving it can't fail.
-              COMMIT="$GITHUB_SHA"
-            else
-              COMMIT=$(git log -S"## $VERSION" --format=%H -- CHANGELOG.md | tail -1)
-              if [ -z "$COMMIT" ]; then
-                echo "::warning::Could not find the commit that introduced CHANGELOG.md section '## $VERSION'; skipping."
-                FAILED=1
-                continue
-              fi
-            fi
-
-            NOTES=$(awk -v heading="## $VERSION" '
-              $0 == heading { found=1; next }
-              found && /^## / { exit }
-              found { print }
-            ' CHANGELOG.md)
-
-            # A failure here (e.g. a transient API error) shouldn't stop the loop from
-            # backfilling other versions — it's recorded and re-raised at the end
-            # instead, so a later rerun only has to retry what actually failed.
-            CREATED=0
-            if [ -n "$(echo "$NOTES" | tr -d '[:space:]')" ]; then
-              gh release create "$TAG" --title "$TAG" --target "$COMMIT" --notes "$NOTES" || CREATED=1
-            else
-              echo "::warning::No CHANGELOG.md section found for $VERSION; falling back to --generate-notes."
-              gh release create "$TAG" --title "$TAG" --target "$COMMIT" --generate-notes || CREATED=1
-            fi
-
-            if [ "$CREATED" -ne 0 ]; then
-              echo "::error::Failed to create release $TAG."
-              FAILED=1
-              continue
-            fi
-
-            if [ "$VERSION" = "$CURRENT_VERSION" ]; then
-              CURRENT_COMMIT="$COMMIT"
-            fi
-          done
-
-          # Only ever advance the major tag to a version whose release is confirmed to
-          # exist (just created above, or already there) — never to one that merely
-          # resolved a commit but failed to actually get released.
-          if [ -n "$CURRENT_COMMIT" ]; then
-            echo "current-tag=v$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
-            echo "current-commit=$CURRENT_COMMIT" >> "$GITHUB_OUTPUT"
+          # Target this run's own commit explicitly — it's exactly what introduced this
+          # version's CHANGELOG.md section (that's why hasChangesets is false) — rather
+          # than defaulting to whatever main's tip resolves to when the API call runs.
+          if [ -n "$(echo "$NOTES" | tr -d '[:space:]')" ]; then
+            gh release create "$TAG" --title "$TAG" --target "$GITHUB_SHA" --notes "$NOTES"
           else
-            echo "::warning::Release for current version v$CURRENT_VERSION isn't available yet; major version tag won't be updated."
+            echo "::warning::No CHANGELOG.md section found for $VERSION; falling back to --generate-notes."
+            gh release create "$TAG" --title "$TAG" --target "$GITHUB_SHA" --generate-notes
           fi
 
-          if [ "$FAILED" -ne 0 ]; then
-            exit 1
-          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "commit=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Update major version tag
-        if: steps.changesets.outputs.hasChangesets == 'false' && steps.releases.outputs.current-commit != ''
+        if: steps.changesets.outputs.hasChangesets == 'false'
         uses: ./.github/actions/update-major-tag
         with:
-          release-tag: ${{ steps.releases.outputs.current-tag }}
-          ref: ${{ steps.releases.outputs.current-commit }}
+          release-tag: ${{ steps.release.outputs.tag }}
+          ref: ${{ steps.release.outputs.commit }}
           github-token: ${{ github.token }}
