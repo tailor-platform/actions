@@ -78,9 +78,14 @@ jobs:
           for VERSION in "${VERSIONS[@]}"; do
             TAG="v$VERSION"
 
-            if gh release view "$TAG" >/dev/null 2>&1; then
+            # Use the release's own recorded target rather than re-deriving it via
+            # `git log -S` again — the latter is only a best-effort guess for a
+            # version that has no release yet, and re-running it on every invocation
+            # risks drifting from whatever commit the existing release actually points to.
+            EXISTING_COMMIT=$(gh release view "$TAG" --json targetCommitish --jq .targetCommitish 2>/dev/null || true)
+            if [ -n "$EXISTING_COMMIT" ]; then
               if [ "$VERSION" = "$CURRENT_VERSION" ]; then
-                CURRENT_COMMIT=$(git log -S"## $VERSION" --format=%H -- CHANGELOG.md | tail -1)
+                CURRENT_COMMIT="$EXISTING_COMMIT"
               fi
               continue
             fi
