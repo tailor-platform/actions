@@ -1,0 +1,9 @@
+# Default code owners for all files
+* @tailor-platform/contributor-actions
+
+# Security-sensitive files — supply-chain and CI/CD risk
+.github/CODEOWNERS @tailor-platform/maintainers-actions
+.github/workflows/ @tailor-platform/maintainers-actions
+.github/actions/ @tailor-platform/maintainers-actions
+**/package.json @tailor-platform/maintainers-actions
+**/pnpm-lock.yaml @tailor-platform/maintainers-actions
