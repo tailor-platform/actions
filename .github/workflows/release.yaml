@@ -5,9 +5,6 @@ on:
     branches:
       - maintenance/v1
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-
 permissions: {}
 
 jobs:
@@ -28,45 +25,51 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version-file: package.json
+          node-version: 24.18.0
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
 
-      # With no pending changesets, this only opens/updates the "Version Packages" PR
-      # (bumping package.json and CHANGELOG.md from accumulated changesets) and does
-      # nothing else — no tag, no release. That happens below, once that PR merges.
-      - name: Create Release Pull Request
-        id: changesets
+      # With pending changesets, opens/updates the "Version Packages" PR that bumps
+      # package.json/CHANGELOG.md — no tag, no release yet. With none (that PR having
+      # merged), runs `changeset publish` instead: this package is `"private": true`
+      # and `.changeset/config.json`'s `privatePackages.tag: true` tells it to skip an
+      # actual npm publish but still create the git tag — changesets/action (v1.9.0)
+      # detects the "New tag:" line this prints, then pushes that tag itself and
+      # creates the GitHub release, generating notes from CHANGELOG.md, the same
+      # tested path used for real npm publishes.
+      #
+      # commitMode github-api makes the bot's commits (on the Version Packages PR
+      # branch, and the tag pushed after `changeset publish`) verified/GPG-signed, so
+      # they aren't blocked by a required-signatures rule when that PR is merged (the
+      # default git-cli mode pushes unsigned commits). Note: this action's input and
+      # output names are camelCase (commitMode, publish, publishedPackages), not the
+      # kebab-case used by its own `main` branch docs — GitHub Actions silently
+      # ignores a `with:` key an action doesn't declare, so a casing mismatch here
+      # doesn't error, it just no-ops.
+      #
+      # Deliberately no `concurrency:` group on this job: GitHub's concurrency queue
+      # keeps only the latest *pending* run per group and cancels older ones, which
+      # would silently skip a version's release if pushes to maintenance/v1 landed
+      # close together. The (rare) alternative risk of two truly concurrent runs
+      # racing to push to the same Version Packages PR branch is self-evident (one
+      # push fails loudly) and self-corrects on the next push, rather than silently
+      # losing a release.
+      - id: changesets
         uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
+        with:
+          commitMode: github-api
+          publish: pnpm exec changeset publish
 
-      # Fires once the Version Packages PR (or any other push to maintenance/v1 with no
-      # pending changesets) lands. Guarded by checking for an existing release with this
-      # tag, since a later unrelated push also has hasChangesets == 'false' and would
-      # otherwise try to recreate the same release.
-      - name: Tag and create GitHub release
-        if: steps.changesets.outputs.hasChangesets == 'false'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          VERSION=$(node -p "require('./package.json').version")
-          TAG="v$VERSION"
-
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists; nothing to do."
-            exit 0
-          fi
-
-          NOTES=$(awk -v heading="## $VERSION" '
-            $0 == heading { found=1; next }
-            found && /^## / { exit }
-            found { print }
-          ' CHANGELOG.md)
-
-          if [ -n "$(echo "$NOTES" | tr -d '[:space:]')" ]; then
-            gh release create "$TAG" --title "$TAG" --target maintenance/v1 --notes "$NOTES"
-          else
-            echo "::warning::No CHANGELOG.md section found for $VERSION; falling back to --generate-notes."
-            gh release create "$TAG" --title "$TAG" --target maintenance/v1 --generate-notes
-          fi
+      # A release created with this job's own GITHUB_TOKEN doesn't fire
+      # update-major-tag.yaml's `release: published` trigger, so it can't rely on that
+      # separate workflow — update the major tag right here instead.
+      # update-major-tag.yaml still exists as a fallback for any release created by
+      # other means (e.g. manually via the GitHub UI).
+      - name: Update major version tag
+        if: steps.changesets.outputs.published == 'true'
+        uses: ./.github/actions/update-major-tag
+        with:
+          release-tag: v${{ fromJson(steps.changesets.outputs.publishedPackages)[0].version }}
+          ref: ${{ github.sha }}
+          github-token: ${{ github.token }}
