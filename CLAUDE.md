@@ -6,10 +6,9 @@ This is the `maintenance/v1` branch: the v1 line (actions target the Tailor Plat
 SDK's now-removed `tailor-sdk` CLI). It predates the `tailor-sdk` -> `tailor` rename
 that lives on `main` (v2) and is not merged into `main` — they're independent lines.
 
-This branch has no protection ruleset yet — protecting it the same way `main` is (PR
-required, at least one approving review, no force-push/deletion, signed commits) is
-still pending, so direct pushes currently succeed. Make changes via a PR anyway, so
-that this branch's CI runs before anything lands:
+This branch is protected the same way `main` is (PR required, at least one approving
+review, no force-push/deletion, signed commits) — direct pushes are rejected. Make
+changes via a PR:
 
 ```bash
 # using the wt helper (or any other way to check out this branch)
