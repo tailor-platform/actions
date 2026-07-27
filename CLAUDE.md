@@ -19,8 +19,8 @@ Releases on `main` (the v2 line) are automated with [Changesets](https://github.
 `.github/workflows/release.yaml` — `main` and `maintenance/v1` are independent lines
 (neither merges into the other), so each carries its own copy rather than sharing one.
 Any future `maintenance/vN` branch should set up the same automation when it's branched
-off; see `maintenance/v1`'s own `CLAUDE.md` for that branch's specific steps (e.g. it
-passes `--target maintenance/v1` to `gh release create`).
+off; see `maintenance/v1`'s own `CLAUDE.md` for that branch's copy, which differs only
+in the branch it triggers on and that branch's own pinned pnpm version.
 
 ### Steps (main)
 
