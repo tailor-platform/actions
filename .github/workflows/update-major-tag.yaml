@@ -16,18 +16,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Update major version tag
-        env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Tag '$RELEASE_TAG' is not a valid semver tag (expected vX.Y.Z)"
-            exit 1
-          fi
-
-          MAJOR=$(echo "$RELEASE_TAG" | grep -o '^v[0-9]*')
-          echo "Updating $MAJOR to point to $RELEASE_TAG"
-
-          git tag -f "$MAJOR" "$RELEASE_TAG"
-          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$MAJOR"
+      - uses: ./.github/actions/update-major-tag
+        with:
+          release-tag: ${{ github.event.release.tag_name }}
+          ref: ${{ github.event.release.tag_name }}
+          github-token: ${{ github.token }}
