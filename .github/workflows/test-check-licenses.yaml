@@ -26,7 +26,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.0
+          node-version: 24.19.0
 
       - name: Run unit tests
         run: node --test check-licenses/*.test.mjs
@@ -47,7 +47,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.0
+          node-version: 24.19.0
           cache: pnpm
           cache-dependency-path: tests/check-licenses/pass/pnpm-lock.yaml
 
@@ -76,7 +76,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.0
+          node-version: 24.19.0
           cache: pnpm
           cache-dependency-path: tests/check-licenses/fail/pnpm-lock.yaml
 
@@ -116,7 +116,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.0
+          node-version: 24.19.0
           cache: pnpm
           cache-dependency-path: tests/check-licenses/fail/pnpm-lock.yaml
 
@@ -146,7 +146,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.0
+          node-version: 24.19.0
           cache: pnpm
           cache-dependency-path: tests/check-licenses/pass/pnpm-lock.yaml
 
@@ -187,7 +187,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.0
+          node-version: 24.19.0
           cache: pnpm
           cache-dependency-path: tests/check-licenses/pass/pnpm-lock.yaml
 
@@ -245,7 +245,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.0
+          node-version: 24.19.0
           cache: pnpm
           cache-dependency-path: tests/check-licenses/chain/pnpm-lock.yaml
 
@@ -355,7 +355,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.0
+          node-version: 24.19.0
           cache: pnpm
           cache-dependency-path: tests/check-licenses/chain-multi-path/pnpm-lock.yaml
 
