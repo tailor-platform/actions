@@ -1,0 +1,200 @@
+name: Test Lockfile-Audit Action
+
+# Each scenario job builds its own throwaway git repository under
+# $RUNNER_TEMP with real base/head commits, rather than checking out this
+# repository's own history: the action diffs pnpm-lock.yaml between two
+# commits, so exercising it end-to-end needs a repo with exactly the commit
+# pair each scenario calls for, not whatever commits happen to exist here.
+# Fixture lockfiles are generated fresh via `pnpm install` at test time
+# instead of being committed, so they never drift from the pnpm version
+# these jobs install.
+#
+# Fixtures depend on real, still-flagged npm advisories (trim@0.0.1 /
+# ansi-html@0.0.1) rather than fabricated ones, since `pnpm audit` resolves
+# against the real registry/advisory API — see lockfile-audit/action.yaml's
+# description for why no install is otherwise needed.
+
+on:
+  pull_request:
+    paths:
+      - "lockfile-audit/**"
+      - "tests/lockfile-audit/**"
+      - ".github/workflows/test-lockfile-audit.yaml"
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+
+      - name: Run unit tests
+        run: node --test lockfile-audit/*.test.mjs
+
+  test-new-advisory-fails:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 11.17.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+
+      - name: Build a fixture repo with a base commit and a head commit that adds a new advisory
+        id: fixture
+        env:
+          FIXTURE_DIR: ${{ runner.temp }}/lockfile-audit-new-advisory
+        run: |
+          mkdir -p "$FIXTURE_DIR"
+          cd "$FIXTURE_DIR"
+          git init -q
+          git config user.email test@example.com
+          git config user.name test
+
+          cp "$GITHUB_WORKSPACE/tests/lockfile-audit/base/package.json" .
+          pnpm install --no-frozen-lockfile
+          git add -A
+          git commit -q -m base
+          echo "base-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "fixture-dir=$FIXTURE_DIR" >> "$GITHUB_OUTPUT"
+
+          cp "$GITHUB_WORKSPACE/tests/lockfile-audit/new-advisory/package.json" .
+          pnpm install --no-frozen-lockfile
+          git add -A
+          git commit -q -m head
+
+      - name: "Test: a newly introduced advisory fails"
+        id: audit
+        continue-on-error: true
+        uses: ./lockfile-audit
+        with:
+          working-directory: ${{ steps.fixture.outputs.fixture-dir }}
+          base-sha: ${{ steps.fixture.outputs.base-sha }}
+
+      - name: "Verify: outcome must be failure"
+        env:
+          OUTCOME: ${{ steps.audit.outcome }}
+        run: |
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::Expected lockfile-audit to fail when the head commit introduces a new advisory"
+            exit 1
+          fi
+
+  test-no-new-advisory-passes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 11.17.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+
+      - name: Build a fixture repo with a base commit and a head commit that carries the same pre-existing advisory forward
+        id: fixture
+        env:
+          FIXTURE_DIR: ${{ runner.temp }}/lockfile-audit-no-new-advisory
+        run: |
+          mkdir -p "$FIXTURE_DIR"
+          cd "$FIXTURE_DIR"
+          git init -q
+          git config user.email test@example.com
+          git config user.name test
+
+          cp "$GITHUB_WORKSPACE/tests/lockfile-audit/base/package.json" .
+          pnpm install --no-frozen-lockfile
+          git add -A
+          git commit -q -m base
+          echo "base-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "fixture-dir=$FIXTURE_DIR" >> "$GITHUB_OUTPUT"
+
+          cp "$GITHUB_WORKSPACE/tests/lockfile-audit/no-new-advisory/package.json" .
+          pnpm install --no-frozen-lockfile
+          git add -A
+          git commit -q -m head
+
+      - name: "Test: a lockfile change with only the pre-existing advisory passes"
+        uses: ./lockfile-audit
+        with:
+          working-directory: ${{ steps.fixture.outputs.fixture-dir }}
+          base-sha: ${{ steps.fixture.outputs.base-sha }}
+
+  test-no-base-commit-skips:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 11.17.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+
+      - name: Build a fixture repo with only one commit and no base-sha input
+        id: fixture
+        env:
+          FIXTURE_DIR: ${{ runner.temp }}/lockfile-audit-no-base
+        # This repo is its own throwaway git history under $RUNNER_TEMP, so
+        # whatever base sha this job's own triggering event resolves to
+        # (this repo's PR base or push before-sha, if any) can never be a
+        # commit that exists here — the "no base to diff against" skip path
+        # is exercised either via that lookup failing, or via no sha
+        # resolving at all on workflow_dispatch. Either way, the advisory
+        # below would fail the check if it were ever compared against
+        # anything, so this job passing proves it's a genuine skip, not an
+        # accidental pass.
+        run: |
+          mkdir -p "$FIXTURE_DIR"
+          cd "$FIXTURE_DIR"
+          git init -q
+          git config user.email test@example.com
+          git config user.name test
+
+          cp "$GITHUB_WORKSPACE/tests/lockfile-audit/new-advisory/package.json" .
+          pnpm install --no-frozen-lockfile
+          git add -A
+          git commit -q -m only-commit
+          echo "fixture-dir=$FIXTURE_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: "Test: nothing to diff against skips the check"
+        uses: ./lockfile-audit
+        with:
+          working-directory: ${{ steps.fixture.outputs.fixture-dir }}

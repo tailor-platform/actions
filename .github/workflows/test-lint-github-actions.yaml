@@ -1,0 +1,157 @@
+name: Test Lint-GitHub-Actions Action
+
+# Each job checks out this repository as usual, then replaces
+# .github/workflows in the *runner's* ephemeral copy with a single fixture
+# workflow before invoking the action under test — a `uses:` step can't be
+# scoped to a subdirectory the way a `run:` step's working-directory can, so
+# this is what actually exercises actionlint/ghalint/zizmor exactly as a
+# real caller's CI would, against a target with a known, isolated finding
+# (or lack of one). This never touches the actual repository; it only edits
+# the checkout inside this job's throwaway workspace.
+#
+# Fixtures live under tests/lint-github-actions/<name>/ci.yaml rather than
+# tests/lint-github-actions/<name>/.github/workflows/ci.yaml, so this
+# repository's own top-level ci.yaml (whose zizmor job recursively scans
+# every .github/workflows directory and action.y*ml file in the tree,
+# unlike actionlint/ghalint which only look at the repo root) doesn't treat
+# these deliberately-broken fixtures as real findings against itself.
+#
+# Each fixture targets exactly the tool(s) it's meant to exercise — the
+# other tools are disabled per job so an unrelated finding elsewhere can't
+# produce a false pass/fail.
+
+on:
+  pull_request:
+    paths:
+      - "lint-github-actions/**"
+      - "tests/lint-github-actions/**"
+      - ".github/workflows/test-lint-github-actions.yaml"
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  test-clean-passes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Swap in the clean fixture
+        run: |
+          rm -rf .github/workflows
+          mkdir -p .github/workflows
+          cp tests/lint-github-actions/clean/ci.yaml .github/workflows/
+
+      - name: "Test: a clean workflow passes all three tools"
+        uses: ./lint-github-actions
+        with:
+          actionlint-fail-level: error
+
+  test-unpinned-action-fails:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Swap in the unpinned-action fixture
+        run: |
+          rm -rf .github/workflows
+          mkdir -p .github/workflows
+          cp tests/lint-github-actions/unpinned-action/ci.yaml .github/workflows/
+
+      # actionlint doesn't check pinning at all, so it's disabled here to
+      # isolate the two tools that do (ghalint's action_ref_should_be_full_length_commit_sha
+      # policy and zizmor's unpinned-uses audit).
+      - name: "Test: a floating-tag uses: fails ghalint and zizmor"
+        id: lint
+        continue-on-error: true
+        uses: ./lint-github-actions
+        with:
+          enable-actionlint: "false"
+
+      - name: "Verify: outcome must be failure"
+        env:
+          OUTCOME: ${{ steps.lint.outcome }}
+        run: |
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::Expected lint-github-actions to fail on a floating-tag uses:"
+            exit 1
+          fi
+
+  test-bad-syntax-fails:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      checks: write # actionlint-reporter: github-check needs this
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Swap in the bad-syntax fixture
+        run: |
+          rm -rf .github/workflows
+          mkdir -p .github/workflows
+          cp tests/lint-github-actions/bad-syntax/ci.yaml .github/workflows/
+
+      # ghalint/zizmor have nothing to flag in this fixture (it's only
+      # syntactically invalid, not a policy or security issue), so they're
+      # disabled here to isolate actionlint. fail-level must be raised from
+      # the default "none", since a caller who wants this as a hard CI gate
+      # has to opt in explicitly (see the input's description).
+      - name: "Test: an invalid job dependency fails actionlint"
+        id: lint
+        continue-on-error: true
+        uses: ./lint-github-actions
+        with:
+          enable-ghalint: "false"
+          enable-zizmor: "false"
+          actionlint-reporter: github-check
+          actionlint-fail-level: error
+
+      - name: "Verify: outcome must be failure"
+        env:
+          OUTCOME: ${{ steps.lint.outcome }}
+        run: |
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::Expected lint-github-actions to fail on an invalid job dependency"
+            exit 1
+          fi
+
+  test-disabled-tool-is-skipped:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Swap in the unpinned-action fixture
+        run: |
+          rm -rf .github/workflows
+          mkdir -p .github/workflows
+          cp tests/lint-github-actions/unpinned-action/ci.yaml .github/workflows/
+
+      # Same fixture as test-unpinned-action-fails, but with the two tools
+      # that would catch it turned off — proves enable-ghalint/enable-zizmor
+      # actually skip their steps rather than merely suppressing output.
+      - name: "Test: disabling ghalint and zizmor lets the same fixture pass"
+        uses: ./lint-github-actions
+        with:
+          enable-ghalint: "false"
+          enable-zizmor: "false"

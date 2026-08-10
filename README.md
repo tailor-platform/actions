@@ -440,6 +440,77 @@ resource "github_actions_organization_variable" "denied_licenses" {
 
 ---
 
+### [`lockfile-audit`](lockfile-audit/action.yaml)
+
+Regression-only gate against `pnpm-lock.yaml` changes: fails only when a pull request or push introduces a security advisory that wasn't already present in the lockfile at the base commit. Pre-existing advisories elsewhere in the lockfile don't block unrelated changes — pair this with a scheduled `pnpm audit --fix` workflow (run independent of any PR) to clear those over time.
+
+**Prerequisites:** The caller is responsible for checkout (with `fetch-depth: 0` — the base commit's lockfile must be reachable) and pnpm setup. `pnpm audit` resolves advisories from the lockfile alone, so no dependency install is needed.
+
+#### Usage
+
+```yaml
+jobs:
+  lockfile-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - uses: tailor-platform/actions/lockfile-audit@v2
+```
+
+#### Inputs
+
+| Name | Required | Default | Description |
+|------|----------|---------|-------------|
+| `audit-level` | No | `moderate` | Minimum severity to report, passed through to `pnpm audit --audit-level`. One of `low`, `moderate`, `high`, `critical`. |
+| `base-sha` | No | | Commit to diff the lockfile against, overriding the default auto-detection (the pull request's base commit, or the pushed ref's previous tip). Mainly for `workflow_dispatch` runs, where neither of those is available from the event payload. |
+| `working-directory` | No | `.` | Working directory containing `pnpm-lock.yaml` (for monorepo setups) |
+
+---
+
+### [`lint-github-actions`](lint-github-actions/action.yaml)
+
+Run [actionlint](https://github.com/rhysd/actionlint) (syntax/semantics, via [reviewdog](https://github.com/reviewdog/action-actionlint)), [ghalint](https://github.com/suzuki-shunsuke/ghalint) (policy checks on workflows and `action.yaml`/`action.yml` definitions), and [zizmor](https://docs.zizmor.sh/) (security audit — missing SHA pins, `pull_request_target` misuse, script injection via untrusted input, overly broad permissions, etc.) together in one step, instead of wiring up all three individually. Each tool can be disabled independently for a caller that already covers it another way.
+
+**Prerequisites:** The caller is responsible for checkout.
+
+#### Usage
+
+```yaml
+jobs:
+  lint-github-actions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      checks: write # for actionlint's default reviewdog reporter
+    steps:
+      - uses: actions/checkout@v4
+      - uses: tailor-platform/actions/lint-github-actions@v2
+```
+
+#### Inputs
+
+| Name | Required | Default | Description |
+|------|----------|---------|-------------|
+| `enable-actionlint` | No | `true` | Run actionlint (via reviewdog) against workflow files |
+| `enable-ghalint` | No | `true` | Run ghalint against workflow files and `action.yaml`/`action.yml` definitions |
+| `enable-zizmor` | No | `true` | Run zizmor's security audit against workflows and action definitions |
+| `actionlint-reporter` | No | `github-pr-check` | reviewdog reporter for actionlint findings: `github-pr-check`, `github-pr-review`, or `github-check`. `github-pr-review` posts inline PR review comments and needs `pull-requests: write`; the other two only need `checks: write`. |
+| `actionlint-fail-level` | No | `none` | Minimum severity at which reviewdog exits non-zero for actionlint findings, failing the job: `none`, `any`, `info`, `warning`, or `error`. Defaults to reviewdog's own default (findings are reported but never fail the job on their own) so adopting this action doesn't turn an existing informational check into a hard gate without opting in. |
+| `ghalint-version` | No | `v1.5.6` | ghalint version to install (passed to `go install ...@<version>`) |
+| `zizmor-advanced-security` | No | `false` | Upload zizmor's findings to the repository's Security tab (GitHub Advanced Security) as SARIF instead of plain workflow annotations. Requires GHAS to be enabled on the repository. |
+| `github-token` | No | `${{ github.token }}` | GitHub token for actionlint's reviewdog reporter and zizmor's online audits |
+
+---
+
 ### [`preview-cleanup`](preview-cleanup/action.yaml)
 
 Delete the preview workspace when a PR is closed. Reads the workspace ID from the PR comment posted by `preview-comment` and deletes the workspace. Run on `pull_request` `closed` events.

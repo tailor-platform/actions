@@ -1,0 +1,9 @@
+{
+  "name": "lockfile-audit-fixture-no-new-advisory",
+  "private": true,
+  "description": "Adds ms@2.1.3 (no known advisories) on top of the base fixture's trim@0.0.1, simulating a lockfile change that carries forward a pre-existing advisory but introduces no new one.",
+  "dependencies": {
+    "trim": "0.0.1",
+    "ms": "2.1.3"
+  }
+}
