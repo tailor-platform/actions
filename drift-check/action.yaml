@@ -2,7 +2,7 @@ name: Check Tailor Platform workflow drift
 description: >-
   Detect drift between the generated GitHub Actions workflows and the current
   config/repo state by running tailor setup check --ci.
-  Emits ::warning:: annotations and writes a step summary, but never fails the job.
+  Drift findings are advisory by default, while execution and configuration errors fail the job.
   Use the 'ignore' input to suppress known intentional deviations.
   Requires Node.js and dependencies to be installed by the caller.
 
@@ -18,9 +18,12 @@ inputs:
     description: >-
       Comma-separated list of drift rule keys to suppress (e.g. "default-branch,template-version").
       Each warning message includes the rule key to add here.
-      Supported keys: missing-file, hand-edit, template-version, config-dir, default-branch.
     required: false
     default: ""
+  fail-on-drift:
+    description: Fail the job when the check finds unsuppressed workflow drift
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -29,9 +32,18 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
+        FAIL_ON_DRIFT: ${{ inputs.fail-on-drift }}
         PACKAGE_MANAGER: ${{ inputs.package-manager }}
         IGNORE_RULES: ${{ inputs.ignore }}
       run: |
+        case "$FAIL_ON_DRIFT" in
+          true|false) ;;
+          *)
+            echo "::error::fail-on-drift must be 'true' or 'false' (received '$FAIL_ON_DRIFT')"
+            exit 1
+            ;;
+        esac
+
         case "$PACKAGE_MANAGER" in
           pnpm) RUN="pnpm exec" ;;
           yarn) RUN="yarn" ;;
@@ -57,19 +69,66 @@ runs:
         # whole-word matching: ",key1,key2," so grep -F ",<rule>," is unambiguous.
         IGNORE_NORM=",$(echo "$IGNORE_RULES" | tr -d ' '),"
 
+        # Treat the check as drift only when its stable result marker agrees
+        # with the number of parseable finding lines. Fall back to the current
+        # SDK's terminal summary for compatibility with SDKs from before the
+        # marker was introduced. Ignore-key-shaped errors must fail closed.
+        PLAIN_OUTPUT=$(printf '%s\n' "$OUTPUT" | sed $'s/\x1b\\[[0-9;]*[A-Za-z]//g')
+        FINDING_TOTAL=0
+        MARKER_LINE_COUNT=0
+        MARKER_COUNT=0
+        MARKER_FINDINGS=""
+        SUMMARY_COUNT=0
+        SUMMARY_FINDINGS=""
+        finding_re='\(ignore key: ([^)]+)\)'
+        marker_re='^TAILOR_SETUP_CHECK_DRIFT_COUNT=([0-9]+)$'
+        summary_re='^Detected ([0-9]+) drift finding\(s\) across ([0-9]+) target\(s\)\.'
+
+        while IFS= read -r line; do
+          if [[ "$line" =~ $finding_re ]]; then
+            FINDING_TOTAL=$((FINDING_TOTAL + 1))
+          fi
+          if [[ "$line" == TAILOR_SETUP_CHECK_DRIFT_COUNT=* ]]; then
+            MARKER_LINE_COUNT=$((MARKER_LINE_COUNT + 1))
+          fi
+          if [[ "$line" =~ $marker_re ]]; then
+            MARKER_COUNT=$((MARKER_COUNT + 1))
+            MARKER_FINDINGS="${BASH_REMATCH[1]}"
+          fi
+          if [[ "$line" == *"Detected "* ]]; then
+            SUMMARY="Detected ${line#*Detected }"
+            if [[ "$SUMMARY" =~ $summary_re ]]; then
+              SUMMARY_COUNT=$((SUMMARY_COUNT + 1))
+              SUMMARY_FINDINGS="${BASH_REMATCH[1]}"
+            fi
+          fi
+        done <<< "$PLAIN_OUTPUT"
+
+        VALID_DRIFT=false
+        if [ "$MARKER_COUNT" -eq 1 ] && [ "$MARKER_FINDINGS" -eq "$FINDING_TOTAL" ]; then
+          if [ "$SUMMARY_COUNT" -eq 0 ] || { [ "$SUMMARY_COUNT" -eq 1 ] && [ "$SUMMARY_FINDINGS" -eq "$MARKER_FINDINGS" ]; }; then
+            VALID_DRIFT=true
+          fi
+        elif [ "$MARKER_LINE_COUNT" -eq 0 ] && [ "$SUMMARY_COUNT" -eq 1 ] && [ "$SUMMARY_FINDINGS" -eq "$FINDING_TOTAL" ]; then
+          VALID_DRIFT=true
+        fi
+
+        if [ "$FINDING_TOTAL" -eq 0 ] || [ "$VALID_DRIFT" != "true" ]; then
+          echo "$OUTPUT"
+          echo "::error::[drift-check] tailor setup check --ci exited $CHECK_EXIT without a valid drift result — check failed unexpectedly (auth/network/config error?)"
+          exit "$CHECK_EXIT"
+        fi
+
         WARNED=0
         SUPPRESSED=0
 
         # Process each finding line. Each finding ends with "(ignore key: <rule>)".
-        re='\(ignore key: ([^)]+)\)'
         while IFS= read -r line; do
-          [[ "$line" =~ $re ]] || continue
+          [[ "$line" =~ $finding_re ]] || continue
           RULE="${BASH_REMATCH[1]}"
 
-          # Strip ANSI escape codes and leading symbol (⚠ / spaces) before "[".
-          CLEAN=$(printf '%s' "$line" \
-            | sed $'s/\x1b\\[[0-9;]*[A-Za-z]//g' \
-            | sed 's/^[^[]*//')
+          # Strip the leading symbol (⚠ / spaces) before "[".
+          CLEAN=$(printf '%s' "$line" | sed 's/^[^[]*//')
 
           if echo "$IGNORE_NORM" | grep -qF ",$RULE,"; then
             SUPPRESSED=$((SUPPRESSED + 1))
@@ -80,22 +139,22 @@ runs:
             SAFE="${SAFE//$'\r'/'%0D'}"
             echo "::warning::$SAFE"
           fi
-        done <<< "$OUTPUT"
-
-        if [ "$WARNED" -eq 0 ] && [ "$SUPPRESSED" -eq 0 ]; then
-          echo "::warning::[drift-check] tailor setup check --ci exited $CHECK_EXIT but produced no parseable findings — check failed unexpectedly (auth/network/config error?)"
-        fi
+        done <<< "$PLAIN_OUTPUT"
 
         {
           echo "## ⚠️ Tailor Platform Workflow Drift"
           echo ""
           echo "$WARNED finding(s) emitted, $SUPPRESSED suppressed."
           echo ""
-          printf '%s\n' "$OUTPUT" \
-            | sed $'s/\x1b\\[[0-9;]*[A-Za-z]//g' \
+          printf '%s\n' "$PLAIN_OUTPUT" \
             | (grep "(ignore key:" || true) \
             | sed 's/^[^[]*//' \
             | sed 's/^/- /'
           echo ""
           echo "Re-run \`tailor setup\` to regenerate, or add a rule key to the \`ignore\` input to silence a known deviation."
         } >> "$GITHUB_STEP_SUMMARY"
+
+        if [ "$FAIL_ON_DRIFT" = "true" ] && [ "$WARNED" -gt 0 ]; then
+          echo "::error::[drift-check] $WARNED unsuppressed workflow drift finding(s) detected"
+          exit 1
+        fi
