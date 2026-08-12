@@ -26,6 +26,7 @@ describe("readTreeFiles", () => {
     mkdirSync(join(workspace, "sub"));
     writeFileSync(join(workspace, "a.txt"), "hello");
     writeFileSync(join(workspace, "sub", "b.txt"), "world");
+    writeFileSync(join(workspace, "..foo.txt"), "not traversal");
   });
 
   after(() => {
@@ -57,6 +58,12 @@ describe("readTreeFiles", () => {
 
   test("rejects a path that escapes via a mix of traversal and real subdirectories", () => {
     assert.throws(() => readTreeFiles({ paths: ["sub/../../outside.txt"], workspace }), /escapes the workspace/);
+  });
+
+  test("allows a real filename that merely starts with .. (not a path traversal)", () => {
+    const files = readTreeFiles({ paths: ["..foo.txt"], workspace });
+    assert.equal(files[0].path, "..foo.txt");
+    assert.equal(files[0].content.toString("utf8"), "not traversal");
   });
 
   test("allows a path that merely contains .. segments but stays within the workspace, normalizing the tree path", () => {

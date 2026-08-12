@@ -160,7 +160,10 @@ function readTreeFiles({ paths, workspace }) {
     }
     const absolutePath = resolve(workspace, path);
     const rel = relative(workspace, absolutePath);
-    if (rel.startsWith("..") || isAbsolute(rel)) {
+    // Check ".." as a path *segment* (exactly ".." or ".."+sep+...), not a
+    // string prefix — a real filename like "..foo.txt" starts with ".."
+    // but never actually traverses out of the workspace.
+    if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
       throw new Error(`Path listed in \`paths\` escapes the workspace: ${path}`);
     }
     if (!existsSync(absolutePath)) {
