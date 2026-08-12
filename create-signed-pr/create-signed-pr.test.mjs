@@ -423,4 +423,41 @@ describe("main() against a mock GitHub API", () => {
       await server.close();
     }
   });
+
+  test("a 404 on a GET for base branch existence surfaces as a hard error, not silently swallowed", async () => {
+    const server = await startMockGitHub((entry) => {
+      if (entry.method === "GET" && entry.url === "/repos/acme/widgets/git/ref/heads/main") {
+        return { status: 404, json: { message: "not found" } };
+      }
+      return null;
+    });
+
+    try {
+      await assert.rejects(runMain(server, {}), /Base branch not found: main/);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("a 404 on a non-GET call (e.g. blob creation) surfaces as a hard error, unlike a branch-existence check", async () => {
+    const server = await startMockGitHub((entry) => {
+      const { method, url } = entry;
+      if (method === "GET" && url === "/repos/acme/widgets/git/ref/heads/main") {
+        return { status: 200, json: { object: { sha: "base-sha-404" } } };
+      }
+      if (method === "GET" && url === "/repos/acme/widgets/git/commits/base-sha-404") {
+        return { status: 200, json: { tree: { sha: "base-tree-404" } } };
+      }
+      if (method === "POST" && url === "/repos/acme/widgets/git/blobs") {
+        return { status: 404, json: { message: "not found" } };
+      }
+      return null;
+    });
+
+    try {
+      await assert.rejects(runMain(server, {}), /git\/blobs failed with 404/);
+    } finally {
+      await server.close();
+    }
+  });
 });

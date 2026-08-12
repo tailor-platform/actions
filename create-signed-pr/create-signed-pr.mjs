@@ -75,12 +75,23 @@ async function githubRequest({ method, path, token, apiBaseUrl, body }) {
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
-  if (res.status === 404) return null;
   const text = await res.text();
   if (!res.ok) {
-    throw new GitHubApiError(`${method} ${path} failed with ${res.status}: ${text.slice(0, 2000)}`);
+    const error = new GitHubApiError(`${method} ${path} failed with ${res.status}: ${text.slice(0, 2000)}`);
+    error.status = res.status;
+    throw error;
   }
   return text ? JSON.parse(text) : null;
+}
+
+/** @param {() => Promise<unknown>} fn */
+async function nullOn404(fn) {
+  try {
+    return await fn();
+  } catch (e) {
+    if (e instanceof GitHubApiError && e.status === 404) return null;
+    throw e;
+  }
 }
 
 /** @param {string} pathsInput */
@@ -103,7 +114,7 @@ function makeClient({ owner, repo, token, apiBaseUrl }) {
     },
     /** @returns {Promise<string | null>} the branch's head commit sha, or null if it doesn't exist */
     getBranchSha: async (branch) => {
-      const ref = await request("GET", `/git/ref/heads/${encodeURIComponent(branch)}`);
+      const ref = await nullOn404(() => request("GET", `/git/ref/heads/${encodeURIComponent(branch)}`));
       return ref?.object?.sha ?? null;
     },
     /** @returns {Promise<string>} the commit's tree sha */

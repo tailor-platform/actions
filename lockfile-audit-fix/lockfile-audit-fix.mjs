@@ -119,6 +119,11 @@ function runAuditSafe(auditLevel, cwd) {
     });
     return JSON.parse(output);
   } catch (e) {
+    // ENOENT means pnpm itself isn't on PATH — a workflow misconfiguration
+    // (the caller forgot to set up pnpm), not a transient audit failure.
+    // Swallowing that here would report a misleadingly clean "no
+    // advisories" instead of failing loudly.
+    if (e.code === "ENOENT") throw new Error(`pnpm not found: ${e.message}`);
     // pnpm audit exits non-zero merely because it found advisories; its JSON
     // report is still on stdout in that case.
     if (e.stdout) {
@@ -142,8 +147,11 @@ function runAuditSafe(auditLevel, cwd) {
 function runFix(mode, cwd) {
   try {
     execFileSync("pnpm", ["audit", "--fix", mode, "--ignore-registry-errors"], { cwd, stdio: "ignore" });
-  } catch {
-    // best-effort; the caller verifies installability separately
+  } catch (e) {
+    // Same ENOENT reasoning as runAuditSafe: a missing pnpm binary must
+    // fail the action, not silently no-op into "changed=false".
+    if (e.code === "ENOENT") throw new Error(`pnpm not found: ${e.message}`);
+    // best-effort otherwise; the caller verifies installability separately
   }
 }
 
