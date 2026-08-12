@@ -579,6 +579,7 @@ jobs:
 | `title` | Yes | | Pull request title. |
 | `body` | No | `""` | Pull request body. |
 | `labels` | No | `""` | Newline-separated list of labels to add to the pull request. |
+| `api-base-url` | No | `""` | Override the GitHub REST API base URL (e.g. for GHES, or to point at a test double). Defaults to `$GITHUB_API_URL`, then `https://api.github.com`. |
 
 #### Outputs
 

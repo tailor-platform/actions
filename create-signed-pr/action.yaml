@@ -56,6 +56,17 @@ inputs:
     description: Newline-separated list of labels to add to the pull request.
     required: false
     default: ""
+  api-base-url:
+    description: >-
+      Override the GitHub REST API base URL (e.g. for GHES, or to point at
+      a test double). Defaults to $GITHUB_API_URL, then
+      https://api.github.com. A workflow-level `env: GITHUB_API_URL: ...`
+      override does NOT work for this purpose — it's one of the reserved
+      variables the Actions runner injects into every step itself,
+      discarding a user-level override before the step runs; this input
+      exists specifically because that variable isn't overridable.
+    required: false
+    default: ""
 
 outputs:
   changed:
@@ -86,4 +97,5 @@ runs:
         TITLE: ${{ inputs.title }}
         BODY: ${{ inputs.body }}
         LABELS: ${{ inputs.labels }}
+        API_BASE_URL: ${{ inputs.api-base-url }}
       run: node "${{ github.action_path }}/create-signed-pr.mjs"

@@ -208,6 +208,37 @@ describe("main() against a mock GitHub API", () => {
     }
   });
 
+  test("API_BASE_URL takes precedence over GITHUB_API_URL — the latter is a reserved, non-overridable runner variable in real CI", async () => {
+    const server = await startMockGitHub((entry) => {
+      const { method, url } = entry;
+      if (method === "GET" && url === "/repos/acme/widgets/git/ref/heads/main") {
+        return { status: 200, json: { object: { sha: "base-sha-precedence" } } };
+      }
+      if (method === "GET" && url === "/repos/acme/widgets/git/commits/base-sha-precedence") {
+        return { status: 200, json: { tree: { sha: "base-tree-precedence" } } };
+      }
+      if (method === "POST" && url === "/repos/acme/widgets/git/blobs") return { status: 201, json: { sha: "blob-sha" } };
+      if (method === "POST" && url === "/repos/acme/widgets/git/trees") {
+        // Unchanged from base -> no-op, keeps this test to the minimum
+        // number of stubbed routes needed to prove which base URL won.
+        return { status: 201, json: { sha: "base-tree-precedence" } };
+      }
+      if (method === "GET" && url.startsWith("/repos/acme/widgets/pulls?")) return { status: 200, json: [] };
+      return null;
+    });
+
+    try {
+      const outputs = await runMain(server, {
+        GITHUB_API_URL: "http://127.0.0.1:1", // deliberately unreachable
+        API_BASE_URL: server.url,
+      });
+      assert.equal(outputs.changed, "false");
+      assert.ok(server.requests.length > 0, "requests must have reached the mock server, not the unreachable GITHUB_API_URL");
+    } finally {
+      await server.close();
+    }
+  });
+
   test("existing branch, existing PR: force-moves the ref and updates the PR, without touching labels", async () => {
     const server = await startMockGitHub((entry) => {
       const { method, url } = entry;

@@ -2,12 +2,14 @@ name: Test Create-Signed-PR Action
 
 # The composite-action job below never talks to the real GitHub API: it
 # points the action at a scripted mock server (tests/create-signed-pr/mock-
-# server.mjs) via the GITHUB_API_URL env var the action already reads for
-# GHES support, so it's free to run on every PR without any write
-# permissions or risk to this repository. Detailed request-body assertions
-# (parents, base64 blob content, force:true, ...) live in the unit-tests
-# job's mock-server-based node:test suite; this job only proves the
-# composite action's env-to-input mapping and output extraction work.
+# server.mjs) via the `api-base-url` input (NOT a workflow-level
+# `GITHUB_API_URL` env override, which the Actions runner silently
+# discards — that variable is one of its own reserved injections), so it's
+# free to run on every PR without any write permissions or risk to this
+# repository. Detailed request-body assertions (parents, base64 blob
+# content, force:true, ...) live in the unit-tests job's mock-server-based
+# node:test suite; this job only proves the composite action's
+# input-to-env mapping and output extraction work.
 
 on:
   pull_request:
@@ -45,12 +47,6 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
-    env:
-      # A composite action's internal `run:` steps don't inherit `env:` set
-      # on the calling `uses:` step — only job/workflow-level `env:` reaches
-      # them. Setting it here (rather than on the "Test: ..." step below) is
-      # what actually redirects the action's GitHub API calls to the mock.
-      GITHUB_API_URL: http://127.0.0.1:8991
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -86,6 +82,7 @@ jobs:
           title: "test: automated commit"
           labels: |
             security
+          api-base-url: http://127.0.0.1:8991
 
       - name: Stop the mock GitHub API server
         if: always()

@@ -161,7 +161,14 @@ async function main() {
   const body = process.env.BODY || "";
   const labels = parseLines(process.env.LABELS);
   const workspace = process.env.GITHUB_WORKSPACE || process.cwd();
-  const apiBaseUrl = process.env.GITHUB_API_URL || "https://api.github.com";
+  // GITHUB_API_URL is one of the reserved variables the Actions runner
+  // injects into every step's process environment itself — a job- or
+  // workflow-level `env:` override for it is silently discarded before the
+  // step actually runs, so it can't be used to redirect this action's API
+  // calls in a test. API_BASE_URL is a plain, unreserved env var this
+  // action's own action.yaml maps from an `api-base-url` input, letting a
+  // caller (typically a test) override it directly.
+  const apiBaseUrl = process.env.API_BASE_URL || process.env.GITHUB_API_URL || "https://api.github.com";
   const [owner, repo] = (process.env.GITHUB_REPOSITORY || "").split("/");
 
   if (!owner || !repo) throw new Error("GITHUB_REPOSITORY must be set as owner/repo");
