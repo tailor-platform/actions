@@ -147,12 +147,19 @@ function runFix(mode, cwd) {
 }
 
 /**
- * Not `--frozen-lockfile`: this install's job is to resolve whatever
- * `pnpm audit --fix` just wrote (an override, a bumped specifier) into a
- * consistent pnpm-lock.yaml, which by definition doesn't match the lockfile
- * yet. `--ignore-scripts` skips dependency lifecycle scripts, which have no
- * bearing on whether the lockfile itself resolves and shouldn't run with
- * this job's ambient permissions just to verify that.
+ * Explicit `--no-frozen-lockfile`, not just the absence of
+ * `--frozen-lockfile`: pnpm auto-enables frozen mode whenever it sees
+ * `CI=true` in the environment (true on every GitHub Actions runner by
+ * default), and frozen mode's whole job is to REFUSE to touch the lockfile
+ * when it doesn't already match package.json/pnpm-workspace.yaml — which is
+ * guaranteed right after `pnpm audit --fix` just added an override neither
+ * has resolved into the lockfile yet
+ * (`ERR_PNPM_LOCKFILE_CONFIG_MISMATCH: Cannot proceed with the frozen
+ * installation`). This install's actual job is the opposite: resolve that
+ * fix into a consistent pnpm-lock.yaml. `--ignore-scripts` skips dependency
+ * lifecycle scripts, which have no bearing on whether the lockfile itself
+ * resolves and shouldn't run with this job's ambient permissions just to
+ * verify that.
  *
  * Throws with pnpm's own output attached (truncated) so a caller's rollback
  * warning is actually diagnosable instead of just "it failed" — pnpm prints
@@ -161,7 +168,10 @@ function runFix(mode, cwd) {
  */
 function verifyInstallable(cwd) {
   try {
-    execFileSync("pnpm", ["install", "--ignore-scripts"], { cwd, stdio: ["ignore", "pipe", "pipe"] });
+    execFileSync("pnpm", ["install", "--no-frozen-lockfile", "--ignore-scripts"], {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
   } catch (e) {
     const output = [e.stdout, e.stderr]
       .map((s) => s?.toString().trim())
