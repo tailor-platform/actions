@@ -40,6 +40,17 @@ inputs:
       opting in.
     required: false
     default: "none"
+  actionlint-filter-mode:
+    description: >-
+      Which findings reviewdog surfaces at all: added, diff_context, file,
+      or nofilter. Defaults to reviewdog's own default (file — only findings
+      in files that are part of the current diff are reported), matching a
+      PR-review workflow where issues in untouched files shouldn't nag on
+      an unrelated change. Set to nofilter for a full-repo scan regardless
+      of diff (e.g. a scheduled run, or a caller without a PR diff to
+      compare against).
+    required: false
+    default: file
   ghalint-version:
     description: ghalint version to install (passed to `go install ...@<version>`)
     required: false
@@ -67,6 +78,7 @@ runs:
         github_token: ${{ inputs.github-token }}
         reporter: ${{ inputs.actionlint-reporter }}
         fail_level: ${{ inputs.actionlint-fail-level }}
+        filter_mode: ${{ inputs.actionlint-filter-mode }}
 
     - name: Set up Go (for ghalint)
       if: inputs.enable-ghalint == 'true'

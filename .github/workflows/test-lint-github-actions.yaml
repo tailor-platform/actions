@@ -19,6 +19,13 @@ name: Test Lint-GitHub-Actions Action
 # Each fixture targets exactly the tool(s) it's meant to exercise — the
 # other tools are disabled per job so an unrelated finding elsewhere can't
 # produce a false pass/fail.
+#
+# Every job that leaves actionlint enabled passes actionlint-filter-mode:
+# nofilter. reviewdog's default filter (file) only surfaces findings in
+# files that are part of the *actual PR diff* (fetched via the GitHub API
+# for GitHub-based reporters) — since the fixture swap above is never
+# committed, reviewdog never sees .github/workflows/ci.yaml as changed and
+# silently drops every finding regardless of fail_level, without nofilter.
 
 on:
   pull_request:
@@ -54,6 +61,7 @@ jobs:
         uses: ./lint-github-actions
         with:
           actionlint-fail-level: error
+          actionlint-filter-mode: nofilter
 
   test-unpinned-action-fails:
     runs-on: ubuntu-latest
@@ -121,6 +129,7 @@ jobs:
           enable-zizmor: "false"
           actionlint-reporter: github-check
           actionlint-fail-level: error
+          actionlint-filter-mode: nofilter
 
       - name: "Verify: outcome must be failure"
         env:
