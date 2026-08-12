@@ -45,6 +45,12 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+    env:
+      # A composite action's internal `run:` steps don't inherit `env:` set
+      # on the calling `uses:` step — only job/workflow-level `env:` reaches
+      # them. Setting it here (rather than on the "Test: ..." step below) is
+      # what actually redirects the action's GitHub API calls to the mock.
+      GITHUB_API_URL: http://127.0.0.1:8991
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -71,8 +77,6 @@ jobs:
       - name: "Test: creates a commit, branch, and pull request against the mock API"
         id: create
         uses: ./create-signed-pr
-        env:
-          GITHUB_API_URL: http://127.0.0.1:8991
         with:
           token: dummy-token
           paths: README.md
