@@ -384,7 +384,9 @@ function main() {
     verifyInstallable(cwd);
     fallback = snapshot();
   } catch (e) {
-    console.log(`::warning::pnpm install failed after the update-mode fix; leaving the lockfile untouched. ${e.message}`);
+    console.log(
+      `::warning::pnpm install failed after the update-mode fix; reverting pnpm-lock.yaml, pnpm-workspace.yaml, and package.json to their original state. ${e.message}`,
+    );
     restore(original);
   }
 
@@ -392,8 +394,12 @@ function main() {
   try {
     verifyInstallable(cwd);
   } catch (e) {
+    // fallback is still `original` here when the update-mode install above
+    // also failed — say so, rather than always claiming an update-mode
+    // result that may never have existed.
+    const revertTarget = fallback === original ? "their original state" : "the update-mode-only result";
     console.log(
-      `::warning::pnpm install failed after the override fallback; reverting to the update-mode-only result. ${e.message}`,
+      `::warning::pnpm install failed after the override fallback; reverting pnpm-lock.yaml, pnpm-workspace.yaml, and package.json to ${revertTarget}. ${e.message}`,
     );
     restore(fallback);
   }

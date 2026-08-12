@@ -19,7 +19,11 @@ description: >-
   its own token); use a GitHub App installation token if the created PR
   needs to run your normal CI. Requires Node.js on PATH (e.g. via
   actions/setup-node) — unlike lockfile-audit and lockfile-audit-fix, this
-  action doesn't otherwise depend on pnpm.
+  action doesn't otherwise depend on pnpm. The repository's Settings ->
+  Actions -> General -> Workflow permissions -> "Allow GitHub Actions to
+  create and approve pull requests" must be enabled, or GitHub rejects PR
+  creation from GITHUB_TOKEN with a 403 (the commit and branch are still
+  created successfully; only the PR-creation step fails).
 
 inputs:
   token:

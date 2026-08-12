@@ -533,7 +533,7 @@ Each run re-parents the new commit on the base branch's *current* head and force
 
 **A pull request created with the default `GITHUB_TOKEN` does not trigger `pull_request`-triggered workflows** (GitHub suppresses recursive workflow runs from its own token) — the created PR gets no CI. Use a GitHub App installation token instead if the PR needs to run your normal CI.
 
-**Prerequisites:** The caller is responsible for checkout and setting up Node.js (e.g. `actions/setup-node`) — unlike `lockfile-audit`/`lockfile-audit-fix`, this action doesn't otherwise depend on pnpm. The token needs `contents: write` and `pull-requests: write` permissions.
+**Prerequisites:** The caller is responsible for checkout and setting up Node.js (e.g. `actions/setup-node`) — unlike `lockfile-audit`/`lockfile-audit-fix`, this action doesn't otherwise depend on pnpm. The token needs `contents: write` and `pull-requests: write` permissions, and the repository's **Settings → Actions → General → Workflow permissions → "Allow GitHub Actions to create and approve pull requests"** must be enabled — GitHub rejects PR creation from `GITHUB_TOKEN` with a 403 otherwise (confirmed against a real repository: the commit and branch are created successfully, and PR creation is the step that fails).
 
 #### Usage
 
