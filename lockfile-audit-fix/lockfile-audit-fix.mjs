@@ -154,16 +154,21 @@ function runFix(mode, cwd) {
  * bearing on whether the lockfile itself resolves and shouldn't run with
  * this job's ambient permissions just to verify that.
  *
- * Throws with pnpm's own stderr attached (truncated) so a caller's rollback
- * warning is actually diagnosable instead of just "it failed".
+ * Throws with pnpm's own output attached (truncated) so a caller's rollback
+ * warning is actually diagnosable instead of just "it failed" — pnpm prints
+ * some errors to stdout rather than stderr, so both are captured.
  * @param {string} cwd
  */
 function verifyInstallable(cwd) {
   try {
-    execFileSync("pnpm", ["install", "--ignore-scripts"], { cwd, stdio: ["ignore", "ignore", "pipe"] });
+    execFileSync("pnpm", ["install", "--ignore-scripts"], { cwd, stdio: ["ignore", "pipe", "pipe"] });
   } catch (e) {
-    const stderr = e.stderr?.toString().trim().slice(0, 2000);
-    throw new Error(stderr ? `pnpm install failed: ${stderr}` : `pnpm install failed: ${e.message}`);
+    const output = [e.stdout, e.stderr]
+      .map((s) => s?.toString().trim())
+      .filter(Boolean)
+      .join("\n")
+      .slice(0, 2000);
+    throw new Error(output ? `pnpm install failed: ${output}` : `pnpm install failed: ${e.message}`);
   }
 }
 
