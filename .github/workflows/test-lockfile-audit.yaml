@@ -210,7 +210,7 @@ jobs:
           working-directory: ${{ steps.fixture.outputs.fixture-dir }}
           # Well-formed but unreachable in this fixture's tiny history —
           # simulates a caller that forgot fetch-depth: 0.
-          base-sha: "ffffffffffffffffffffffffffffffffffffff"
+          base-sha: "ffffffffffffffffffffffffffffffffffffffff"
 
       - name: "Verify: outcome must be failure"
         env:
