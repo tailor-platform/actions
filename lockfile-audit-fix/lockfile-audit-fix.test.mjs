@@ -1,7 +1,7 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, chmodSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, chmodSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -234,18 +234,23 @@ describe("buildSummary", () => {
 /**
  * Writes a fake `pnpm` binary that drives lockfile-audit-fix.mjs's main()
  * through a real subprocess (main() writes real files and reads/writes
- * pnpm-lock.yaml relative to cwd, so this is easier to verify honestly than
- * mocking child_process). Behavior is controlled entirely through env vars
- * read by the fake binary itself:
+ * them relative to cwd, so this is easier to verify honestly than mocking
+ * child_process). Behavior is controlled entirely through env vars read by
+ * the fake binary itself:
  *
- *   FAKE_PNPM_AUDIT_JSON_<n>     - stdout for the n-th `pnpm audit --json`
- *                                  call (1-indexed: 1 = before fix, 2 = after)
- *   FAKE_PNPM_AUDIT_JSON_DEFAULT - fallback when a specific call isn't set
- *   FAKE_PNPM_FIX_UPDATE_CONTENT - if set, overwrites pnpm-lock.yaml on
- *                                  `pnpm audit --fix update`
- *   FAKE_PNPM_FIX_OVERRIDE_CONTENT - same, for `pnpm audit --fix override`
- *   FAKE_PNPM_INSTALL_FAIL       - "1" makes `pnpm install` fail
- *   FAKE_PNPM_STATE              - directory for the audit call counter
+ *   FAKE_PNPM_AUDIT_JSON_<n>       - stdout for the n-th `pnpm audit --json`
+ *                                    call (1-indexed: 1 = before any fix,
+ *                                    2 = after)
+ *   FAKE_PNPM_AUDIT_JSON_DEFAULT   - fallback when a specific call isn't set
+ *   FAKE_PNPM_FIX_<MODE>_LOCKFILE     - if set, overwrites pnpm-lock.yaml on
+ *                                       `pnpm audit --fix <mode>`
+ *   FAKE_PNPM_FIX_<MODE>_WORKSPACE    - same, for pnpm-workspace.yaml
+ *                                       (creating it if absent)
+ *   FAKE_PNPM_FIX_<MODE>_PACKAGE_JSON - same, for package.json
+ *   FAKE_PNPM_INSTALL_FAIL_<n>     - "1" makes the n-th `pnpm install` call
+ *                                    (1-indexed: 1 = after update,
+ *                                    2 = after override) fail
+ *   FAKE_PNPM_STATE                - directory for the call counters
  */
 function writeFakePnpm(fakeBinDir) {
   const script = [
@@ -253,26 +258,36 @@ function writeFakePnpm(fakeBinDir) {
     'import { readFileSync, writeFileSync, existsSync } from "node:fs";',
     "const args = process.argv.slice(2);",
     "",
-    'if (args[0] === "audit" && args.includes("--json")) {',
-    '  const counterPath = `${process.env.FAKE_PNPM_STATE}/audit-count`;',
+    "function nextCount(name) {",
+    "  const counterPath = `${process.env.FAKE_PNPM_STATE}/${name}-count`;",
     "  let n = 0;",
-    "  if (existsSync(counterPath)) n = parseInt(readFileSync(counterPath, \"utf8\"), 10);",
+    '  if (existsSync(counterPath)) n = parseInt(readFileSync(counterPath, "utf8"), 10);',
     "  n += 1;",
     "  writeFileSync(counterPath, String(n));",
+    "  return n;",
+    "}",
+    "",
+    'if (args[0] === "audit" && args.includes("--json")) {',
+    '  const n = nextCount("audit");',
     "  const json = process.env[`FAKE_PNPM_AUDIT_JSON_${n}`] ?? process.env.FAKE_PNPM_AUDIT_JSON_DEFAULT ?? '{\"advisories\":{}}';",
     "  process.stdout.write(json);",
     "  process.exit(0);",
     "}",
     "",
     'if (args[0] === "audit" && args.includes("--fix")) {',
-    "  const mode = args[2];",
-    "  const content = process.env[`FAKE_PNPM_FIX_${mode.toUpperCase()}_CONTENT`];",
-    '  if (content !== undefined) writeFileSync("pnpm-lock.yaml", content);',
+    "  const mode = args[2].toUpperCase();",
+    "  const lockfile = process.env[`FAKE_PNPM_FIX_${mode}_LOCKFILE`];",
+    "  const workspace = process.env[`FAKE_PNPM_FIX_${mode}_WORKSPACE`];",
+    "  const packageJson = process.env[`FAKE_PNPM_FIX_${mode}_PACKAGE_JSON`];",
+    '  if (lockfile !== undefined) writeFileSync("pnpm-lock.yaml", lockfile);',
+    '  if (workspace !== undefined) writeFileSync("pnpm-workspace.yaml", workspace);',
+    '  if (packageJson !== undefined) writeFileSync("package.json", packageJson);',
     "  process.exit(0);",
     "}",
     "",
     'if (args[0] === "install") {',
-    '  if (process.env.FAKE_PNPM_INSTALL_FAIL === "1") {',
+    '  const n = nextCount("install");',
+    '  if (process.env[`FAKE_PNPM_INSTALL_FAIL_${n}`] === "1") {',
     '    process.stderr.write("install failed\\n");',
     "    process.exit(1);",
     "  }",
@@ -347,7 +362,9 @@ describe("main() end-to-end via a fake pnpm binary", () => {
 
   test("no advisories: reports no changes and doesn't touch the lockfile", () => {
     writeFileSync(join(repoDir, "pnpm-lock.yaml"), "clean\n");
+    writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
     writeFileSync(join(stateDir, "audit-count"), "0");
+    writeFileSync(join(stateDir, "install-count"), "0");
 
     const outputs = runMain({ FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}' });
 
@@ -375,6 +392,7 @@ describe("main() end-to-end via a fake pnpm binary", () => {
     writeFileSync(join(repoDir, "pnpm-lock.yaml"), before);
     writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
     writeFileSync(join(stateDir, "audit-count"), "0");
+    writeFileSync(join(stateDir, "install-count"), "0");
 
     const outputs = runMain({
       FAKE_PNPM_AUDIT_JSON_1: JSON.stringify({
@@ -388,7 +406,7 @@ describe("main() end-to-end via a fake pnpm binary", () => {
         },
       }),
       FAKE_PNPM_AUDIT_JSON_2: '{"advisories":{}}',
-      FAKE_PNPM_FIX_UPDATE_CONTENT: fixed,
+      FAKE_PNPM_FIX_UPDATE_LOCKFILE: fixed,
     });
 
     assert.equal(outputs.changed, "true");
@@ -399,37 +417,57 @@ describe("main() end-to-end via a fake pnpm binary", () => {
     assert.equal(readFileSync(join(repoDir, "pnpm-lock.yaml"), "utf8"), fixed);
   });
 
-  test("override fallback left the lockfile uninstallable: rolls back to the update-only result", () => {
-    const before = [
-      "importers:",
-      "  .:",
-      "    dependencies:",
-      "      vulnerable-pkg:",
-      "        specifier: ^1.0.0",
-    ].join("\n");
-    const updateOnly = [
-      "importers:",
-      "  .:",
-      "    dependencies:",
-      "      vulnerable-pkg:",
-      "        specifier: ^1.0.1",
-    ].join("\n");
-    const overrideBroken = [
-      "importers:",
-      "  .:",
-      "    dependencies:",
-      "      vulnerable-pkg:",
-      "        specifier: ^2.0.0",
-    ].join("\n");
+  test("update-mode install itself fails: rolls back to the pristine original before trying override", () => {
+    const before = ["importers:", "  .:", "    dependencies:", "      vulnerable-pkg:", "        specifier: ^1.0.0"].join(
+      "\n",
+    );
+    const brokenUpdate = ["importers:", "  .:", "    dependencies:", "      vulnerable-pkg:", "        specifier: broken"].join(
+      "\n",
+    );
+    const overrideFixed = ["importers:", "  .:", "    dependencies:", "      vulnerable-pkg:", "        specifier: ^2.0.0"].join(
+      "\n",
+    );
     writeFileSync(join(repoDir, "pnpm-lock.yaml"), before);
     writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
     writeFileSync(join(stateDir, "audit-count"), "0");
+    writeFileSync(join(stateDir, "install-count"), "0");
 
     const outputs = runMain({
       FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}',
-      FAKE_PNPM_FIX_UPDATE_CONTENT: updateOnly,
-      FAKE_PNPM_FIX_OVERRIDE_CONTENT: overrideBroken,
-      FAKE_PNPM_INSTALL_FAIL: "1",
+      FAKE_PNPM_FIX_UPDATE_LOCKFILE: brokenUpdate,
+      FAKE_PNPM_INSTALL_FAIL_1: "1", // the install right after update mode fails
+      FAKE_PNPM_FIX_OVERRIDE_LOCKFILE: overrideFixed,
+      // install #2 (after override) is left to succeed
+    });
+
+    assert.equal(outputs.changed, "true");
+    assert.equal(
+      readFileSync(join(repoDir, "pnpm-lock.yaml"), "utf8"),
+      overrideFixed,
+      "override mode should still be attempted from the restored original, not skipped",
+    );
+  });
+
+  test("override fallback left the result uninstallable: rolls back to the update-only result", () => {
+    const before = ["importers:", "  .:", "    dependencies:", "      vulnerable-pkg:", "        specifier: ^1.0.0"].join(
+      "\n",
+    );
+    const updateOnly = ["importers:", "  .:", "    dependencies:", "      vulnerable-pkg:", "        specifier: ^1.0.1"].join(
+      "\n",
+    );
+    const overrideBroken = ["importers:", "  .:", "    dependencies:", "      vulnerable-pkg:", "        specifier: ^2.0.0"].join(
+      "\n",
+    );
+    writeFileSync(join(repoDir, "pnpm-lock.yaml"), before);
+    writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
+    writeFileSync(join(stateDir, "audit-count"), "0");
+    writeFileSync(join(stateDir, "install-count"), "0");
+
+    const outputs = runMain({
+      FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}',
+      FAKE_PNPM_FIX_UPDATE_LOCKFILE: updateOnly,
+      FAKE_PNPM_FIX_OVERRIDE_LOCKFILE: overrideBroken,
+      FAKE_PNPM_INSTALL_FAIL_2: "1", // the install right after override fails
     });
 
     assert.equal(outputs.changed, "true");
@@ -438,5 +476,64 @@ describe("main() end-to-end via a fake pnpm binary", () => {
       updateOnly,
       "should roll back to the update-only snapshot, not keep the broken override result",
     );
+  });
+
+  test("override mode creates pnpm-workspace.yaml from scratch, then its install fails: rollback deletes the file entirely", () => {
+    // Regression test: a naive rollback that only restores pnpm-lock.yaml
+    // (or only writes pnpm-workspace.yaml when a prior snapshot had one)
+    // leaves a newly-created pnpm-workspace.yaml in place, committing
+    // exactly the broken override config the rollback exists to discard.
+    const before = ["importers:", "  .:", "    dependencies:", "      vulnerable-pkg:", "        specifier: ^1.0.0"].join(
+      "\n",
+    );
+    const overrideBroken = ["importers:", "  .:", "    dependencies:", "      vulnerable-pkg:", "        specifier: ^2.0.0"].join(
+      "\n",
+    );
+    writeFileSync(join(repoDir, "pnpm-lock.yaml"), before);
+    writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
+    writeFileSync(join(stateDir, "audit-count"), "0");
+    writeFileSync(join(stateDir, "install-count"), "0");
+    assert.equal(existsSync(join(repoDir, "pnpm-workspace.yaml")), false, "precondition: no workspace file yet");
+
+    const outputs = runMain({
+      FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}',
+      // update mode makes no changes (e.g. an exact-pinned dependency it
+      // can't bump) — install #1 (a no-op) succeeds trivially.
+      FAKE_PNPM_FIX_OVERRIDE_LOCKFILE: overrideBroken,
+      FAKE_PNPM_FIX_OVERRIDE_WORKSPACE: "overrides:\n  vulnerable-pkg@<2.0.0: '>=2.0.0'\n",
+      FAKE_PNPM_INSTALL_FAIL_2: "1",
+    });
+
+    assert.equal(outputs.changed, "false");
+    assert.equal(readFileSync(join(repoDir, "pnpm-lock.yaml"), "utf8"), before);
+    assert.equal(
+      existsSync(join(repoDir, "pnpm-workspace.yaml")),
+      false,
+      "the workspace file override mode created should be removed on rollback, not left behind",
+    );
+  });
+
+  test("override mode creates pnpm-workspace.yaml from scratch and its install succeeds: the file is kept", () => {
+    const before = ["importers:", "  .:", "    dependencies:", "      vulnerable-pkg:", "        specifier: ^1.0.0"].join(
+      "\n",
+    );
+    const overrideFixed = ["importers:", "  .:", "    dependencies:", "      vulnerable-pkg:", "        specifier: ^2.0.0"].join(
+      "\n",
+    );
+    const workspaceContent = "overrides:\n  vulnerable-pkg@<2.0.0: '>=2.0.0'\n";
+    writeFileSync(join(repoDir, "pnpm-lock.yaml"), before);
+    writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
+    writeFileSync(join(stateDir, "audit-count"), "0");
+    writeFileSync(join(stateDir, "install-count"), "0");
+
+    const outputs = runMain({
+      FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}',
+      FAKE_PNPM_FIX_OVERRIDE_LOCKFILE: overrideFixed,
+      FAKE_PNPM_FIX_OVERRIDE_WORKSPACE: workspaceContent,
+    });
+
+    assert.equal(outputs.changed, "true");
+    assert.equal(readFileSync(join(repoDir, "pnpm-lock.yaml"), "utf8"), overrideFixed);
+    assert.equal(readFileSync(join(repoDir, "pnpm-workspace.yaml"), "utf8"), workspaceContent);
   });
 });

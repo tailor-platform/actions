@@ -10,14 +10,20 @@
  * advisories independent of any specific change — so a fix failing here
  * never blocks an unrelated PR.
  *
- * "update" mode patches vulnerable versions directly in the lockfile and
- * always leaves it installable, but can silently stop short: a package with
- * two advisories at different patched-version thresholds gets bumped to the
- * version that clears only the first one. "override" mode reaches further
- * but can emit overlapping override/minimumReleaseAgeExclude ranges for the
- * same package, which makes `pnpm install` hard-fail. So: try update first
- * and snapshot that as a known-good fallback, then try override on top and
- * roll back to the update-only result if override leaves the lockfile
+ * "update" mode patches vulnerable versions directly in the lockfile but can
+ * silently stop short: a package with two advisories at different
+ * patched-version thresholds gets bumped to the version that clears only the
+ * first one, and an exactly-pinned dependency (`"trim": "0.0.1"`, not a
+ * range) can't be bumped at all this way. "override" mode reaches further,
+ * but pnpm resolves the override into an installable lockfile only once
+ * `pnpm install` actually runs afterward — and depending on whether the
+ * repo already has a pnpm-workspace.yaml, that install can rewrite
+ * pnpm-lock.yaml, pnpm-workspace.yaml (creating it if it didn't exist), and
+ * package.json's `pnpm.overrides`. So: try update, verify it installs
+ * cleanly and snapshot *all three* files as a known-good fallback (or the
+ * pristine originals, if even that fails), then try override on top and
+ * roll back to the fallback snapshot — deleting pnpm-workspace.yaml
+ * entirely if the fallback didn't have one — if override leaves the result
  * uninstallable.
  *
  * This action does not commit or open a pull request — pair it with a
@@ -26,11 +32,12 @@
  * caller's control.
  *
  * Outputs (via $GITHUB_OUTPUT):
- *   changed              - "true" if pnpm-lock.yaml and/or
- *                           pnpm-workspace.yaml changed
+ *   changed              - "true" if pnpm-lock.yaml, pnpm-workspace.yaml,
+ *                           and/or package.json changed
  *   runtime-deps-changed - "true" if any non-private package's runtime
- *                           (non-dev) dependencies changed; devDependencies-
- *                           only changes and pnpm-workspace.yaml-only
+ *                           (non-dev) dependencies changed, per
+ *                           pnpm-lock.yaml; devDependencies-only changes and
+ *                           pnpm-workspace.yaml/package.json-overrides-only
  *                           changes don't affect consumers
  *   changed-names        - newline-separated names of packages whose
  *                           runtime dependencies changed
@@ -39,7 +46,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, unlinkSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -139,9 +146,17 @@ function runFix(mode, cwd) {
   }
 }
 
-/** @param {string} cwd */
+/**
+ * Not `--frozen-lockfile`: this install's job is to resolve whatever
+ * `pnpm audit --fix` just wrote (an override, a bumped specifier) into a
+ * consistent pnpm-lock.yaml, which by definition doesn't match the lockfile
+ * yet. `--ignore-scripts` skips dependency lifecycle scripts, which have no
+ * bearing on whether the lockfile itself resolves and shouldn't run with
+ * this job's ambient permissions just to verify that.
+ * @param {string} cwd
+ */
 function verifyInstallable(cwd) {
-  execFileSync("pnpm", ["install"], { cwd, stdio: "ignore" });
+  execFileSync("pnpm", ["install", "--ignore-scripts"], { cwd, stdio: "ignore" });
 }
 
 /**
@@ -289,6 +304,7 @@ function main() {
   const auditLevel = process.env.AUDIT_LEVEL || "moderate";
   const lockfilePath = join(cwd, "pnpm-lock.yaml");
   const workspacePath = join(cwd, "pnpm-workspace.yaml");
+  const packageJsonPath = join(cwd, "package.json");
 
   const outputFile = process.env.GITHUB_OUTPUT;
   const setOutput = (name, value) => {
@@ -300,30 +316,54 @@ function main() {
     appendFileSync(outputFile, `${name}<<LOCKFILE_AUDIT_FIX_EOF\n${value}\nLOCKFILE_AUDIT_FIX_EOF\n`);
   };
 
-  const beforeLockfile = readFileSync(lockfilePath, "utf8");
-  const beforeWorkspace = existsSync(workspacePath) ? readFileSync(workspacePath, "utf8") : null;
+  // pnpm writes an override it can't express as a lockfile-only version
+  // bump to pnpm-workspace.yaml if one exists, or to package.json's
+  // `pnpm.overrides` otherwise — and can create pnpm-workspace.yaml from
+  // scratch to do it. So all three are part of the state a rollback must
+  // restore, not just the lockfile.
+  const snapshot = () => ({
+    lockfile: readFileSync(lockfilePath, "utf8"),
+    workspace: existsSync(workspacePath) ? readFileSync(workspacePath, "utf8") : null,
+    packageJson: readFileSync(packageJsonPath, "utf8"),
+  });
+  const restore = (snap) => {
+    writeFileSync(lockfilePath, snap.lockfile);
+    writeFileSync(packageJsonPath, snap.packageJson);
+    if (snap.workspace !== null) {
+      writeFileSync(workspacePath, snap.workspace);
+    } else if (existsSync(workspacePath)) {
+      unlinkSync(workspacePath);
+    }
+  };
+
+  const original = snapshot();
   const beforeAudit = runAuditSafe(auditLevel, cwd);
 
   runFix("update", cwd);
-
-  const safeLockfile = readFileSync(lockfilePath, "utf8");
-  const safeWorkspace = existsSync(workspacePath) ? readFileSync(workspacePath, "utf8") : null;
+  let fallback = original;
+  try {
+    verifyInstallable(cwd);
+    fallback = snapshot();
+  } catch {
+    console.log("::warning::pnpm install failed after the update-mode fix; leaving the lockfile untouched.");
+    restore(original);
+  }
 
   runFix("override", cwd);
-
   try {
     verifyInstallable(cwd);
   } catch {
     console.log(
       "::warning::pnpm install failed after the override fallback; reverting to the update-mode-only result.",
     );
-    writeFileSync(lockfilePath, safeLockfile);
-    if (safeWorkspace !== null) writeFileSync(workspacePath, safeWorkspace);
+    restore(fallback);
   }
 
-  const afterLockfile = readFileSync(lockfilePath, "utf8");
-  const afterWorkspace = existsSync(workspacePath) ? readFileSync(workspacePath, "utf8") : null;
-  const changed = afterLockfile !== beforeLockfile || afterWorkspace !== beforeWorkspace;
+  const after = snapshot();
+  const changed =
+    after.lockfile !== original.lockfile ||
+    after.workspace !== original.workspace ||
+    after.packageJson !== original.packageJson;
   setOutput("changed", changed);
 
   if (!changed) {
@@ -334,13 +374,13 @@ function main() {
     return;
   }
 
-  const changedNames = diffRuntimeDeps({ beforeText: beforeLockfile, afterText: afterLockfile, cwd });
+  const changedNames = diffRuntimeDeps({ beforeText: original.lockfile, afterText: after.lockfile, cwd });
   setOutput("runtime-deps-changed", changedNames.length > 0);
   setMultilineOutput("changed-names", changedNames.join("\n"));
   console.log(
     changedNames.length > 0
       ? `Runtime dependency changes detected in: ${changedNames.join(", ")}`
-      : "No runtime dependency changes (devDependencies-only and/or pnpm-workspace.yaml changes).",
+      : "No runtime dependency changes (devDependencies-only and/or pnpm-workspace.yaml/package.json-overrides changes).",
   );
 
   const afterAudit = runAuditSafe(auditLevel, cwd);
