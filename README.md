@@ -475,6 +475,52 @@ jobs:
 
 ---
 
+### [`lockfile-audit-fix`](lockfile-audit-fix/action.yaml)
+
+Runs `pnpm audit --fix` against `pnpm-lock.yaml` (update mode, falling back to override mode when update alone can't clear an advisory), verifying the result still installs before keeping it. Meant for a standalone scheduled/dispatched workflow that clears pre-existing advisories independent of any specific PR — pair with `lockfile-audit`'s regression-only gate, which only blocks *new* advisories.
+
+This action does not commit or open a pull request; it only fixes the lockfile in the working tree and reports what changed. Pair it with a commit/PR step of your own so you control where a changeset gets inserted (if `runtime-deps-changed` calls for one).
+
+**Prerequisites:** The caller is responsible for checkout and pnpm setup.
+
+#### Usage
+
+```yaml
+jobs:
+  lockfile-audit-fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - uses: tailor-platform/actions/lockfile-audit-fix@v2
+        id: fix
+      # commit pnpm-lock.yaml / pnpm-workspace.yaml and open a PR yourself
+      # when steps.fix.outputs.changed == 'true'
+```
+
+#### Inputs
+
+| Name | Required | Default | Description |
+|------|----------|---------|-------------|
+| `audit-level` | No | `moderate` | Minimum severity to report, passed through to `pnpm audit --audit-level`. One of `low`, `moderate`, `high`, `critical`. |
+| `working-directory` | No | `.` | Working directory containing `pnpm-lock.yaml` (for monorepo setups) |
+
+#### Outputs
+
+| Name | Description |
+|------|-------------|
+| `changed` | `'true'` if `pnpm-lock.yaml` and/or `pnpm-workspace.yaml` changed |
+| `runtime-deps-changed` | `'true'` if any non-private package's runtime (non-dev) dependencies changed — devDependencies-only and `pnpm-workspace.yaml`-only changes don't affect consumers |
+| `changed-names` | Newline-separated names of packages whose runtime dependencies changed |
+| `summary` | Markdown summary of fixed and remaining advisories, for use as a PR body |
+
+---
+
 ### [`lint-github-actions`](lint-github-actions/action.yaml)
 
 Run [zizmor](https://docs.zizmor.sh/)'s security audit — missing SHA pins, `pull_request_target` misuse, script injection via untrusted input, overly broad permissions, etc. — against this repository's workflows and action definitions.

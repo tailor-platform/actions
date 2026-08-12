@@ -1,0 +1,7 @@
+{
+  "name": "lockfile-audit-fix-clean-fixture",
+  "private": true,
+  "dependencies": {
+    "ms": "2.1.3"
+  }
+}
