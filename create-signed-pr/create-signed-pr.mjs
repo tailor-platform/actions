@@ -55,7 +55,7 @@
  */
 
 import { readFileSync, existsSync, appendFileSync } from "node:fs";
-import { resolve, relative, isAbsolute } from "node:path";
+import { resolve, relative, isAbsolute, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const API_VERSION = "2022-11-28";
@@ -168,8 +168,10 @@ function readTreeFiles({ paths, workspace }) {
     }
     // Use the normalized path (e.g. "sub/../a.txt" -> "a.txt"), not the raw
     // input, as the Git tree entry — the API expects a canonical path, and
-    // the file was already read from the normalized location anyway.
-    return { path: rel, mode: "100644", type: "blob", content: readFileSync(absolutePath) };
+    // the file was already read from the normalized location anyway. The
+    // Git Data API always expects POSIX-style ("/") paths regardless of
+    // runner OS, but path.relative() on Windows returns them with "\\".
+    return { path: rel.split(sep).join("/"), mode: "100644", type: "blob", content: readFileSync(absolutePath) };
   });
 }
 
