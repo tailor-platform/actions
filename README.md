@@ -499,8 +499,8 @@ jobs:
           run_install: false
       - uses: tailor-platform/actions/lockfile-audit-fix@v2
         id: fix
-      # commit pnpm-lock.yaml / pnpm-workspace.yaml and open a PR yourself
-      # when steps.fix.outputs.changed == 'true'
+      # commit pnpm-lock.yaml / pnpm-workspace.yaml / package.json and open
+      # a PR yourself when steps.fix.outputs.changed == 'true'
 ```
 
 #### Inputs
@@ -514,8 +514,8 @@ jobs:
 
 | Name | Description |
 |------|-------------|
-| `changed` | `'true'` if `pnpm-lock.yaml` and/or `pnpm-workspace.yaml` changed |
-| `runtime-deps-changed` | `'true'` if any non-private package's runtime (non-dev) dependencies changed — devDependencies-only and `pnpm-workspace.yaml`-only changes don't affect consumers |
+| `changed` | `'true'` if `pnpm-lock.yaml`, `pnpm-workspace.yaml`, and/or `package.json` changed — pnpm writes an override it can't express as a plain version bump to `pnpm-workspace.yaml` (creating it if it doesn't exist) or to `package.json`'s `pnpm.overrides`, depending on pnpm version and whether the repo already has a `pnpm-workspace.yaml` |
+| `runtime-deps-changed` | `'true'` if any non-private package's runtime (non-dev) dependencies changed, per `pnpm-lock.yaml` — devDependencies-only and `pnpm-workspace.yaml`/`package.json`-overrides-only changes don't affect consumers |
 | `changed-names` | Newline-separated names of packages whose runtime dependencies changed |
 | `summary` | Markdown summary of fixed and remaining advisories, for use as a PR body |
 

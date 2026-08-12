@@ -153,10 +153,18 @@ function runFix(mode, cwd) {
  * yet. `--ignore-scripts` skips dependency lifecycle scripts, which have no
  * bearing on whether the lockfile itself resolves and shouldn't run with
  * this job's ambient permissions just to verify that.
+ *
+ * Throws with pnpm's own stderr attached (truncated) so a caller's rollback
+ * warning is actually diagnosable instead of just "it failed".
  * @param {string} cwd
  */
 function verifyInstallable(cwd) {
-  execFileSync("pnpm", ["install", "--ignore-scripts"], { cwd, stdio: "ignore" });
+  try {
+    execFileSync("pnpm", ["install", "--ignore-scripts"], { cwd, stdio: ["ignore", "ignore", "pipe"] });
+  } catch (e) {
+    const stderr = e.stderr?.toString().trim().slice(0, 2000);
+    throw new Error(stderr ? `pnpm install failed: ${stderr}` : `pnpm install failed: ${e.message}`);
+  }
 }
 
 /**
@@ -344,17 +352,17 @@ function main() {
   try {
     verifyInstallable(cwd);
     fallback = snapshot();
-  } catch {
-    console.log("::warning::pnpm install failed after the update-mode fix; leaving the lockfile untouched.");
+  } catch (e) {
+    console.log(`::warning::pnpm install failed after the update-mode fix; leaving the lockfile untouched. ${e.message}`);
     restore(original);
   }
 
   runFix("override", cwd);
   try {
     verifyInstallable(cwd);
-  } catch {
+  } catch (e) {
     console.log(
-      "::warning::pnpm install failed after the override fallback; reverting to the update-mode-only result.",
+      `::warning::pnpm install failed after the override fallback; reverting to the update-mode-only result. ${e.message}`,
     );
     restore(fallback);
   }
