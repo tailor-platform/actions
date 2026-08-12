@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 import {
   resolveBaseSha,
+  isValidSha,
   extractAdvisoryIds,
   findNewAdvisoryIds,
   findAdvisoryById,
@@ -56,6 +57,30 @@ describe("resolveBaseSha", () => {
 
   test("returns null for the all-zero sha (new branch / workflow_dispatch)", () => {
     assert.equal(resolveBaseSha({ eventName: "push", pushBeforeSha: ZERO_SHA }), null);
+  });
+});
+
+describe("isValidSha", () => {
+  test("accepts a full 40-char hex SHA-1", () => {
+    assert.equal(isValidSha("a".repeat(40)), true);
+  });
+
+  test("accepts a full 64-char hex SHA-256", () => {
+    assert.equal(isValidSha("a".repeat(64)), true);
+  });
+
+  test("accepts uppercase hex", () => {
+    assert.equal(isValidSha("A".repeat(40)), true);
+  });
+
+  test("rejects a value starting with - (could be parsed as a git option)", () => {
+    assert.equal(isValidSha(`-${"a".repeat(39)}`), false);
+  });
+
+  test("rejects a non-hex or wrong-length string", () => {
+    assert.equal(isValidSha("not-a-sha"), false);
+    assert.equal(isValidSha("a".repeat(39)), false);
+    assert.equal(isValidSha(""), false);
   });
 });
 
@@ -291,6 +316,36 @@ describe("main() restores pnpm-lock.yaml before exiting on a base-audit error", 
     } finally {
       rmSync(repoDir, { recursive: true, force: true });
       rmSync(fakeBinDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("main() rejects a base-sha that doesn't look like a git object id, before ever invoking git or pnpm", () => {
+  test("a base-sha input starting with - fails hard instead of being passed to git", () => {
+    const repoDir = mkdtempSync(join(tmpdir(), "lockfile-audit-invalid-sha-test-"));
+    try {
+      execFileSync("git", ["init", "-q"], { cwd: repoDir, stdio: "ignore" });
+
+      let exitCode = 0;
+      let stderr = "";
+      try {
+        execFileSync("node", [join(__dirname, "lockfile-audit.mjs")], {
+          cwd: repoDir,
+          // No fake pnpm on PATH: if this ever reached git or pnpm, the
+          // process would fail differently (ENOENT/git errors), not with
+          // the intended validation message below.
+          env: { ...process.env, BASE_SHA_INPUT: `-${"a".repeat(39)}` },
+          stdio: ["ignore", "ignore", "pipe"],
+        });
+      } catch (e) {
+        exitCode = e.status;
+        stderr = e.stderr.toString();
+      }
+
+      assert.equal(exitCode, 1);
+      assert.match(stderr, /does not look like a git object id/);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
     }
   });
 });

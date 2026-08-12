@@ -59,9 +59,10 @@ describe("readTreeFiles", () => {
     assert.throws(() => readTreeFiles({ paths: ["sub/../../outside.txt"], workspace }), /escapes the workspace/);
   });
 
-  test("allows a path that merely contains .. segments but stays within the workspace", () => {
+  test("allows a path that merely contains .. segments but stays within the workspace, normalizing the tree path", () => {
     const files = readTreeFiles({ paths: ["sub/../a.txt"], workspace });
     assert.equal(files[0].content.toString("utf8"), "hello");
+    assert.equal(files[0].path, "a.txt", "the Git tree entry must use the normalized path, not the raw input");
   });
 });
 
@@ -103,6 +104,16 @@ describe("main() validates required inputs before making any API call", () => {
 
   test("throws when TITLE is missing", async () => {
     await withEnv({ TITLE: "" }, () => assert.rejects(main(), /`title` is required/));
+  });
+
+  test("throws an actionable error when global fetch is unavailable, instead of a raw ReferenceError", async () => {
+    const originalFetch = globalThis.fetch;
+    delete globalThis.fetch;
+    try {
+      await withEnv({}, () => assert.rejects(main(), /global fetch is not available/));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 

@@ -67,6 +67,19 @@ function resolveBaseSha({ baseShaInput, eventName, prBaseSha, pushBeforeSha }) {
 }
 
 /**
+ * baseSha ends up as a `git` revision argument (`cat-file -e <sha>`,
+ * `show <sha>:./pnpm-lock.yaml`); a value starting with `-` could otherwise
+ * be parsed as an option instead of a revision. Requiring it to look like
+ * an actual SHA-1/SHA-256 hex object id (never starts with `-`) closes
+ * that off, whether it came from the trusted event payload or the
+ * caller-supplied `base-sha` input.
+ * @param {string} sha
+ */
+function isValidSha(sha) {
+  return /^[0-9a-f]{40}$|^[0-9a-f]{64}$/i.test(sha);
+}
+
+/**
  * `.advisories` is an object keyed by advisory ID in both npm's classic
  * audit format and pnpm's audit output (pnpm deliberately mirrors it), but
  * tolerate an array too rather than assume the shape.
@@ -213,6 +226,10 @@ function main() {
     console.log("No base commit to compare against; skipping regression check.");
     process.exit(0);
   }
+  if (!isValidSha(baseSha)) {
+    console.error(`::error::Resolved base sha does not look like a git object id: ${baseSha}`);
+    process.exit(1);
+  }
   if (!baseCommitExists(baseSha, cwd)) {
     console.error(
       `::error::Base commit ${baseSha} is not reachable in this checkout. ` +
@@ -284,6 +301,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
 export {
   LockfileAuditError,
   resolveBaseSha,
+  isValidSha,
   extractAdvisoryIds,
   findNewAdvisoryIds,
   findAdvisoryById,

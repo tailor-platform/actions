@@ -166,11 +166,22 @@ function readTreeFiles({ paths, workspace }) {
     if (!existsSync(absolutePath)) {
       throw new Error(`Path listed in \`paths\` does not exist locally: ${path}`);
     }
-    return { path, mode: "100644", type: "blob", content: readFileSync(absolutePath) };
+    // Use the normalized path (e.g. "sub/../a.txt" -> "a.txt"), not the raw
+    // input, as the Git tree entry — the API expects a canonical path, and
+    // the file was already read from the normalized location anyway.
+    return { path: rel, mode: "100644", type: "blob", content: readFileSync(absolutePath) };
   });
 }
 
 async function main() {
+  // This script relies on the global fetch API (Node.js >= 18). On an older
+  // Node.js, or an environment where it's been stripped, calling fetch
+  // would throw an opaque ReferenceError deep inside the first request;
+  // checking up front turns that into an actionable message.
+  if (typeof fetch !== "function") {
+    throw new Error("global fetch is not available — this action requires Node.js >= 18");
+  }
+
   const token = process.env.TOKEN;
   const paths = parseLines(process.env.PATHS);
   const branch = process.env.BRANCH;
