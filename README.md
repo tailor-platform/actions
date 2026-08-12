@@ -578,7 +578,7 @@ jobs:
 | `commit-message` | Yes | | Commit message for the new commit. |
 | `title` | Yes | | Pull request title. |
 | `body` | No | `""` | Pull request body. |
-| `labels` | No | `""` | Newline-separated list of labels to add to the pull request. |
+| `labels` | No | `""` | Newline-separated list of labels to add to the pull request. Each label must already exist in the repository; a failure here is logged as a warning rather than failing the action, since the commit and PR are already created by this point. |
 | `api-base-url` | No | `""` | Override the GitHub REST API base URL (e.g. for GHES, or to point at a test double). Defaults to `$GITHUB_API_URL`, then `https://api.github.com`. |
 
 #### Outputs

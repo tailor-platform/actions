@@ -55,7 +55,12 @@ inputs:
     required: false
     default: ""
   labels:
-    description: Newline-separated list of labels to add to the pull request.
+    description: >-
+      Newline-separated list of labels to add to the pull request. Each
+      label must already exist in the repository — GitHub's API rejects
+      unknown label names, and a failure here is logged as a warning
+      rather than failing the action, since the commit and pull request
+      are already created by this point.
     required: false
     default: ""
   api-base-url:

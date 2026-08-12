@@ -64,6 +64,14 @@ describe("readTreeFiles", () => {
     assert.equal(files[0].content.toString("utf8"), "hello");
     assert.equal(files[0].path, "a.txt", "the Git tree entry must use the normalized path, not the raw input");
   });
+
+  test("rejects a path that points at a directory instead of a file", () => {
+    assert.throws(() => readTreeFiles({ paths: ["sub"], workspace }), /is not a regular file/);
+  });
+
+  test("rejects paths that normalize to the same tree path", () => {
+    assert.throws(() => readTreeFiles({ paths: ["a.txt", "sub/../a.txt"], workspace }), /more than once/);
+  });
 });
 
 describe("main() validates required inputs before making any API call", () => {
@@ -272,6 +280,53 @@ describe("main() against a mock GitHub API", () => {
 
       const labelsReq = server.requests.find((r) => r.url === "/repos/acme/widgets/issues/42/labels");
       assert.deepEqual(labelsReq.body.labels, ["security", "skip-changeset"]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("a label that doesn't exist in the repo (404) doesn't fail the action — the commit and PR are already done by then", async () => {
+    const server = await startMockGitHub((entry) => {
+      const { method, url } = entry;
+      if (method === "GET" && url === "/repos/acme/widgets/git/ref/heads/main") {
+        return { status: 200, json: { object: { sha: "base-sha-labels" } } };
+      }
+      if (method === "GET" && url === "/repos/acme/widgets/git/commits/base-sha-labels") {
+        return { status: 200, json: { tree: { sha: "base-tree-labels" } } };
+      }
+      if (method === "POST" && url === "/repos/acme/widgets/git/blobs") {
+        return { status: 201, json: { sha: "blob-sha-labels" } };
+      }
+      if (method === "POST" && url === "/repos/acme/widgets/git/trees") {
+        return { status: 201, json: { sha: "new-tree-labels" } };
+      }
+      if (method === "POST" && url === "/repos/acme/widgets/git/commits") {
+        return { status: 201, json: { sha: "commit-sha-labels" } };
+      }
+      if (method === "GET" && url === "/repos/acme/widgets/git/ref/heads/fix-branch") {
+        return { status: 404, json: { message: "not found" } };
+      }
+      if (method === "POST" && url === "/repos/acme/widgets/git/refs") {
+        return { status: 201, json: {} };
+      }
+      if (method === "GET" && url.startsWith("/repos/acme/widgets/pulls?")) {
+        return { status: 200, json: [] };
+      }
+      if (method === "POST" && url === "/repos/acme/widgets/pulls") {
+        return { status: 201, json: { number: 99, html_url: "https://github.com/acme/widgets/pull/99" } };
+      }
+      if (method === "POST" && url === "/repos/acme/widgets/issues/99/labels") {
+        return { status: 404, json: { message: "Label does not exist" } };
+      }
+      return null;
+    });
+
+    try {
+      const outputs = await runMain(server, { LABELS: "does-not-exist" });
+
+      assert.equal(outputs.changed, "true", "the commit/PR must still be reported as successful");
+      assert.equal(outputs["pull-request-number"], "99");
+      assert.equal(outputs["commit-sha"], "commit-sha-labels");
     } finally {
       await server.close();
     }

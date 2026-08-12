@@ -54,7 +54,7 @@
  *   commit-sha          - the new commit's sha, or empty if unchanged
  */
 
-import { readFileSync, existsSync, appendFileSync } from "node:fs";
+import { readFileSync, existsSync, statSync, appendFileSync } from "node:fs";
 import { resolve, relative, isAbsolute, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -154,7 +154,7 @@ function makeClient({ owner, repo, token, apiBaseUrl }) {
  * @returns {{path: string, mode: "100644", type: "blob", content: Buffer}[]}
  */
 function readTreeFiles({ paths, workspace }) {
-  return paths.map((path) => {
+  const files = paths.map((path) => {
     if (isAbsolute(path)) {
       throw new Error(`Path listed in \`paths\` must be relative to the repository root, not absolute: ${path}`);
     }
@@ -166,6 +166,9 @@ function readTreeFiles({ paths, workspace }) {
     if (!existsSync(absolutePath)) {
       throw new Error(`Path listed in \`paths\` does not exist locally: ${path}`);
     }
+    if (!statSync(absolutePath).isFile()) {
+      throw new Error(`Path listed in \`paths\` is not a regular file: ${path}`);
+    }
     // Use the normalized path (e.g. "sub/../a.txt" -> "a.txt"), not the raw
     // input, as the Git tree entry — the API expects a canonical path, and
     // the file was already read from the normalized location anyway. The
@@ -173,6 +176,16 @@ function readTreeFiles({ paths, workspace }) {
     // runner OS, but path.relative() on Windows returns them with "\\".
     return { path: rel.split(sep).join("/"), mode: "100644", type: "blob", content: readFileSync(absolutePath) };
   });
+
+  const seen = new Set();
+  for (const file of files) {
+    if (seen.has(file.path)) {
+      throw new Error(`Path listed in \`paths\` more than once (after normalization): ${file.path}`);
+    }
+    seen.add(file.path);
+  }
+
+  return files;
 }
 
 async function main() {
@@ -259,7 +272,16 @@ async function main() {
       prUrl = pr.html_url;
     }
     if (labels.length > 0 && prNumber) {
-      await client.addLabels(prNumber, labels);
+      try {
+        await client.addLabels(prNumber, labels);
+      } catch (e) {
+        // The commit, branch, and PR are already in place at this point —
+        // a missing label (GitHub 404s "Add labels" when a label name
+        // doesn't already exist in the repo) shouldn't fail the whole
+        // action and leave the caller thinking the PR itself didn't get
+        // created.
+        console.log(`::warning::Failed to add labels to pull request #${prNumber}: ${e.message}`);
+      }
     }
   } else if (existingPr) {
     console.log(`No changes; leaving existing pull request #${existingPr.number} as-is.`);
@@ -280,4 +302,4 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   });
 }
 
-export { GitHubApiError, parseLines, makeClient, readTreeFiles, githubRequest, main };
+export { parseLines, readTreeFiles, main };
