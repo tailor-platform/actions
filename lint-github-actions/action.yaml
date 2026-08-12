@@ -1,60 +1,11 @@
 name: Lint GitHub Actions workflows and action definitions
 description: >-
-  Run actionlint (syntax/semantics, via reviewdog), ghalint (policy checks on
-  workflows and action.yaml/action.yml definitions), and zizmor (security
-  audit — missing SHA pins, pull_request_target misuse, script injection via
-  untrusted input, overly broad permissions, etc.) together, so a caller
-  adopts this supply-chain CI lint baseline with a single step instead of
-  wiring up all three individually. Each tool can be disabled independently
-  for a caller that already covers it another way. Requires the repository
-  to be checked out.
+  Run zizmor's security audit (missing SHA pins, pull_request_target misuse,
+  script injection via untrusted input, overly broad permissions, etc.)
+  against workflows and action definitions. Requires the repository to be
+  checked out.
 
 inputs:
-  enable-actionlint:
-    description: Run actionlint (via reviewdog) against workflow files
-    required: false
-    default: "true"
-  enable-ghalint:
-    description: Run ghalint against workflow files and action.yaml/action.yml definitions
-    required: false
-    default: "true"
-  enable-zizmor:
-    description: Run zizmor's security audit against workflows and action definitions
-    required: false
-    default: "true"
-  actionlint-reporter:
-    description: >-
-      reviewdog reporter for actionlint findings: github-pr-check,
-      github-pr-review, or github-check. github-pr-review posts inline PR
-      review comments and needs `pull-requests: write`; the other two only
-      need `checks: write`.
-    required: false
-    default: github-pr-check
-  actionlint-fail-level:
-    description: >-
-      Minimum severity at which reviewdog exits non-zero for actionlint
-      findings, failing the job: none, any, info, warning, or error.
-      Defaults to reviewdog's own default (none — findings are reported but
-      never fail the job on their own) so adopting this action doesn't turn
-      an existing informational check into a hard gate without the caller
-      opting in.
-    required: false
-    default: "none"
-  actionlint-filter-mode:
-    description: >-
-      Which findings reviewdog surfaces at all: added, diff_context, file,
-      or nofilter. Defaults to reviewdog's own default (file — only findings
-      in files that are part of the current diff are reported), matching a
-      PR-review workflow where issues in untouched files shouldn't nag on
-      an unrelated change. Set to nofilter for a full-repo scan regardless
-      of diff (e.g. a scheduled run, or a caller without a PR diff to
-      compare against).
-    required: false
-    default: file
-  ghalint-version:
-    description: ghalint version to install (passed to `go install ...@<version>`)
-    required: false
-    default: v1.5.6
   zizmor-advanced-security:
     description: >-
       Upload zizmor's findings to the repository's Security tab (GitHub
@@ -64,66 +15,14 @@ inputs:
     required: false
     default: "false"
   github-token:
-    description: GitHub token for actionlint's reviewdog reporter and zizmor's online audits
+    description: GitHub token for zizmor's online audits
     required: false
     default: ${{ github.token }}
 
 runs:
   using: composite
   steps:
-    - name: actionlint
-      if: inputs.enable-actionlint == 'true'
-      uses: reviewdog/action-actionlint@d63ba7532e0942965320cd8d73cbae4c7b3c5283 # v1.73.1
-      with:
-        github_token: ${{ inputs.github-token }}
-        reporter: ${{ inputs.actionlint-reporter }}
-        fail_level: ${{ inputs.actionlint-fail-level }}
-        filter_mode: ${{ inputs.actionlint-filter-mode }}
-
-    - name: Set up Go (for ghalint)
-      if: inputs.enable-ghalint == 'true'
-      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-      with:
-        go-version: stable
-
-    - name: Install ghalint
-      if: inputs.enable-ghalint == 'true'
-      id: install-ghalint
-      shell: bash
-      env:
-        GHALINT_VERSION: ${{ inputs.ghalint-version }}
-      # Resolve the installed binary's own path via a step output instead of
-      # prepending to $GITHUB_PATH: a reusable action mutating PATH affects
-      # every step the caller runs afterward, not just this action's own —
-      # a bigger blast radius than a plain workflow job doing the same.
-      run: |
-        go install "github.com/suzuki-shunsuke/ghalint/cmd/ghalint@${GHALINT_VERSION}"
-        # `go install` places the binary in $GOBIN when set, and only falls
-        # back to $GOPATH/bin otherwise — mirror that precedence instead of
-        # hardcoding $GOPATH/bin, which would resolve to the wrong path in a
-        # caller's environment that sets GOBIN.
-        BIN_DIR="$(go env GOBIN)"
-        if [ -z "$BIN_DIR" ]; then
-          BIN_DIR="$(go env GOPATH)/bin"
-        fi
-        echo "bin=$BIN_DIR/ghalint" >> "$GITHUB_OUTPUT"
-
-    - name: ghalint - lint workflows
-      if: inputs.enable-ghalint == 'true'
-      shell: bash
-      env:
-        GHALINT_BIN: ${{ steps.install-ghalint.outputs.bin }}
-      run: '"$GHALINT_BIN" run'
-
-    - name: ghalint - lint action definitions
-      if: inputs.enable-ghalint == 'true'
-      shell: bash
-      env:
-        GHALINT_BIN: ${{ steps.install-ghalint.outputs.bin }}
-      run: '"$GHALINT_BIN" run-action'
-
     - name: zizmor
-      if: inputs.enable-zizmor == 'true'
       uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054 # v0.6.2
       with:
         token: ${{ inputs.github-token }}

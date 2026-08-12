@@ -224,17 +224,26 @@ function main() {
   const lockfilePath = join(cwd, "pnpm-lock.yaml");
   const headLockfile = readFileSync(lockfilePath);
   let baseAudit;
+  let baseAuditError;
   try {
     writeFileSync(lockfilePath, readLockfileAtRevision(baseSha, cwd));
     try {
       baseAudit = runAudit(auditLevel, cwd);
     } catch (e) {
       if (!(e instanceof LockfileAuditError)) throw e;
-      console.error(`::error::${e.message}`);
-      process.exit(1);
+      // Don't exit here: process.exit() skips the outer finally below,
+      // which would leave pnpm-lock.yaml swapped to the base revision's
+      // content in the caller's checkout — breaking any step that runs
+      // after this one in the same job. Defer the exit until after the
+      // finally has restored it.
+      baseAuditError = e;
     }
   } finally {
     writeFileSync(lockfilePath, headLockfile);
+  }
+  if (baseAuditError) {
+    console.error(`::error::${baseAuditError.message}`);
+    process.exit(1);
   }
 
   const headIds = extractAdvisoryIds(headAudit);

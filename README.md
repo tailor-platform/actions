@@ -477,7 +477,7 @@ jobs:
 
 ### [`lint-github-actions`](lint-github-actions/action.yaml)
 
-Run [actionlint](https://github.com/rhysd/actionlint) (syntax/semantics, via [reviewdog](https://github.com/reviewdog/action-actionlint)), [ghalint](https://github.com/suzuki-shunsuke/ghalint) (policy checks on workflows and `action.yaml`/`action.yml` definitions), and [zizmor](https://docs.zizmor.sh/) (security audit — missing SHA pins, `pull_request_target` misuse, script injection via untrusted input, overly broad permissions, etc.) together in one step, instead of wiring up all three individually. Each tool can be disabled independently for a caller that already covers it another way.
+Run [zizmor](https://docs.zizmor.sh/)'s security audit — missing SHA pins, `pull_request_target` misuse, script injection via untrusted input, overly broad permissions, etc. — against this repository's workflows and action definitions.
 
 **Prerequisites:** The caller is responsible for checkout.
 
@@ -490,7 +490,6 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
-      checks: write # for actionlint's default reviewdog reporter
     steps:
       - uses: actions/checkout@v4
       - uses: tailor-platform/actions/lint-github-actions@v2
@@ -500,15 +499,8 @@ jobs:
 
 | Name | Required | Default | Description |
 |------|----------|---------|-------------|
-| `enable-actionlint` | No | `true` | Run actionlint (via reviewdog) against workflow files |
-| `enable-ghalint` | No | `true` | Run ghalint against workflow files and `action.yaml`/`action.yml` definitions |
-| `enable-zizmor` | No | `true` | Run zizmor's security audit against workflows and action definitions |
-| `actionlint-reporter` | No | `github-pr-check` | reviewdog reporter for actionlint findings: `github-pr-check`, `github-pr-review`, or `github-check`. `github-pr-review` posts inline PR review comments and needs `pull-requests: write`; the other two only need `checks: write`. |
-| `actionlint-fail-level` | No | `none` | Minimum severity at which reviewdog exits non-zero for actionlint findings, failing the job: `none`, `any`, `info`, `warning`, or `error`. Defaults to reviewdog's own default (findings are reported but never fail the job on their own) so adopting this action doesn't turn an existing informational check into a hard gate without opting in. |
-| `actionlint-filter-mode` | No | `file` | Which findings reviewdog surfaces at all: `added`, `diff_context`, `file`, or `nofilter`. Defaults to reviewdog's own default (only findings in files that are part of the current diff are reported, so issues in untouched files don't nag on an unrelated change). Set to `nofilter` for a full-repo scan regardless of diff. |
-| `ghalint-version` | No | `v1.5.6` | ghalint version to install (passed to `go install ...@<version>`) |
 | `zizmor-advanced-security` | No | `false` | Upload zizmor's findings to the repository's Security tab (GitHub Advanced Security) as SARIF instead of plain workflow annotations. Requires GHAS to be enabled on the repository. |
-| `github-token` | No | `${{ github.token }}` | GitHub token for actionlint's reviewdog reporter and zizmor's online audits |
+| `github-token` | No | `${{ github.token }}` | GitHub token for zizmor's online audits |
 
 ---
 

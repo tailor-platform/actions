@@ -1,9 +1,12 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 import {
   resolveBaseSha,
   extractAdvisoryIds,
@@ -187,5 +190,65 @@ describe("baseCommitExists / baseHasLockfile", () => {
   test("baseHasLockfile is false when the commit predates the lockfile (commit itself still exists)", () => {
     assert.equal(baseCommitExists(noLockfileSha, repoDir), true);
     assert.equal(baseHasLockfile(noLockfileSha, repoDir), false);
+  });
+});
+
+describe("main() restores pnpm-lock.yaml before exiting on a base-audit error", () => {
+  // Spawns the script as a real subprocess (main() calls process.exit(),
+  // which would kill an in-process test) with a fake `pnpm` on PATH that
+  // succeeds once (the HEAD audit) and then fails with unparseable output
+  // (the BASE audit) — reproducing the exact LockfileAuditError path that
+  // process.exit() must not short-circuit past the outer finally.
+  test("pnpm-lock.yaml still holds the HEAD content after the process exits", () => {
+    const repoDir = mkdtempSync(join(tmpdir(), "lockfile-audit-restore-test-"));
+    const fakeBinDir = mkdtempSync(join(tmpdir(), "lockfile-audit-fake-pnpm-"));
+    try {
+      const git = (...args) => execFileSync("git", args, { cwd: repoDir, stdio: "ignore" });
+      git("init", "-q");
+      git("config", "user.email", "test@example.com");
+      git("config", "user.name", "test");
+
+      writeFileSync(join(repoDir, "pnpm-lock.yaml"), "base-content\n");
+      git("add", "-A");
+      git("commit", "-q", "-m", "base");
+      const baseSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoDir, encoding: "utf8" }).trim();
+
+      writeFileSync(join(repoDir, "pnpm-lock.yaml"), "head-content\n");
+      git("add", "-A");
+      git("commit", "-q", "-m", "head");
+
+      const counterFile = join(fakeBinDir, "call-count");
+      writeFileSync(counterFile, "0");
+      writeFileSync(
+        join(fakeBinDir, "pnpm"),
+        [
+          "#!/bin/sh",
+          `n=$(cat "${counterFile}")`,
+          "n=$((n + 1))",
+          `echo "$n" > "${counterFile}"`,
+          'if [ "$n" -eq 1 ]; then echo \'{"advisories":{}}\'; exit 0; fi',
+          "echo 'not valid json' >&2",
+          "exit 1",
+        ].join("\n"),
+      );
+      chmodSync(join(fakeBinDir, "pnpm"), 0o755);
+
+      let exitCode = 0;
+      try {
+        execFileSync("node", [join(__dirname, "lockfile-audit.mjs")], {
+          cwd: repoDir,
+          env: { ...process.env, PATH: `${fakeBinDir}:${process.env.PATH}`, BASE_SHA_INPUT: baseSha },
+          stdio: ["ignore", "ignore", "ignore"],
+        });
+      } catch (e) {
+        exitCode = e.status;
+      }
+
+      assert.equal(exitCode, 1, "the script should exit 1 on an unparseable base audit");
+      assert.equal(readFileSync(join(repoDir, "pnpm-lock.yaml"), "utf8"), "head-content\n");
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+      rmSync(fakeBinDir, { recursive: true, force: true });
+    }
   });
 });
