@@ -1,7 +1,7 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, chmodSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,6 +31,13 @@ describe("resolveBaseSha", () => {
   test("pull_request uses the PR's base sha", () => {
     assert.equal(
       resolveBaseSha({ eventName: "pull_request", prBaseSha: "abc123", pushBeforeSha: "def456" }),
+      "abc123",
+    );
+  });
+
+  test("pull_request_target also uses the PR's base sha (same payload shape as pull_request)", () => {
+    assert.equal(
+      resolveBaseSha({ eventName: "pull_request_target", prBaseSha: "abc123", pushBeforeSha: "def456" }),
       "abc123",
     );
   });
@@ -190,6 +197,41 @@ describe("baseCommitExists / baseHasLockfile", () => {
   test("baseHasLockfile is false when the commit predates the lockfile (commit itself still exists)", () => {
     assert.equal(baseCommitExists(noLockfileSha, repoDir), true);
     assert.equal(baseHasLockfile(noLockfileSha, repoDir), false);
+  });
+});
+
+describe("baseHasLockfile resolves paths relative to cwd, for monorepo working-directory callers", () => {
+  let repoDir;
+  let rootOnlySha;
+
+  before(() => {
+    repoDir = mkdtempSync(join(tmpdir(), "lockfile-audit-monorepo-test-"));
+    const git = (...args) => execFileSync("git", args, { cwd: repoDir, stdio: "ignore" });
+    git("init", "-q");
+    git("config", "user.email", "test@example.com");
+    git("config", "user.name", "test");
+
+    // Only the repo root has a lockfile; the "sub" project doesn't yet.
+    writeFileSync(join(repoDir, "pnpm-lock.yaml"), "root\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "root lockfile only");
+    rootOnlySha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoDir, encoding: "utf8" }).trim();
+  });
+
+  after(() => {
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  test("with cwd at the repo root, the root's own lockfile resolves", () => {
+    assert.equal(baseHasLockfile(rootOnlySha, repoDir), true);
+  });
+
+  test("with cwd in a subdirectory that has no lockfile at that commit, resolution fails (proves it's cwd-relative, not repo-root-relative)", () => {
+    const subDir = join(repoDir, "sub");
+    mkdirSync(subDir);
+    // If `${sha}:./pnpm-lock.yaml` resolved against the repo root instead
+    // of cwd, this would incorrectly find the root's lockfile.
+    assert.equal(baseHasLockfile(rootOnlySha, subDir), false);
   });
 });
 

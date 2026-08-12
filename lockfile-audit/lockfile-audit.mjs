@@ -11,7 +11,8 @@
  * change's merge to the availability of a patched version.
  *
  * Base commit resolution (BASE_SHA env, or derived when unset):
- *   - `pull_request`: the PR's base commit (`github.event.pull_request.base.sha`)
+ *   - `pull_request` / `pull_request_target`: the PR's base commit
+ *     (`github.event.pull_request.base.sha`)
  *   - anything else (push, workflow_dispatch, ...): the ref's previous tip
  *     (`github.event.before`) — absent on `workflow_dispatch`, in which case
  *     the regression check is skipped (nothing to diff against)
@@ -54,7 +55,13 @@ class LockfileAuditError extends Error {}
  */
 function resolveBaseSha({ baseShaInput, eventName, prBaseSha, pushBeforeSha }) {
   if (baseShaInput) return baseShaInput;
-  const sha = eventName === "pull_request" ? prBaseSha : pushBeforeSha;
+  // pull_request_target carries the same github.event.pull_request payload
+  // shape as pull_request (including .base.sha) — it's a distinct trigger
+  // (commonly used so the workflow gets write permissions/secrets while a
+  // fork PR's code still only runs in read-only steps), not a different
+  // event family, so it resolves the base sha the same way.
+  const isPullRequestEvent = eventName === "pull_request" || eventName === "pull_request_target";
+  const sha = isPullRequestEvent ? prBaseSha : pushBeforeSha;
   return sha && sha !== ZERO_SHA ? sha : null;
 }
 
@@ -195,16 +202,12 @@ function main() {
     pushBeforeSha: process.env.PUSH_BEFORE_SHA,
   });
 
-  let headAudit;
-  try {
-    // pnpm audit resolves advisories against the lockfile only; no install needed.
-    headAudit = runAudit(auditLevel, cwd);
-  } catch (e) {
-    if (!(e instanceof LockfileAuditError)) throw e;
-    console.error(`::error::${e.message}`);
-    process.exit(1);
-  }
-
+  // Resolve whether there's even a usable base to compare against before
+  // doing any audit work: these are cheap, local git checks, and running
+  // them first means a caller that's genuinely going to skip (no base sha,
+  // or a base commit that predates pnpm-lock.yaml) never pays for a
+  // network-dependent `pnpm audit` call, and a registry hiccup can't turn a
+  // legitimate skip into a spurious hard failure.
   if (!baseSha) {
     console.log("No base commit to compare against; skipping regression check.");
     process.exit(0);
@@ -219,6 +222,16 @@ function main() {
   if (!baseHasLockfile(baseSha, cwd)) {
     console.log("Base commit has no pnpm-lock.yaml; skipping regression check.");
     process.exit(0);
+  }
+
+  let headAudit;
+  try {
+    // pnpm audit resolves advisories against the lockfile only; no install needed.
+    headAudit = runAudit(auditLevel, cwd);
+  } catch (e) {
+    if (!(e instanceof LockfileAuditError)) throw e;
+    console.error(`::error::${e.message}`);
+    process.exit(1);
   }
 
   const lockfilePath = join(cwd, "pnpm-lock.yaml");
