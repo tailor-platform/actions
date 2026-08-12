@@ -9,6 +9,7 @@
     "test:check-licenses": "node --test check-licenses/*.test.mjs",
     "test:lockfile-audit": "node --test lockfile-audit/*.test.mjs",
     "test:lockfile-audit-fix": "node --test lockfile-audit-fix/*.test.mjs",
+    "test:create-signed-pr": "node --test create-signed-pr/*.test.mjs",
     "test:cli-bin-contract": "node --test tests/cli-bin-contract.test.mjs",
     "changeset": "changeset"
   },

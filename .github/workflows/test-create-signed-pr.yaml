@@ -1,0 +1,100 @@
+name: Test Create-Signed-PR Action
+
+# The composite-action job below never talks to the real GitHub API: it
+# points the action at a scripted mock server (tests/create-signed-pr/mock-
+# server.mjs) via the GITHUB_API_URL env var the action already reads for
+# GHES support, so it's free to run on every PR without any write
+# permissions or risk to this repository. Detailed request-body assertions
+# (parents, base64 blob content, force:true, ...) live in the unit-tests
+# job's mock-server-based node:test suite; this job only proves the
+# composite action's env-to-input mapping and output extraction work.
+
+on:
+  pull_request:
+    paths:
+      - "create-signed-pr/**"
+      - "tests/create-signed-pr/**"
+      - ".github/workflows/test-create-signed-pr.yaml"
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+
+      - name: Run unit tests
+        run: node --test create-signed-pr/*.test.mjs
+
+  test-composite-action-wiring:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+
+      - name: Start the mock GitHub API server
+        env:
+          MOCK_PORT: "8991"
+        run: |
+          node tests/create-signed-pr/mock-server.mjs &
+          echo "mock_pid=$!" >> "$GITHUB_ENV"
+          # Any response (even the server's own 404-for-unknown-route) proves
+          # it's up; -f would treat that 404 as failure and spin the loop
+          # for no reason.
+          for _ in $(seq 1 20); do
+            curl -sS "http://127.0.0.1:$MOCK_PORT/ready-check" >/dev/null 2>&1 && break
+            sleep 0.25
+          done
+
+      - name: "Test: creates a commit, branch, and pull request against the mock API"
+        id: create
+        uses: ./create-signed-pr
+        env:
+          GITHUB_API_URL: http://127.0.0.1:8991
+        with:
+          token: dummy-token
+          paths: README.md
+          branch: test-branch
+          base: main
+          commit-message: "test: automated commit"
+          title: "test: automated commit"
+          labels: |
+            security
+
+      - name: Stop the mock GitHub API server
+        if: always()
+        run: kill "$mock_pid" 2>/dev/null || true
+
+      - name: "Verify: outputs reflect the mock API's scripted responses"
+        env:
+          CHANGED: ${{ steps.create.outputs.changed }}
+          PR_NUMBER: ${{ steps.create.outputs.pull-request-number }}
+          PR_URL: ${{ steps.create.outputs.pull-request-url }}
+          COMMIT_SHA: ${{ steps.create.outputs.commit-sha }}
+        run: |
+          [ "$CHANGED" = "true" ] || { echo "::error::Expected changed=true, got '$CHANGED'"; exit 1; }
+          [ "$PR_NUMBER" = "123" ] || { echo "::error::Expected pull-request-number=123, got '$PR_NUMBER'"; exit 1; }
+          [ "$PR_URL" = "https://example.invalid/pull/123" ] || { echo "::error::Unexpected pull-request-url '$PR_URL'"; exit 1; }
+          [ "$COMMIT_SHA" = "commit-sha" ] || { echo "::error::Expected commit-sha=commit-sha, got '$COMMIT_SHA'"; exit 1; }

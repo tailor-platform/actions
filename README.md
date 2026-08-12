@@ -521,6 +521,76 @@ jobs:
 
 ---
 
+### [`create-signed-pr`](create-signed-pr/action.yaml)
+
+Commits a known, bounded list of file paths via GitHub's Git Data API (blob -> tree -> commit -> ref) and idempotently creates or updates a pull request for them — without running `git commit` locally or depending on a third-party action. Pair with `lockfile-audit-fix` (or any step that leaves modified files in the working tree) to open a PR for the result.
+
+Commits created this way are automatically shown as "Verified" on GitHub when using the default `GITHUB_TOKEN` or a GitHub App installation token, satisfying a `required_signatures` branch protection rule with no GPG key material. A classic/fine-grained PAT still works but produces unsigned commits.
+
+This is deliberately **not** a general-purpose alternative to [`peter-evans/create-pull-request`](https://github.com/peter-evans/create-pull-request): `paths` must be a known, caller-supplied list of files that already exist in the checkout (e.g. files a prior step just modified), not an arbitrary repo-wide diff — this action never inspects the working tree's git status, doesn't support deletions, and reads each listed path directly.
+
+Each run re-parents the new commit on the base branch's *current* head and force-moves the target branch to it, so the branch always holds a single commit rebased on the latest base. A consequence: any commit a human pushed to that branch directly is discarded on the next run — same behavior as `peter-evans/create-pull-request`'s default mode.
+
+**A pull request created with the default `GITHUB_TOKEN` does not trigger `pull_request`-triggered workflows** (GitHub suppresses recursive workflow runs from its own token) — the created PR gets no CI. Use a GitHub App installation token instead if the PR needs to run your normal CI.
+
+**Prerequisites:** The caller is responsible for checkout. The token needs `contents: write` and `pull-requests: write` permissions.
+
+#### Usage
+
+```yaml
+jobs:
+  lockfile-audit-fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - uses: tailor-platform/actions/lockfile-audit-fix@v2
+        id: fix
+      - uses: tailor-platform/actions/create-signed-pr@v2
+        if: steps.fix.outputs.changed == 'true'
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          paths: |
+            pnpm-lock.yaml
+            pnpm-workspace.yaml
+          branch: chore/lockfile-audit-fix
+          commit-message: "fix(deps): automated lockfile security fix"
+          title: "fix(deps): automated lockfile security fix"
+          body: ${{ steps.fix.outputs.summary }}
+          labels: |
+            security
+```
+
+#### Inputs
+
+| Name | Required | Default | Description |
+|------|----------|---------|-------------|
+| `token` | Yes | | GitHub token with `contents: write` and `pull-requests: write` permissions. `GITHUB_TOKEN` or a GitHub App installation token for Verified (signed) commits; a PAT works but produces unsigned commits. |
+| `paths` | Yes | | Newline-separated list of repo-root-relative file paths to commit. Each must exist in the local checkout. |
+| `branch` | Yes | | Branch to create or force-update with the new commit. |
+| `base` | No | (repository default branch) | Base branch to commit onto and open the pull request against. |
+| `commit-message` | Yes | | Commit message for the new commit. |
+| `title` | Yes | | Pull request title. |
+| `body` | No | `""` | Pull request body. |
+| `labels` | No | `""` | Newline-separated list of labels to add to the pull request. |
+
+#### Outputs
+
+| Name | Description |
+|------|-------------|
+| `changed` | `'true'` if a new commit was created (the tree differed from the base branch's) |
+| `pull-request-number` | The pull request's number, or empty if none exists |
+| `pull-request-url` | The pull request's URL, or empty if none exists |
+| `commit-sha` | The new commit's sha, or empty if nothing changed |
+
+---
+
 ### [`lint-github-actions`](lint-github-actions/action.yaml)
 
 Run [zizmor](https://docs.zizmor.sh/)'s security audit — missing SHA pins, `pull_request_target` misuse, script injection via untrusted input, overly broad permissions, etc. — against this repository's workflows and action definitions.
