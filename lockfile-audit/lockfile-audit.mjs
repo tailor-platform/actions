@@ -44,6 +44,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const ZERO_SHA = "0000000000000000000000000000000000000000";
 
@@ -276,7 +277,7 @@ function main() {
 
 // Only auto-run when executed directly (`node lockfile-audit.mjs`), not when
 // imported by the test file.
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   main();
 }
 

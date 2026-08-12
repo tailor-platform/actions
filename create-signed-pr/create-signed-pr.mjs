@@ -56,6 +56,7 @@
 
 import { readFileSync, existsSync, appendFileSync } from "node:fs";
 import { resolve, relative, isAbsolute } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const API_VERSION = "2022-11-28";
 
@@ -259,7 +260,7 @@ async function main() {
 
 // Only auto-run when executed directly (`node create-signed-pr.mjs`), not
 // when imported by the test file.
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((e) => {
     console.error(`::error::${e.message}`);
     process.exit(1);

@@ -17,7 +17,9 @@ description: >-
   request created with the default GITHUB_TOKEN does not trigger
   `pull_request`-triggered workflows (GitHub suppresses recursive runs from
   its own token); use a GitHub App installation token if the created PR
-  needs to run your normal CI.
+  needs to run your normal CI. Requires Node.js on PATH (e.g. via
+  actions/setup-node) — unlike lockfile-audit and lockfile-audit-fix, this
+  action doesn't otherwise depend on pnpm.
 
 inputs:
   token:

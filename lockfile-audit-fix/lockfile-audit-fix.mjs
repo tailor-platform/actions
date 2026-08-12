@@ -49,6 +49,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, unlinkSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
+import { pathToFileURL } from "node:url";
 
 /**
  * `.advisories` is an object keyed by advisory ID in both npm's classic
@@ -427,7 +428,7 @@ function main() {
 
 // Only auto-run when executed directly (`node lockfile-audit-fix.mjs`), not
 // when imported by the test file.
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   main();
 }
 
