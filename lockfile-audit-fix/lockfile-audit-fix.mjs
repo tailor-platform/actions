@@ -48,6 +48,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, unlinkSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
+import { randomBytes } from "node:crypto";
 
 /**
  * `.advisories` is an object keyed by advisory ID in both npm's classic
@@ -171,6 +172,7 @@ function verifyInstallable(cwd) {
     execFileSync("pnpm", ["install", "--no-frozen-lockfile", "--ignore-scripts"], {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: 1024 * 1024 * 64,
     });
   } catch (e) {
     const output = [e.stdout, e.stderr]
@@ -336,7 +338,12 @@ function main() {
   };
   const setMultilineOutput = (name, value) => {
     if (!outputFile) return;
-    appendFileSync(outputFile, `${name}<<LOCKFILE_AUDIT_FIX_EOF\n${value}\nLOCKFILE_AUDIT_FIX_EOF\n`);
+    // A fixed delimiter could theoretically collide with the value itself
+    // (advisory titles/URLs come from GitHub's advisory database, outside
+    // this action's control) and corrupt $GITHUB_OUTPUT parsing — a random
+    // delimiter per call closes that off entirely.
+    const delimiter = `LOCKFILE_AUDIT_FIX_EOF_${randomBytes(16).toString("hex")}`;
+    appendFileSync(outputFile, `${name}<<${delimiter}\n${value}\n${delimiter}\n`);
   };
 
   // pnpm writes an override it can't express as a lockfile-only version

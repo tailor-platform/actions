@@ -46,6 +46,64 @@ describe("readTreeFiles", () => {
   test("throws when a listed path doesn't exist locally", () => {
     assert.throws(() => readTreeFiles({ paths: ["missing.txt"], workspace }), /does not exist locally/);
   });
+
+  test("rejects an absolute path", () => {
+    assert.throws(() => readTreeFiles({ paths: ["/etc/passwd"], workspace }), /must be relative/);
+  });
+
+  test("rejects a path that escapes the workspace via ..", () => {
+    assert.throws(() => readTreeFiles({ paths: ["../../etc/passwd"], workspace }), /escapes the workspace/);
+  });
+
+  test("rejects a path that escapes via a mix of traversal and real subdirectories", () => {
+    assert.throws(() => readTreeFiles({ paths: ["sub/../../outside.txt"], workspace }), /escapes the workspace/);
+  });
+
+  test("allows a path that merely contains .. segments but stays within the workspace", () => {
+    const files = readTreeFiles({ paths: ["sub/../a.txt"], workspace });
+    assert.equal(files[0].content.toString("utf8"), "hello");
+  });
+});
+
+describe("main() validates required inputs before making any API call", () => {
+  const baseEnv = {
+    GITHUB_REPOSITORY: "acme/widgets",
+    GITHUB_WORKSPACE: process.cwd(),
+    TOKEN: "test-token",
+    PATHS: "package.json",
+    BRANCH: "fix-branch",
+    COMMIT_MESSAGE: "fix: automated fix",
+    TITLE: "fix: automated fix",
+  };
+
+  const withEnv = async (overrides, assertion) => {
+    const originalEnv = { ...process.env };
+    Object.assign(process.env, baseEnv, overrides);
+    try {
+      await assertion();
+    } finally {
+      for (const key of Object.keys(process.env)) {
+        if (!(key in originalEnv)) delete process.env[key];
+      }
+      Object.assign(process.env, originalEnv);
+    }
+  };
+
+  test("throws when TOKEN is missing", async () => {
+    await withEnv({ TOKEN: "" }, () => assert.rejects(main(), /`token` is required/));
+  });
+
+  test("throws when BRANCH is missing", async () => {
+    await withEnv({ BRANCH: "" }, () => assert.rejects(main(), /`branch` is required/));
+  });
+
+  test("throws when COMMIT_MESSAGE is missing", async () => {
+    await withEnv({ COMMIT_MESSAGE: "" }, () => assert.rejects(main(), /`commit-message` is required/));
+  });
+
+  test("throws when TITLE is missing", async () => {
+    await withEnv({ TITLE: "" }, () => assert.rejects(main(), /`title` is required/));
+  });
 });
 
 /**

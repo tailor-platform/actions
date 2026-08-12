@@ -25,7 +25,11 @@ inputs:
 
 outputs:
   changed:
-    description: "'true' if pnpm-lock.yaml and/or pnpm-workspace.yaml changed"
+    description: >-
+      'true' if pnpm-lock.yaml, pnpm-workspace.yaml, and/or package.json
+      changed (pnpm may write an override it can't express as a plain
+      version bump to either pnpm-workspace.yaml or package.json's
+      `pnpm.overrides`, depending on pnpm version)
     value: ${{ steps.fix.outputs.changed }}
   runtime-deps-changed:
     description: >-

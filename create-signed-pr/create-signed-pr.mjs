@@ -55,7 +55,7 @@
  */
 
 import { readFileSync, existsSync, appendFileSync } from "node:fs";
-import { join } from "node:path";
+import { resolve, relative, isAbsolute } from "node:path";
 
 const API_VERSION = "2022-11-28";
 
@@ -143,7 +143,14 @@ function makeClient({ owner, repo, token, apiBaseUrl }) {
  */
 function readTreeFiles({ paths, workspace }) {
   return paths.map((path) => {
-    const absolutePath = join(workspace, path);
+    if (isAbsolute(path)) {
+      throw new Error(`Path listed in \`paths\` must be relative to the repository root, not absolute: ${path}`);
+    }
+    const absolutePath = resolve(workspace, path);
+    const rel = relative(workspace, absolutePath);
+    if (rel.startsWith("..") || isAbsolute(rel)) {
+      throw new Error(`Path listed in \`paths\` escapes the workspace: ${path}`);
+    }
     if (!existsSync(absolutePath)) {
       throw new Error(`Path listed in \`paths\` does not exist locally: ${path}`);
     }
@@ -173,6 +180,10 @@ async function main() {
 
   if (!owner || !repo) throw new Error("GITHUB_REPOSITORY must be set as owner/repo");
   if (paths.length === 0) throw new Error("`paths` must list at least one file");
+  if (!token) throw new Error("`token` is required");
+  if (!branch) throw new Error("`branch` is required");
+  if (!commitMessage) throw new Error("`commit-message` is required");
+  if (!title) throw new Error("`title` is required");
 
   const outputFile = process.env.GITHUB_OUTPUT;
   const setOutput = (name, value) => {
