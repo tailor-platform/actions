@@ -444,7 +444,7 @@ resource "github_actions_organization_variable" "denied_licenses" {
 
 Regression-only gate against `pnpm-lock.yaml` changes: fails only when a pull request or push introduces a security advisory that wasn't already present in the lockfile at the base commit. Pre-existing advisories elsewhere in the lockfile don't block unrelated changes — pair this with a scheduled `pnpm audit --fix` workflow (run independent of any PR) to clear those over time.
 
-**Prerequisites:** The caller is responsible for checkout (with `fetch-depth: 0` — the base commit's lockfile must be reachable) and pnpm setup. `pnpm audit` resolves advisories from the lockfile alone, so no dependency install is needed.
+**Prerequisites:** The caller is responsible for checkout (with `fetch-depth: 0` — the base commit's lockfile must be reachable) and pnpm setup. `pnpm audit` resolves advisories from the lockfile alone, so no dependency install is needed. A resolved base commit that isn't reachable in the checkout (most commonly a missing `fetch-depth: 0`) fails the job outright rather than silently skipping — silently no-op'ing would defeat the gate for exactly the callers who most need it.
 
 #### Usage
 

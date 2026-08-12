@@ -16,6 +16,13 @@
  *     (`github.event.before`) — absent on `workflow_dispatch`, in which case
  *     the regression check is skipped (nothing to diff against)
  *
+ * A resolved base sha that isn't reachable in this checkout (e.g. the
+ * caller forgot `fetch-depth: 0`) is a hard failure, not a skip — silently
+ * no-op'ing there would defeat the gate for exactly the callers who most
+ * need it. A resolved base sha that IS reachable but predates
+ * pnpm-lock.yaml's introduction has nothing to compare against, which is a
+ * legitimate skip.
+ *
  * `pnpm audit` resolves advisories from the lockfile alone (no dependency
  * install needed), so the base commit's lockfile is audited by temporarily
  * swapping pnpm-lock.yaml in the working tree for the base revision's copy,
@@ -134,6 +141,25 @@ function runAudit(auditLevel, cwd) {
 }
 
 /**
+ * Distinct from baseHasLockfile: this checks the commit OBJECT itself, not
+ * a path within it. A caller who forgot `fetch-depth: 0` (shallow clone)
+ * has a base commit that's genuinely unreachable — that's a misconfiguration
+ * the gate should fail loudly on, not silently treat the same as a commit
+ * that legitimately predates pnpm-lock.yaml's introduction.
+ * @param {string} baseSha
+ * @param {string} cwd
+ * @returns {boolean} whether baseSha exists in this checkout's history
+ */
+function baseCommitExists(baseSha, cwd) {
+  try {
+    execFileSync("git", ["cat-file", "-e", baseSha], { cwd, stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * @param {string} baseSha
  * @param {string} cwd
  * @returns {boolean} whether pnpm-lock.yaml exists at baseSha
@@ -182,6 +208,13 @@ function main() {
   if (!baseSha) {
     console.log("No base commit to compare against; skipping regression check.");
     process.exit(0);
+  }
+  if (!baseCommitExists(baseSha, cwd)) {
+    console.error(
+      `::error::Base commit ${baseSha} is not reachable in this checkout. ` +
+        "Ensure the caller checks out with fetch-depth: 0 (full history) so the base commit is present.",
+    );
+    process.exit(1);
   }
   if (!baseHasLockfile(baseSha, cwd)) {
     console.log("Base commit has no pnpm-lock.yaml; skipping regression check.");
@@ -233,4 +266,6 @@ export {
   findAdvisoryById,
   formatAdvisoryLine,
   formatAdvisoryLines,
+  baseCommitExists,
+  baseHasLockfile,
 };

@@ -150,7 +150,24 @@ jobs:
           working-directory: ${{ steps.fixture.outputs.fixture-dir }}
           base-sha: ${{ steps.fixture.outputs.base-sha }}
 
-  test-no-base-commit-skips:
+  # There are two distinct "no usable base" cases, and only one is
+  # deterministically reproducible here:
+  #   1. No base sha resolves at all (resolveBaseSha returns null — e.g. a
+  #      workflow_dispatch run, where github.event.before doesn't exist).
+  #      This is a legitimate skip, and is covered by resolveBaseSha's own
+  #      unit tests plus main()'s single early-exit branch on a null result
+  #      — there's no reliable way to force this end-to-end here, since this
+  #      workflow's own triggering event (pull_request/push) always supplies
+  #      a real, truthy base sha from the OUTER repository's context, and a
+  #      `with:` override can't suppress that (an empty base-sha input falls
+  #      straight through to the same event-derived resolution).
+  #   2. A base sha resolves to something real but unreachable in the target
+  #      checkout (e.g. the caller forgot fetch-depth: 0). This is the
+  #      deterministic, trigger-independent case below — and incidentally
+  #      the exact scenario a pull_request-triggered run of this workflow
+  #      exercises implicitly, since the outer PR's own base commit can
+  #      never exist inside a fixture repo built from scratch.
+  test-unreachable-base-sha-fails:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -168,19 +185,10 @@ jobs:
         with:
           node-version: 24.19.0
 
-      - name: Build a fixture repo with only one commit and no base-sha input
+      - name: Build a fixture repo with only one commit
         id: fixture
         env:
-          FIXTURE_DIR: ${{ runner.temp }}/lockfile-audit-no-base
-        # This repo is its own throwaway git history under $RUNNER_TEMP, so
-        # whatever base sha this job's own triggering event resolves to
-        # (this repo's PR base or push before-sha, if any) can never be a
-        # commit that exists here — the "no base to diff against" skip path
-        # is exercised either via that lookup failing, or via no sha
-        # resolving at all on workflow_dispatch. Either way, the advisory
-        # below would fail the check if it were ever compared against
-        # anything, so this job passing proves it's a genuine skip, not an
-        # accidental pass.
+          FIXTURE_DIR: ${{ runner.temp }}/lockfile-audit-unreachable-base
         run: |
           mkdir -p "$FIXTURE_DIR"
           cd "$FIXTURE_DIR"
@@ -188,13 +196,27 @@ jobs:
           git config user.email test@example.com
           git config user.name test
 
-          cp "$GITHUB_WORKSPACE/tests/lockfile-audit/new-advisory/package.json" .
+          cp "$GITHUB_WORKSPACE/tests/lockfile-audit/base/package.json" .
           pnpm install --no-frozen-lockfile
           git add -A
           git commit -q -m only-commit
           echo "fixture-dir=$FIXTURE_DIR" >> "$GITHUB_OUTPUT"
 
-      - name: "Test: nothing to diff against skips the check"
+      - name: "Test: a base-sha absent from this checkout's history fails hard"
+        id: audit
+        continue-on-error: true
         uses: ./lockfile-audit
         with:
           working-directory: ${{ steps.fixture.outputs.fixture-dir }}
+          # Well-formed but unreachable in this fixture's tiny history —
+          # simulates a caller that forgot fetch-depth: 0.
+          base-sha: "ffffffffffffffffffffffffffffffffffffff"
+
+      - name: "Verify: outcome must be failure"
+        env:
+          OUTCOME: ${{ steps.audit.outcome }}
+        run: |
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::Expected lockfile-audit to fail hard when base-sha isn't reachable in this checkout"
+            exit 1
+          fi

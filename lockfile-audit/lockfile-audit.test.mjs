@@ -1,5 +1,9 @@
-import { test, describe } from "node:test";
+import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   resolveBaseSha,
   extractAdvisoryIds,
@@ -7,6 +11,8 @@ import {
   findAdvisoryById,
   formatAdvisoryLine,
   formatAdvisoryLines,
+  baseCommitExists,
+  baseHasLockfile,
 } from "./lockfile-audit.mjs";
 
 const ZERO_SHA = "0000000000000000000000000000000000000000";
@@ -132,5 +138,54 @@ describe("findAdvisoryById / formatAdvisoryLine / formatAdvisoryLines", () => {
       "- GHSA-whgm-jr23-g3j9: Uncontrolled Resource Consumption in ansi-html (module: ansi-html, severity: high)",
       "- GHSA-w5p7-h5w8-2hfq: Regular Expression Denial of Service in trim (module: trim, severity: high)",
     ]);
+  });
+});
+
+describe("baseCommitExists / baseHasLockfile", () => {
+  let repoDir;
+  let noLockfileSha;
+  let withLockfileSha;
+
+  before(() => {
+    repoDir = mkdtempSync(join(tmpdir(), "lockfile-audit-test-"));
+    const git = (...args) => execFileSync("git", args, { cwd: repoDir, stdio: "ignore" });
+    git("init", "-q");
+    git("config", "user.email", "test@example.com");
+    git("config", "user.name", "test");
+
+    // A commit that predates pnpm-lock.yaml's introduction.
+    writeFileSync(join(repoDir, "package.json"), "{}\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "no lockfile yet");
+    noLockfileSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoDir, encoding: "utf8" }).trim();
+
+    writeFileSync(join(repoDir, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "add lockfile");
+    withLockfileSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoDir, encoding: "utf8" }).trim();
+  });
+
+  after(() => {
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  test("baseCommitExists is true for a commit reachable in this checkout", () => {
+    assert.equal(baseCommitExists(withLockfileSha, repoDir), true);
+    assert.equal(baseCommitExists(noLockfileSha, repoDir), true);
+  });
+
+  test("baseCommitExists is false for a sha absent from history (e.g. shallow clone misconfiguration)", () => {
+    // Well-formed but unreachable in this tiny repo's history.
+    const unreachableSha = "f".repeat(40);
+    assert.equal(baseCommitExists(unreachableSha, repoDir), false);
+  });
+
+  test("baseHasLockfile is true when the commit has pnpm-lock.yaml", () => {
+    assert.equal(baseHasLockfile(withLockfileSha, repoDir), true);
+  });
+
+  test("baseHasLockfile is false when the commit predates the lockfile (commit itself still exists)", () => {
+    assert.equal(baseCommitExists(noLockfileSha, repoDir), true);
+    assert.equal(baseHasLockfile(noLockfileSha, repoDir), false);
   });
 });
