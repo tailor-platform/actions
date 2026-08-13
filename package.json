@@ -11,6 +11,7 @@
     "test:lockfile-audit-fix": "node --test lockfile-audit-fix/*.test.mjs",
     "test:create-signed-pr": "node --test create-signed-pr/*.test.mjs",
     "test:cli-bin-contract": "node --test tests/cli-bin-contract.test.mjs",
+    "test:drift-check": "node --test drift-check/*.test.mjs",
     "changeset": "changeset"
   },
   "devDependencies": {

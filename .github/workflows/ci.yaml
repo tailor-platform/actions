@@ -27,6 +27,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test:cli-bin-contract
+      - run: pnpm test:drift-check
 
   actionlint:
     runs-on: ubuntu-latest

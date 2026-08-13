@@ -178,7 +178,7 @@ Guard that a pushed tag is reachable from a target branch before allowing a depl
 
 ### [`drift-check`](drift-check/action.yaml)
 
-Detect drift between the generated GitHub Actions workflows and the current config/repo state. Emits `::warning::` annotations and writes a step summary, but **never fails the job** — use as a non-blocking canary in plan jobs.
+Detect drift between the generated GitHub Actions workflows and the current config/repo state. Drift findings emit `::warning::` annotations and write a step summary without failing the job by default. Set `fail-on-drift` to `true` to fail on unsuppressed findings. Execution and configuration errors always fail the job.
 
 #### Inputs
 
@@ -186,7 +186,8 @@ Detect drift between the generated GitHub Actions workflows and the current conf
 |------|----------|---------|-------------|
 | `package-manager` | Yes | | Package manager (`pnpm`, `npm`, `yarn`, or `bun`) |
 | `working-directory` | No | `.` | Working directory (for monorepo setups) |
-| `ignore` | No | | Comma-separated drift rule keys to suppress (e.g. `"default-branch,template-version"`). Supported keys: `missing-file`, `hand-edit`, `template-version`, `config-dir`, `default-branch` |
+| `ignore` | No | | Comma-separated drift rule keys to suppress (e.g. `"default-branch,template-version"`). Each warning includes its rule key |
+| `fail-on-drift` | No | `false` | Fail the job when the check finds unsuppressed workflow drift |
 
 ---
 
