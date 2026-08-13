@@ -1,0 +1,33 @@
+name: Lint GitHub Actions workflows and action definitions
+description: >-
+  Run zizmor's security audit (missing SHA pins, pull_request_target misuse,
+  script injection via untrusted input, overly broad permissions, etc.)
+  against workflows and action definitions. Requires the repository to be
+  checked out.
+
+inputs:
+  zizmor-advanced-security:
+    description: >-
+      Upload zizmor's findings to the repository's Security tab (GitHub
+      Advanced Security) as SARIF instead of plain workflow annotations.
+      Requires GHAS to be enabled on the repository (free for public repos,
+      license-gated for private ones).
+    required: false
+    default: "false"
+  github-token:
+    description: GitHub token for zizmor's online audits
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: zizmor
+      uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054 # v0.6.2
+      with:
+        token: ${{ inputs.github-token }}
+        advanced-security: ${{ inputs.zizmor-advanced-security }}
+        # zizmor-action rejects annotations: true together with
+        # advanced-security: true, so only request annotations when SARIF
+        # upload is off.
+        annotations: ${{ inputs.zizmor-advanced-security != 'true' }}

@@ -1,0 +1,149 @@
+name: Test Lockfile-Audit-Fix Action
+
+# Each scenario job builds its own throwaway fixture directory under
+# $RUNNER_TEMP and generates a real pnpm-lock.yaml via `pnpm install`, rather
+# than committing one, so it never drifts from the pnpm version these jobs
+# install. Unlike lockfile-audit, this action doesn't diff between two
+# commits, so no git history is needed in the fixture — just a single
+# package.json/pnpm-lock.yaml pair to run `pnpm audit --fix` against.
+#
+# The vulnerable fixture depends on a real, still-flagged npm advisory
+# (trim@0.0.1, GHSA-w5p7-h5w8-2hfq) rather than a fabricated one, since
+# `pnpm audit` resolves against the real registry/advisory API. The exact
+# fixed version pnpm settles on isn't asserted (that's the registry's
+# call, and could drift) — only that a fix was attempted.
+
+on:
+  pull_request:
+    paths:
+      - "lockfile-audit-fix/**"
+      - "tests/lockfile-audit-fix/**"
+      - ".github/workflows/test-lockfile-audit-fix.yaml"
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+
+      - name: Run unit tests
+        run: node --test lockfile-audit-fix/*.test.mjs
+
+  test-no-advisories-reports-no-changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 11.17.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+
+      - name: Build a fixture with no known-vulnerable dependencies
+        id: fixture
+        env:
+          FIXTURE_DIR: ${{ runner.temp }}/lockfile-audit-fix-clean
+        run: |
+          mkdir -p "$FIXTURE_DIR"
+          cp "$GITHUB_WORKSPACE/tests/lockfile-audit-fix/clean/package.json" "$FIXTURE_DIR/"
+          cd "$FIXTURE_DIR"
+          pnpm install --no-frozen-lockfile
+          echo "fixture-dir=$FIXTURE_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: "Test: a clean lockfile reports no changes"
+        id: fix
+        uses: ./lockfile-audit-fix
+        with:
+          working-directory: ${{ steps.fixture.outputs.fixture-dir }}
+
+      - name: "Verify: changed must be false"
+        env:
+          CHANGED: ${{ steps.fix.outputs.changed }}
+          RUNTIME_DEPS_CHANGED: ${{ steps.fix.outputs.runtime-deps-changed }}
+        run: |
+          if [ "$CHANGED" != "false" ]; then
+            echo "::error::Expected changed=false for a lockfile with no advisories, got '$CHANGED'"
+            exit 1
+          fi
+          if [ "$RUNTIME_DEPS_CHANGED" != "false" ]; then
+            echo "::error::Expected runtime-deps-changed=false for a lockfile with no advisories, got '$RUNTIME_DEPS_CHANGED'"
+            exit 1
+          fi
+
+  test-fixable-advisory-updates-lockfile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 11.17.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+
+      - name: Build a fixture with a known-fixable advisory
+        id: fixture
+        env:
+          FIXTURE_DIR: ${{ runner.temp }}/lockfile-audit-fix-vulnerable
+        run: |
+          mkdir -p "$FIXTURE_DIR"
+          cp "$GITHUB_WORKSPACE/tests/lockfile-audit-fix/vulnerable/package.json" "$FIXTURE_DIR/"
+          cd "$FIXTURE_DIR"
+          pnpm install --no-frozen-lockfile
+          cp pnpm-lock.yaml /tmp/lockfile-before-fix.yaml
+          echo "fixture-dir=$FIXTURE_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: "Test: a fixable advisory produces a lockfile change and a summary"
+        id: fix
+        uses: ./lockfile-audit-fix
+        with:
+          working-directory: ${{ steps.fixture.outputs.fixture-dir }}
+
+      - name: "Verify: changed must be true, the lockfile must differ, and the summary must be non-empty"
+        env:
+          CHANGED: ${{ steps.fix.outputs.changed }}
+          SUMMARY: ${{ steps.fix.outputs.summary }}
+          FIXTURE_DIR: ${{ steps.fixture.outputs.fixture-dir }}
+        run: |
+          if [ "$CHANGED" != "true" ]; then
+            echo "::error::Expected changed=true for a lockfile with a fixable advisory, got '$CHANGED'"
+            exit 1
+          fi
+          if git diff --no-index --quiet /tmp/lockfile-before-fix.yaml "$FIXTURE_DIR/pnpm-lock.yaml"; then
+            echo "::error::Expected pnpm-lock.yaml to differ after the fix"
+            exit 1
+          fi
+          if [ -z "$SUMMARY" ]; then
+            echo "::error::Expected a non-empty summary when changed=true"
+            exit 1
+          fi

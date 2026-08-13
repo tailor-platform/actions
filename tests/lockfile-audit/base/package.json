@@ -1,0 +1,8 @@
+{
+  "name": "lockfile-audit-fixture-base",
+  "private": true,
+  "description": "Depends only on trim@0.0.1 (GHSA-w5p7-h5w8-2hfq), simulating a pre-existing advisory that must not fail the regression check on its own.",
+  "dependencies": {
+    "trim": "0.0.1"
+  }
+}

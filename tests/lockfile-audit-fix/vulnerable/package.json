@@ -1,0 +1,7 @@
+{
+  "name": "lockfile-audit-fix-vulnerable-fixture",
+  "private": true,
+  "dependencies": {
+    "trim": "0.0.1"
+  }
+}

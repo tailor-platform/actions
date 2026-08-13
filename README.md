@@ -440,6 +440,187 @@ resource "github_actions_organization_variable" "denied_licenses" {
 
 ---
 
+### [`lockfile-audit`](lockfile-audit/action.yaml)
+
+Regression-only gate against `pnpm-lock.yaml` changes: fails only when a pull request or push introduces a security advisory that wasn't already present in the lockfile at the base commit. Pre-existing advisories elsewhere in the lockfile don't block unrelated changes — pair this with a scheduled `pnpm audit --fix` workflow (run independent of any PR) to clear those over time.
+
+**Prerequisites:** The caller is responsible for checkout (with `fetch-depth: 0` — the base commit's lockfile must be reachable) and pnpm setup. `pnpm audit` resolves advisories from the lockfile alone, so no dependency install is needed. A resolved base commit that isn't reachable in the checkout (most commonly a missing `fetch-depth: 0`) fails the job outright rather than silently skipping — silently no-op'ing would defeat the gate for exactly the callers who most need it.
+
+#### Usage
+
+```yaml
+jobs:
+  lockfile-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - uses: tailor-platform/actions/lockfile-audit@v2
+```
+
+#### Inputs
+
+| Name | Required | Default | Description |
+|------|----------|---------|-------------|
+| `audit-level` | No | `moderate` | Minimum severity to report, passed through to `pnpm audit --audit-level`. One of `low`, `moderate`, `high`, `critical`. |
+| `base-sha` | No | | Commit to diff the lockfile against, overriding the default auto-detection (the pull request's base commit, or the pushed ref's previous tip). Mainly for `workflow_dispatch` runs, where neither of those is available from the event payload. |
+| `working-directory` | No | `.` | Working directory containing `pnpm-lock.yaml` (for monorepo setups) |
+
+---
+
+### [`lockfile-audit-fix`](lockfile-audit-fix/action.yaml)
+
+Runs `pnpm audit --fix` against `pnpm-lock.yaml` (update mode, falling back to override mode when update alone can't clear an advisory), verifying the result still installs before keeping it. Meant for a standalone scheduled/dispatched workflow that clears pre-existing advisories independent of any specific PR — pair with `lockfile-audit`'s regression-only gate, which only blocks *new* advisories.
+
+This action does not commit or open a pull request; it only fixes the lockfile in the working tree and reports what changed. Pair it with a commit/PR step of your own so you control where a changeset gets inserted (if `runtime-deps-changed` calls for one).
+
+**Prerequisites:** The caller is responsible for checkout and pnpm setup.
+
+#### Usage
+
+```yaml
+jobs:
+  lockfile-audit-fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - uses: tailor-platform/actions/lockfile-audit-fix@v2
+        id: fix
+      # commit pnpm-lock.yaml / pnpm-workspace.yaml / package.json and open
+      # a PR yourself when steps.fix.outputs.changed == 'true'
+```
+
+#### Inputs
+
+| Name | Required | Default | Description |
+|------|----------|---------|-------------|
+| `audit-level` | No | `moderate` | Minimum severity to report, passed through to `pnpm audit --audit-level`. One of `low`, `moderate`, `high`, `critical`. |
+| `working-directory` | No | `.` | Working directory containing `pnpm-lock.yaml` (for monorepo setups) |
+
+#### Outputs
+
+| Name | Description |
+|------|-------------|
+| `changed` | `'true'` if `pnpm-lock.yaml`, `pnpm-workspace.yaml`, and/or `package.json` changed — pnpm writes an override it can't express as a plain version bump to `pnpm-workspace.yaml` (creating it if it doesn't exist) or to `package.json`'s `pnpm.overrides`, depending on pnpm version and whether the repo already has a `pnpm-workspace.yaml` |
+| `runtime-deps-changed` | `'true'` if any non-private package's runtime (non-dev) dependencies changed, per `pnpm-lock.yaml` — devDependencies-only and `pnpm-workspace.yaml`/`package.json`-overrides-only changes don't affect consumers |
+| `changed-names` | Newline-separated names of packages whose runtime dependencies changed |
+| `summary` | Markdown summary of fixed and remaining advisories, for use as a PR body |
+
+---
+
+### [`create-signed-pr`](create-signed-pr/action.yaml)
+
+Commits a known, bounded list of file paths via GitHub's Git Data API (blob -> tree -> commit -> ref) and idempotently creates or updates a pull request for them — without running `git commit` locally or depending on a third-party action. Pair with `lockfile-audit-fix` (or any step that leaves modified files in the working tree) to open a PR for the result.
+
+Commits created this way are automatically shown as "Verified" on GitHub when using the default `GITHUB_TOKEN` or a GitHub App installation token, satisfying a `required_signatures` branch protection rule with no GPG key material. A classic/fine-grained PAT still works but produces unsigned commits.
+
+This is deliberately **not** a general-purpose alternative to [`peter-evans/create-pull-request`](https://github.com/peter-evans/create-pull-request): `paths` must be a known, caller-supplied list of files that already exist in the checkout (e.g. files a prior step just modified), not an arbitrary repo-wide diff — this action never inspects the working tree's git status, doesn't support deletions, and reads each listed path directly.
+
+Each run re-parents the new commit on the base branch's *current* head and force-moves the target branch to it, so the branch always holds a single commit rebased on the latest base. A consequence: any commit a human pushed to that branch directly is discarded on the next run — same behavior as `peter-evans/create-pull-request`'s default mode.
+
+**A pull request created with the default `GITHUB_TOKEN` does not trigger `pull_request`-triggered workflows** (GitHub suppresses recursive workflow runs from its own token) — the created PR gets no CI. Use a GitHub App installation token instead if the PR needs to run your normal CI.
+
+**Prerequisites:** The caller is responsible for checkout and setting up Node.js (e.g. `actions/setup-node`) — unlike `lockfile-audit`/`lockfile-audit-fix`, this action doesn't otherwise depend on pnpm. The token needs `contents: write` and `pull-requests: write` permissions, and the repository's **Settings → Actions → General → Workflow permissions → "Allow GitHub Actions to create and approve pull requests"** must be enabled — GitHub rejects PR creation from `GITHUB_TOKEN` with a 403 otherwise (confirmed against a real repository: the commit and branch are created successfully, and PR creation is the step that fails).
+
+#### Usage
+
+```yaml
+jobs:
+  lockfile-audit-fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - uses: tailor-platform/actions/lockfile-audit-fix@v2
+        id: fix
+      - uses: tailor-platform/actions/create-signed-pr@v2
+        if: steps.fix.outputs.changed == 'true'
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          paths: |
+            pnpm-lock.yaml
+            pnpm-workspace.yaml
+          branch: chore/lockfile-audit-fix
+          commit-message: "fix(deps): automated lockfile security fix"
+          title: "fix(deps): automated lockfile security fix"
+          body: ${{ steps.fix.outputs.summary }}
+          labels: |
+            security
+```
+
+#### Inputs
+
+| Name | Required | Default | Description |
+|------|----------|---------|-------------|
+| `token` | Yes | | GitHub token with `contents: write` and `pull-requests: write` permissions. `GITHUB_TOKEN` or a GitHub App installation token for Verified (signed) commits; a PAT works but produces unsigned commits. |
+| `paths` | Yes | | Newline-separated list of repo-root-relative file paths to commit. Each must exist in the local checkout. |
+| `branch` | Yes | | Branch to create or force-update with the new commit. |
+| `base` | No | (repository default branch) | Base branch to commit onto and open the pull request against. |
+| `commit-message` | Yes | | Commit message for the new commit. |
+| `title` | Yes | | Pull request title. |
+| `body` | No | `""` | Pull request body. |
+| `labels` | No | `""` | Newline-separated list of labels to add to the pull request. Each label must already exist in the repository; a failure here is logged as a warning rather than failing the action, since the commit and PR are already created by this point. |
+| `api-base-url` | No | `""` | Override the GitHub REST API base URL (e.g. for GHES, or to point at a test double). Defaults to `$GITHUB_API_URL`, then `https://api.github.com`. |
+
+#### Outputs
+
+| Name | Description |
+|------|-------------|
+| `changed` | `'true'` if a new commit was created (the tree differed from the base branch's) |
+| `pull-request-number` | The pull request's number, or empty if none exists |
+| `pull-request-url` | The pull request's URL, or empty if none exists |
+| `commit-sha` | The new commit's sha, or empty if nothing changed |
+
+---
+
+### [`lint-github-actions`](lint-github-actions/action.yaml)
+
+Run [zizmor](https://docs.zizmor.sh/)'s security audit — missing SHA pins, `pull_request_target` misuse, script injection via untrusted input, overly broad permissions, etc. — against this repository's workflows and action definitions.
+
+**Prerequisites:** The caller is responsible for checkout.
+
+#### Usage
+
+```yaml
+jobs:
+  lint-github-actions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: tailor-platform/actions/lint-github-actions@v2
+```
+
+#### Inputs
+
+| Name | Required | Default | Description |
+|------|----------|---------|-------------|
+| `zizmor-advanced-security` | No | `false` | Upload zizmor's findings to the repository's Security tab (GitHub Advanced Security) as SARIF instead of plain workflow annotations. Requires GHAS to be enabled on the repository. |
+| `github-token` | No | `${{ github.token }}` | GitHub token for zizmor's online audits |
+
+---
+
 ### [`preview-cleanup`](preview-cleanup/action.yaml)
 
 Delete the preview workspace when a PR is closed. Reads the workspace ID from the PR comment posted by `preview-comment` and deletes the workspace. Run on `pull_request` `closed` events.

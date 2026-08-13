@@ -1,0 +1,112 @@
+name: Create a pull request with signed commits, without a third-party action
+description: >-
+  Commits a known, bounded list of file paths via GitHub's Git Data API
+  (blob -> tree -> commit -> ref) and idempotently creates or updates a pull
+  request for them, without running `git commit` locally or depending on a
+  third-party action. Commits created this way are automatically shown as
+  "Verified" on GitHub when using the default GITHUB_TOKEN or a GitHub App
+  installation token, satisfying a `required_signatures` branch protection
+  rule; a classic/fine-grained PAT still works but produces unsigned
+  commits. Not a general-purpose alternative to
+  peter-evans/create-pull-request: `paths` must be a known, caller-supplied
+  list (e.g. files a prior step already modified), not an arbitrary
+  repo-wide diff. Each run re-parents the commit on the base branch's
+  current head and force-moves the target branch to it, so the branch
+  always holds a single commit rebased on the latest base — any commit a
+  human pushed to that branch directly is discarded on the next run. A pull
+  request created with the default GITHUB_TOKEN does not trigger
+  `pull_request`-triggered workflows (GitHub suppresses recursive runs from
+  its own token); use a GitHub App installation token if the created PR
+  needs to run your normal CI. Requires Node.js on PATH (e.g. via
+  actions/setup-node) — unlike lockfile-audit and lockfile-audit-fix, this
+  action doesn't otherwise depend on pnpm. The repository's Settings ->
+  Actions -> General -> Workflow permissions -> "Allow GitHub Actions to
+  create and approve pull requests" must be enabled, or GitHub rejects PR
+  creation from GITHUB_TOKEN with a 403 (the commit and branch are still
+  created successfully; only the PR-creation step fails).
+
+inputs:
+  token:
+    description: >-
+      GitHub token with `contents: write` and `pull-requests: write`
+      permissions. GITHUB_TOKEN or a GitHub App installation token for
+      Verified (signed) commits; a PAT works but produces unsigned commits.
+    required: true
+  paths:
+    description: >-
+      Newline-separated list of repo-root-relative file paths to commit.
+      Each path must exist in the local checkout (read from
+      $GITHUB_WORKSPACE) — this action does not diff the working tree or
+      support deletions.
+    required: true
+  branch:
+    description: Branch to create or force-update with the new commit.
+    required: true
+  base:
+    description: >-
+      Base branch to commit onto and open the pull request against.
+      Defaults to the repository's default branch.
+    required: false
+    default: ""
+  commit-message:
+    description: Commit message for the new commit.
+    required: true
+  title:
+    description: Pull request title.
+    required: true
+  body:
+    description: Pull request body.
+    required: false
+    default: ""
+  labels:
+    description: >-
+      Newline-separated list of labels to add to the pull request. Each
+      label must already exist in the repository — GitHub's API rejects
+      unknown label names, and a failure here is logged as a warning
+      rather than failing the action, since the commit and pull request
+      are already created by this point.
+    required: false
+    default: ""
+  api-base-url:
+    description: >-
+      Override the GitHub REST API base URL (e.g. for GHES, or to point at
+      a test double). Defaults to $GITHUB_API_URL, then
+      https://api.github.com. A workflow-level `env: GITHUB_API_URL: ...`
+      override does NOT work for this purpose — it's one of the reserved
+      variables the Actions runner injects into every step itself,
+      discarding a user-level override before the step runs; this input
+      exists specifically because that variable isn't overridable.
+    required: false
+    default: ""
+
+outputs:
+  changed:
+    description: "'true' if a new commit was created (the tree differed from the base branch's)"
+    value: ${{ steps.create.outputs.changed }}
+  pull-request-number:
+    description: The pull request's number, or empty if none exists
+    value: ${{ steps.create.outputs.pull-request-number }}
+  pull-request-url:
+    description: The pull request's URL, or empty if none exists
+    value: ${{ steps.create.outputs.pull-request-url }}
+  commit-sha:
+    description: The new commit's sha, or empty if nothing changed
+    value: ${{ steps.create.outputs.commit-sha }}
+
+runs:
+  using: composite
+  steps:
+    - name: Create signed commit and pull request
+      id: create
+      shell: bash
+      env:
+        TOKEN: ${{ inputs.token }}
+        PATHS: ${{ inputs.paths }}
+        BRANCH: ${{ inputs.branch }}
+        BASE: ${{ inputs.base }}
+        COMMIT_MESSAGE: ${{ inputs.commit-message }}
+        TITLE: ${{ inputs.title }}
+        BODY: ${{ inputs.body }}
+        LABELS: ${{ inputs.labels }}
+        API_BASE_URL: ${{ inputs.api-base-url }}
+      run: node "${{ github.action_path }}/create-signed-pr.mjs"

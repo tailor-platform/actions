@@ -1,0 +1,80 @@
+name: Test Lint-GitHub-Actions Action
+
+# Each job checks out this repository as usual, then replaces
+# .github/workflows in the *runner's* ephemeral copy with a single fixture
+# workflow before invoking the action under test — a `uses:` step can't be
+# scoped to a subdirectory the way a `run:` step's working-directory can, so
+# this is what actually exercises zizmor exactly as a real caller's CI
+# would, against a target with a known, isolated finding (or lack of one).
+# This never touches the actual repository; it only edits the checkout
+# inside this job's throwaway workspace.
+#
+# Fixtures live under tests/lint-github-actions/<name>/ci.yaml rather than
+# tests/lint-github-actions/<name>/.github/workflows/ci.yaml, so this
+# repository's own top-level ci.yaml's zizmor job (which recursively scans
+# every .github/workflows directory and action.y*ml file in the tree)
+# doesn't treat these deliberately-broken fixtures as real findings against
+# itself.
+
+on:
+  pull_request:
+    paths:
+      - "lint-github-actions/**"
+      - "tests/lint-github-actions/**"
+      - ".github/workflows/test-lint-github-actions.yaml"
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  test-clean-passes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Swap in the clean fixture
+        run: |
+          rm -rf .github/workflows
+          mkdir -p .github/workflows
+          cp tests/lint-github-actions/clean/ci.yaml .github/workflows/
+
+      - name: "Test: a clean workflow passes"
+        uses: ./lint-github-actions
+
+  test-unpinned-action-fails:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Swap in the unpinned-action fixture
+        run: |
+          rm -rf .github/workflows
+          mkdir -p .github/workflows
+          cp tests/lint-github-actions/unpinned-action/ci.yaml .github/workflows/
+
+      - name: "Test: a floating-tag uses: fails zizmor"
+        id: lint
+        continue-on-error: true
+        uses: ./lint-github-actions
+
+      - name: "Verify: outcome must be failure"
+        env:
+          OUTCOME: ${{ steps.lint.outcome }}
+        run: |
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::Expected lint-github-actions to fail on a floating-tag uses:"
+            exit 1
+          fi

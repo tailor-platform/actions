@@ -1,0 +1,55 @@
+name: Audit and auto-fix pnpm lockfile vulnerabilities
+description: >-
+  Run `pnpm audit --fix` (update mode, falling back to override mode when
+  update alone can't clear an advisory) against pnpm-lock.yaml, verifying the
+  result still installs before keeping it. Reports whether the lockfile
+  changed, whether the change touched a published package's runtime
+  dependencies (as opposed to devDependencies-only or pnpm-workspace.yaml-only
+  changes), and a markdown summary of fixed/remaining advisories. Requires
+  pnpm and Node.js to be set up by the caller. Does not commit or open a pull
+  request — pair it with a caller-provided commit/PR step so the point where
+  a changeset gets inserted (if the runtime-deps-changed output calls for one)
+  stays under the caller's control.
+
+inputs:
+  audit-level:
+    description: >-
+      Minimum severity to report, passed through to `pnpm audit
+      --audit-level`. One of low, moderate, high, critical.
+    required: false
+    default: moderate
+  working-directory:
+    description: Working directory containing pnpm-lock.yaml (for monorepo setups)
+    required: false
+    default: "."
+
+outputs:
+  changed:
+    description: >-
+      'true' if pnpm-lock.yaml, pnpm-workspace.yaml, and/or package.json
+      changed (pnpm may write an override it can't express as a plain
+      version bump to either pnpm-workspace.yaml or package.json's
+      `pnpm.overrides`, depending on pnpm version)
+    value: ${{ steps.fix.outputs.changed }}
+  runtime-deps-changed:
+    description: >-
+      'true' if any non-private package's runtime (non-dev) dependencies
+      changed
+    value: ${{ steps.fix.outputs.runtime-deps-changed }}
+  changed-names:
+    description: Newline-separated names of packages whose runtime dependencies changed
+    value: ${{ steps.fix.outputs.changed-names }}
+  summary:
+    description: Markdown summary of fixed and remaining advisories, for use as a PR body
+    value: ${{ steps.fix.outputs.summary }}
+
+runs:
+  using: composite
+  steps:
+    - name: Audit and fix
+      id: fix
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        AUDIT_LEVEL: ${{ inputs.audit-level }}
+      run: node "${{ github.action_path }}/lockfile-audit-fix.mjs"
