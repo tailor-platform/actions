@@ -6,6 +6,21 @@ description: >-
   checked out.
 
 inputs:
+  paths:
+    description: >-
+      List of paths to audit, passed through unquoted to zizmor-action's
+      `inputs` and split there by the shell's default word-splitting rules —
+      so either spaces or newlines between paths work as separators
+      (interchangeably, and either can be used to list multiple paths).
+      Defaults to the whole repository. Use this to scope the audit to just
+      the files changed in a PR (e.g. the output of a changed-files action,
+      space- or newline-separated). Passing an empty string is NOT the same
+      as omitting this input — it overrides the "." default and gives zizmor
+      no paths to audit, which fails the run. When pairing this with a
+      changed-files action, guard the step with `if:` so it's skipped
+      entirely when no matching files changed.
+    required: false
+    default: "."
   zizmor-advanced-security:
     description: >-
       Upload zizmor's findings to the repository's Security tab (GitHub
@@ -25,6 +40,7 @@ runs:
     - name: zizmor
       uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054 # v0.6.2
       with:
+        inputs: ${{ inputs.paths }}
         token: ${{ inputs.github-token }}
         advanced-security: ${{ inputs.zizmor-advanced-security }}
         # zizmor-action rejects annotations: true together with

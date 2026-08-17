@@ -78,3 +78,41 @@ jobs:
             echo "::error::Expected lint-github-actions to fail on a floating-tag uses:"
             exit 1
           fi
+
+  test-paths-filters-to-given-files:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Put both the clean and unpinned-action fixtures in place
+        run: |
+          rm -rf .github/workflows
+          mkdir -p .github/workflows
+          cp tests/lint-github-actions/clean/ci.yaml .github/workflows/clean.yaml
+          cp tests/lint-github-actions/unpinned-action/ci.yaml .github/workflows/unpinned-action.yaml
+
+      - name: "Test: paths scoped to only the clean file passes despite the broken one being present"
+        uses: ./lint-github-actions
+        with:
+          paths: .github/workflows/clean.yaml
+
+      - name: "Test: paths scoped to the broken file fails"
+        id: lint
+        continue-on-error: true
+        uses: ./lint-github-actions
+        with:
+          paths: .github/workflows/unpinned-action.yaml
+
+      - name: "Verify: outcome must be failure"
+        env:
+          OUTCOME: ${{ steps.lint.outcome }}
+        run: |
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::Expected lint-github-actions to fail when paths targets the floating-tag fixture"
+            exit 1
+          fi

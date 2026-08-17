@@ -613,10 +613,40 @@ jobs:
       - uses: tailor-platform/actions/lint-github-actions@v2
 ```
 
+To lint only the workflow/action files changed in a PR instead of the whole
+repository, pass `paths` — a list of paths forwarded as-is to zizmor, which
+splits it on whitespace, so both space- and newline-separated lists work
+(you can use whichever the upstream changed-files action produces). Guard
+the step with `if:` so it's skipped when nothing matching changed — an empty
+`paths` string is not the same as omitting it and would make zizmor fail
+with no files to audit:
+
+```yaml
+jobs:
+  lint-github-actions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: tj-actions/changed-files@v46
+        id: changed
+        with:
+          files: |
+            .github/workflows/**
+            **/action.yaml
+      - uses: tailor-platform/actions/lint-github-actions@v2
+        if: steps.changed.outputs.any_changed == 'true'
+        with:
+          paths: ${{ steps.changed.outputs.all_changed_files }}
+```
+
 #### Inputs
 
 | Name | Required | Default | Description |
 |------|----------|---------|-------------|
+| `paths` | No | `.` | List of paths to audit — space- or newline-separated, either works. Defaults to the whole repository; pass the output of a changed-files action to lint only changed files. An empty string is not the same as omitting this input — it makes zizmor fail with no paths to audit, so guard the step with `if:` instead. |
 | `zizmor-advanced-security` | No | `false` | Upload zizmor's findings to the repository's Security tab (GitHub Advanced Security) as SARIF instead of plain workflow annotations. Requires GHAS to be enabled on the repository. |
 | `github-token` | No | `${{ github.token }}` | GitHub token for zizmor's online audits |
 
