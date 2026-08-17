@@ -1,5 +1,14 @@
 # tailor-platform-actions
 
+## 2.3.0
+
+### Minor Changes
+
+- 1d4ecc5: `lint-github-actions` now accepts a `paths` input (a space- or
+  newline-separated list, forwarded to zizmor), so callers can scope the
+  audit to just the workflow/action files changed in a PR instead of always
+  auditing the whole repository.
+
 ## 2.2.0
 
 ### Minor Changes
