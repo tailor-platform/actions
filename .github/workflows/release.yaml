@@ -34,19 +34,28 @@ jobs:
       # package.json/CHANGELOG.md — no tag, no release yet. With none (that PR having
       # merged), runs `changeset publish` instead: this package is `"private": true`
       # and `.changeset/config.json`'s `privatePackages.tag: true` tells it to skip an
-      # actual npm publish but still create the git tag — changesets/action (v1.9.0)
+      # actual npm publish but still create the git tag — changesets/action (v2.0.0)
       # detects the "New tag:" line this prints, then pushes that tag itself and
       # creates the GitHub release, generating notes from CHANGELOG.md, the same
       # tested path used for real npm publishes.
       #
-      # commitMode github-api makes the bot's commits (on the Version Packages PR
-      # branch, and the tag pushed after `changeset publish`) verified/GPG-signed, so
-      # they aren't blocked by main's required-signatures rule when that PR is merged
-      # (the default git-cli mode pushes unsigned commits). Note: this action's input
-      # and output names are camelCase (commitMode, publish, publishedPackages), not
-      # the kebab-case used by its own `main` branch docs — GitHub Actions silently
-      # ignores a `with:` key an action doesn't declare, so a casing mismatch here
-      # doesn't error, it just no-ops.
+      # push-with-git-cli: false (the default) makes the bot's commits (on the Version
+      # Packages PR branch, and the tag pushed after `changeset publish`)
+      # verified/GPG-signed via the GitHub API, so they aren't blocked by main's
+      # required-signatures rule when that PR is merged (setting this to true would
+      # push unsigned commits via the git CLI instead). Set explicitly here as
+      # documentation of intent, even though it matches the action's default.
+      #
+      # This action's input and output names went from camelCase (commitMode,
+      # publish, publishedPackages) in v1.9.0 to kebab-case (push-with-git-cli,
+      # publish-script, published-packages) in v2.0.0 — a breaking rename, not just a
+      # docs update. GitHub Actions silently ignores a `with:` key an action doesn't
+      # declare, so a stale camelCase key here wouldn't error, it would just no-op
+      # (this bit us once during the v1.9.0 -> v2.0.0 upgrade: `publish` being
+      # silently dropped meant `changeset publish` never ran, so no tag/release was
+      # ever created, with no CI failure to signal it). Always check the input/output
+      # names against the actual pinned commit's `action.yml`, not assumptions carried
+      # over from a previous version.
       #
       # Deliberately no `concurrency:` group on this job: GitHub's concurrency queue
       # keeps only the latest *pending* run per group and cancels older ones, which
@@ -56,10 +65,10 @@ jobs:
       # loudly) and self-corrects on the next push, rather than silently losing a
       # release.
       - id: changesets
-        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
+        uses: changesets/action@22ccf9aa43179fe9e27dc62e575971d28cce197c # v2.0.0
         with:
-          commitMode: github-api
-          publish: pnpm exec changeset publish
+          push-with-git-cli: false
+          publish-script: pnpm exec changeset publish
 
       # A release created with this job's own GITHUB_TOKEN doesn't fire
       # update-major-tag.yaml's `release: published` trigger, so it can't rely on that
@@ -70,6 +79,6 @@ jobs:
         if: steps.changesets.outputs.published == 'true'
         uses: ./.github/actions/update-major-tag
         with:
-          release-tag: v${{ fromJson(steps.changesets.outputs.publishedPackages)[0].version }}
+          release-tag: v${{ fromJson(steps.changesets.outputs['published-packages'])[0].version }}
           ref: ${{ github.sha }}
           github-token: ${{ github.token }}

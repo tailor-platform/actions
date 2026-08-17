@@ -35,7 +35,7 @@ in the branch it triggers on and that branch's own pinned pnpm version.
    "Version Packages" PR that bumps `package.json`'s version and `CHANGELOG.md` from
    the accumulated changesets. Merge it like any other PR (review required).
 3. Once that PR merges (no pending changesets left), the same workflow runs
-   `changeset publish` as its `publish` command. This package is `"private": true`,
+   `changeset publish` as its `publish-script` command. This package is `"private": true`,
    and `.changeset/config.json`'s `privatePackages.tag: true` tells `changeset publish`
    to skip an actual npm publish but still create the git tag for the new version.
    `changesets/action` detects that and creates the GitHub release itself from the
@@ -60,12 +60,15 @@ in the branch it triggers on and that branch's own pinned pnpm version.
   alternative (rare) risk of two truly concurrent runs racing to push to the same
   Version Packages PR branch is self-evident (one push fails loudly) and self-corrects
   on the next push, rather than silently losing a release.
-- `changesets/action`'s inputs/outputs are camelCase (`commitMode`, `publish`,
-  `publishedPackages`) at the pinned `v1.9.0` — its own `main` branch docs use a newer,
-  unreleased kebab-case naming (`commit-mode`, `publish-script`, `published-packages`).
-  Passing the wrong casing doesn't error since GitHub Actions silently ignores a
-  `with:` key an action doesn't declare — always check the input/output names against
-  the actual pinned commit's `action.yml`, not the action's default-branch docs.
+- `changesets/action`'s inputs/outputs are kebab-case (`push-with-git-cli`,
+  `publish-script`, `published-packages`) at the pinned `v2.0.0`. They were camelCase
+  (`commitMode`, `publish`, `publishedPackages`) at the previously pinned `v1.9.0` — a
+  breaking rename, not just a docs update, and it bit us once during that upgrade: a
+  stale camelCase key doesn't error since GitHub Actions silently ignores a `with:`
+  key an action doesn't declare, so `publish` being silently dropped meant
+  `changeset publish` never ran and no tag/release was ever created, with no CI
+  failure to signal it. Always check the input/output names against the actual pinned
+  commit's `action.yml`, not assumptions carried over from a previous version.
 - For breaking changes, use a `major` changeset (e.g. bumps `2.x.y` -> `3.0.0`). Update
   README usage examples to reference the new major tag, and branch the outgoing major
   version into its own `maintenance/vN` branch first (see `maintenance/v1` for the
