@@ -183,17 +183,24 @@ function runFix(mode, cwd) {
  * lockfile is already "up to date" for package.json/pnpm-workspace.yaml —
  * the exact state a scheduled run with no new advisory to fix leaves it
  * in. The follow-up `dedupe` always re-resolves, so it's what actually
- * prunes a stale exclude entry in that case — skipped when there's no
- * pnpm-workspace.yaml at all, since then there's nothing it could prune.
+ * prunes a stale exclude entry in that case. Skipped unless
+ * pnpm-workspace.yaml actually mentions `minimumReleaseAgeExclude` (a
+ * plain substring check, not full parsing — this action otherwise never
+ * reads that file): with nothing there to prune, the extra resolver pass
+ * would only add cost and risk an unrelated duplicate-version cleanup
+ * `dedupe` might also make along the way.
  * @param {string} cwd
  */
 function verifyInstallable(cwd) {
   const pruneFlag = "--config.minimum-release-age-exclude-prune=true";
   const opts = { cwd, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 1024 * 1024 * 64 };
+  const workspacePath = join(cwd, "pnpm-workspace.yaml");
+  const hasExcludesToPrune =
+    existsSync(workspacePath) && readFileSync(workspacePath, "utf8").includes("minimumReleaseAgeExclude");
   let step = "install";
   try {
     execFileSync("pnpm", ["install", "--no-frozen-lockfile", "--ignore-scripts", pruneFlag], opts);
-    if (existsSync(join(cwd, "pnpm-workspace.yaml"))) {
+    if (hasExcludesToPrune) {
       step = "dedupe";
       execFileSync("pnpm", ["dedupe", "--ignore-scripts", pruneFlag], opts);
     }
@@ -399,7 +406,7 @@ function main() {
     fallback = snapshot();
   } catch (e) {
     console.log(
-      `::warning::pnpm install failed after the update-mode fix; reverting pnpm-lock.yaml, pnpm-workspace.yaml, and package.json to their original state. ${e.message}`,
+      `::warning::pnpm verification failed after the update-mode fix; reverting pnpm-lock.yaml, pnpm-workspace.yaml, and package.json to their original state. ${e.message}`,
     );
     restore(original);
   }
@@ -413,7 +420,7 @@ function main() {
     // result that may never have existed.
     const revertTarget = fallback === original ? "their original state" : "the update-mode-only result";
     console.log(
-      `::warning::pnpm install failed after the override fallback; reverting pnpm-lock.yaml, pnpm-workspace.yaml, and package.json to ${revertTarget}. ${e.message}`,
+      `::warning::pnpm verification failed after the override fallback; reverting pnpm-lock.yaml, pnpm-workspace.yaml, and package.json to ${revertTarget}. ${e.message}`,
     );
     restore(fallback);
   }
