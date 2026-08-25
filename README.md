@@ -480,8 +480,6 @@ jobs:
 
 Runs `pnpm audit --fix` against `pnpm-lock.yaml` (update mode, falling back to override mode when update alone can't clear an advisory), verifying the result still installs before keeping it. Meant for a standalone scheduled/dispatched workflow that clears pre-existing advisories independent of any specific PR — pair with `lockfile-audit`'s regression-only gate, which only blocks *new* advisories.
 
-Also sweeps `pnpm-workspace.yaml`'s `minimumReleaseAgeExclude` and `overrides` lists of entries that have outlived their purpose (collapsing overlapping entries for the same package, dropping `overrides` whose package left the dependency tree, and dropping `minimumReleaseAgeExclude` entries once the version they bypass is old enough on its own) — nothing else, Renovate included, ever removes an entry from either list once this action adds it, so this runs on every invocation, even when there's nothing new to fix.
-
 This action does not commit or open a pull request; it only fixes the lockfile in the working tree and reports what changed. Pair it with a commit/PR step of your own so you control where a changeset gets inserted (if `runtime-deps-changed` calls for one).
 
 **Prerequisites:** The caller is responsible for checkout and pnpm setup.
