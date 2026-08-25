@@ -1,0 +1,7 @@
+{
+  "name": "lockfile-audit-fix-stale-exclude-fixture",
+  "private": true,
+  "dependencies": {
+    "is-odd": "3.0.1"
+  }
+}

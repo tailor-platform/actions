@@ -250,6 +250,9 @@ describe("buildSummary", () => {
  *   FAKE_PNPM_INSTALL_FAIL_<n>     - "1" makes the n-th `pnpm install` call
  *                                    (1-indexed: 1 = after update,
  *                                    2 = after override) fail
+ *   FAKE_PNPM_DEDUPE_FAIL_<n>      - same, for the n-th `pnpm dedupe` call
+ *                                    (only made when pnpm-workspace.yaml
+ *                                    mentions minimumReleaseAgeExclude)
  *   FAKE_PNPM_STATE                - directory for the call counters
  */
 function writeFakePnpm(fakeBinDir) {
@@ -287,8 +290,19 @@ function writeFakePnpm(fakeBinDir) {
     "",
     'if (args[0] === "install") {',
     '  const n = nextCount("install");',
+    '  writeFileSync(`${process.env.FAKE_PNPM_STATE}/install-${n}-args`, JSON.stringify(args));',
     '  if (process.env[`FAKE_PNPM_INSTALL_FAIL_${n}`] === "1") {',
     '    process.stderr.write("install failed\\n");',
+    "    process.exit(1);",
+    "  }",
+    "  process.exit(0);",
+    "}",
+    "",
+    'if (args[0] === "dedupe") {',
+    '  const n = nextCount("dedupe");',
+    '  writeFileSync(`${process.env.FAKE_PNPM_STATE}/dedupe-${n}-args`, JSON.stringify(args));',
+    '  if (process.env[`FAKE_PNPM_DEDUPE_FAIL_${n}`] === "1") {',
+    '    process.stderr.write("dedupe failed\\n");',
     "    process.exit(1);",
     "  }",
     "  process.exit(0);",
@@ -343,10 +357,14 @@ describe("main() end-to-end via a fake pnpm binary", () => {
     rmSync(stateDir, { recursive: true, force: true });
   });
 
+  // Captures stdout to `${stateDir}/last-stdout.txt` (rather than returning
+  // it directly) so existing call sites destructuring just the outputs
+  // object don't need to change; only the handful of tests that care about
+  // the console.log warning text read that file.
   const runMain = (env) => {
     outputFile = join(stateDir, `output-${Math.random().toString(36).slice(2)}`);
     writeFileSync(outputFile, "");
-    execFileSync("node", [join(__dirname, "lockfile-audit-fix.mjs")], {
+    const stdout = execFileSync("node", [join(__dirname, "lockfile-audit-fix.mjs")], {
       cwd: repoDir,
       env: {
         ...process.env,
@@ -355,8 +373,10 @@ describe("main() end-to-end via a fake pnpm binary", () => {
         GITHUB_OUTPUT: outputFile,
         ...env,
       },
-      stdio: ["ignore", "ignore", "ignore"],
+      stdio: ["ignore", "pipe", "ignore"],
+      encoding: "utf8",
     });
+    writeFileSync(join(stateDir, "last-stdout.txt"), stdout);
     return parseGithubOutput(readFileSync(outputFile, "utf8"));
   };
 
@@ -365,6 +385,7 @@ describe("main() end-to-end via a fake pnpm binary", () => {
     writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
     writeFileSync(join(stateDir, "audit-count"), "0");
     writeFileSync(join(stateDir, "install-count"), "0");
+    writeFileSync(join(stateDir, "dedupe-count"), "0");
 
     const outputs = runMain({ FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}' });
 
@@ -372,6 +393,101 @@ describe("main() end-to-end via a fake pnpm binary", () => {
     assert.equal(outputs["runtime-deps-changed"], "false");
     assert.equal(outputs["changed-names"], "");
     assert.equal(readFileSync(join(repoDir, "pnpm-lock.yaml"), "utf8"), "clean\n");
+
+    const installArgs = JSON.parse(readFileSync(join(stateDir, "install-1-args"), "utf8"));
+    assert.ok(
+      installArgs.includes("--config.minimum-release-age-exclude-prune=true"),
+      "verifyInstallable should ask pnpm install to prune stale minimumReleaseAgeExclude entries",
+    );
+    assert.equal(
+      existsSync(join(stateDir, "dedupe-1-args")),
+      false,
+      "dedupe should be skipped when the repo has no pnpm-workspace.yaml to prune",
+    );
+  });
+
+  test("no advisories, pnpm-workspace.yaml exists but mentions no minimumReleaseAgeExclude: dedupe is still skipped", () => {
+    writeFileSync(join(repoDir, "pnpm-lock.yaml"), "clean\n");
+    writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
+    writeFileSync(join(repoDir, "pnpm-workspace.yaml"), "trustPolicy: no-downgrade\n");
+    writeFileSync(join(stateDir, "audit-count"), "0");
+    writeFileSync(join(stateDir, "install-count"), "0");
+    writeFileSync(join(stateDir, "dedupe-count"), "0");
+
+    try {
+      runMain({ FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}' });
+
+      assert.equal(
+        existsSync(join(stateDir, "dedupe-1-args")),
+        false,
+        "dedupe should be skipped when pnpm-workspace.yaml has nothing to prune",
+      );
+    } finally {
+      // Leaving this behind would break later tests' "no pnpm-workspace.yaml yet" preconditions.
+      rmSync(join(repoDir, "pnpm-workspace.yaml"), { force: true });
+    }
+  });
+
+  test("no advisories, but pnpm-workspace.yaml has a minimumReleaseAgeExclude list: dedupe also gets the prune flag", () => {
+    writeFileSync(join(repoDir, "pnpm-lock.yaml"), "clean\n");
+    writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
+    writeFileSync(
+      join(repoDir, "pnpm-workspace.yaml"),
+      ["minimumReleaseAge: 4320", "minimumReleaseAgeExclude:", "  - foo@1.0.0", ""].join("\n"),
+    );
+    writeFileSync(join(stateDir, "audit-count"), "0");
+    writeFileSync(join(stateDir, "install-count"), "0");
+    writeFileSync(join(stateDir, "dedupe-count"), "0");
+
+    try {
+      runMain({ FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}' });
+
+      const dedupeArgs = JSON.parse(readFileSync(join(stateDir, "dedupe-1-args"), "utf8"));
+      assert.ok(
+        dedupeArgs.includes("--config.minimum-release-age-exclude-prune=true"),
+        "verifyInstallable should run pnpm dedupe with the prune flag when there's a minimumReleaseAgeExclude " +
+          "list, since install skips re-resolution (and so the prune) when the lockfile is already up to date",
+      );
+    } finally {
+      // Leaving this behind would break later tests' "no pnpm-workspace.yaml yet" preconditions.
+      rmSync(join(repoDir, "pnpm-workspace.yaml"), { force: true });
+    }
+  });
+
+  test("install succeeds but dedupe fails: rolls back and reports dedupe (not install) as the failed step", () => {
+    writeFileSync(join(repoDir, "pnpm-lock.yaml"), "clean\n");
+    writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
+    writeFileSync(
+      join(repoDir, "pnpm-workspace.yaml"),
+      ["minimumReleaseAge: 4320", "minimumReleaseAgeExclude:", "  - foo@1.0.0", ""].join("\n"),
+    );
+    writeFileSync(join(stateDir, "audit-count"), "0");
+    writeFileSync(join(stateDir, "install-count"), "0");
+    writeFileSync(join(stateDir, "dedupe-count"), "0");
+
+    try {
+      const outputs = runMain({
+        FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}',
+        FAKE_PNPM_DEDUPE_FAIL_1: "1",
+      });
+
+      // The first dedupe call (during the update-mode verify) fails and
+      // gets rolled back; the second (during the override-mode verify, a
+      // no-op fix) succeeds, so the end state matches the untouched
+      // original.
+      assert.equal(outputs.changed, "false");
+      assert.equal(readFileSync(join(repoDir, "pnpm-lock.yaml"), "utf8"), "clean\n");
+
+      const stdout = readFileSync(join(stateDir, "last-stdout.txt"), "utf8");
+      assert.match(stdout, /pnpm dedupe failed/, "the rollback warning should name dedupe as the failed step");
+      assert.doesNotMatch(
+        stdout,
+        /pnpm install failed/,
+        "the rollback warning should not blame install when dedupe was what actually failed",
+      );
+    } finally {
+      rmSync(join(repoDir, "pnpm-workspace.yaml"), { force: true });
+    }
   });
 
   test("update mode fixes the advisory: reports the runtime-dependency change and a fixed-advisory summary", () => {
@@ -393,6 +509,7 @@ describe("main() end-to-end via a fake pnpm binary", () => {
     writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
     writeFileSync(join(stateDir, "audit-count"), "0");
     writeFileSync(join(stateDir, "install-count"), "0");
+    writeFileSync(join(stateDir, "dedupe-count"), "0");
 
     const outputs = runMain({
       FAKE_PNPM_AUDIT_JSON_1: JSON.stringify({
@@ -431,6 +548,7 @@ describe("main() end-to-end via a fake pnpm binary", () => {
     writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
     writeFileSync(join(stateDir, "audit-count"), "0");
     writeFileSync(join(stateDir, "install-count"), "0");
+    writeFileSync(join(stateDir, "dedupe-count"), "0");
 
     const outputs = runMain({
       FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}',
@@ -462,6 +580,7 @@ describe("main() end-to-end via a fake pnpm binary", () => {
     writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
     writeFileSync(join(stateDir, "audit-count"), "0");
     writeFileSync(join(stateDir, "install-count"), "0");
+    writeFileSync(join(stateDir, "dedupe-count"), "0");
 
     const outputs = runMain({
       FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}',
@@ -493,6 +612,7 @@ describe("main() end-to-end via a fake pnpm binary", () => {
     writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
     writeFileSync(join(stateDir, "audit-count"), "0");
     writeFileSync(join(stateDir, "install-count"), "0");
+    writeFileSync(join(stateDir, "dedupe-count"), "0");
     assert.equal(existsSync(join(repoDir, "pnpm-workspace.yaml")), false, "precondition: no workspace file yet");
 
     const outputs = runMain({
@@ -525,6 +645,7 @@ describe("main() end-to-end via a fake pnpm binary", () => {
     writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
     writeFileSync(join(stateDir, "audit-count"), "0");
     writeFileSync(join(stateDir, "install-count"), "0");
+    writeFileSync(join(stateDir, "dedupe-count"), "0");
 
     const outputs = runMain({
       FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}',
