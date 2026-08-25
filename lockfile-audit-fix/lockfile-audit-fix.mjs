@@ -174,15 +174,24 @@ function runFix(mode, cwd) {
  * Throws with pnpm's own output attached (truncated) so a caller's rollback
  * warning is actually diagnosable instead of just "it failed" — pnpm prints
  * some errors to stdout rather than stderr, so both are captured.
+ *
+ * `--config.minimum-release-age-exclude-prune=true` has this install also
+ * drop any `minimumReleaseAgeExclude` entry pnpm-workspace.yaml no longer
+ * needs, per the freshly-resolved lockfile (pnpm >=11.22.0; a no-op on
+ * older pnpm, not an error).
  * @param {string} cwd
  */
 function verifyInstallable(cwd) {
   try {
-    execFileSync("pnpm", ["install", "--no-frozen-lockfile", "--ignore-scripts"], {
-      cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-      maxBuffer: 1024 * 1024 * 64,
-    });
+    execFileSync(
+      "pnpm",
+      ["install", "--no-frozen-lockfile", "--ignore-scripts", "--config.minimum-release-age-exclude-prune=true"],
+      {
+        cwd,
+        stdio: ["ignore", "pipe", "pipe"],
+        maxBuffer: 1024 * 1024 * 64,
+      },
+    );
   } catch (e) {
     const output = [e.stdout, e.stderr]
       .map((s) => s?.toString().trim())

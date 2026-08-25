@@ -287,6 +287,7 @@ function writeFakePnpm(fakeBinDir) {
     "",
     'if (args[0] === "install") {',
     '  const n = nextCount("install");',
+    '  writeFileSync(`${process.env.FAKE_PNPM_STATE}/install-${n}-args`, JSON.stringify(args));',
     '  if (process.env[`FAKE_PNPM_INSTALL_FAIL_${n}`] === "1") {',
     '    process.stderr.write("install failed\\n");',
     "    process.exit(1);",
@@ -372,6 +373,12 @@ describe("main() end-to-end via a fake pnpm binary", () => {
     assert.equal(outputs["runtime-deps-changed"], "false");
     assert.equal(outputs["changed-names"], "");
     assert.equal(readFileSync(join(repoDir, "pnpm-lock.yaml"), "utf8"), "clean\n");
+
+    const installArgs = JSON.parse(readFileSync(join(stateDir, "install-1-args"), "utf8"));
+    assert.ok(
+      installArgs.includes("--config.minimum-release-age-exclude-prune=true"),
+      "verifyInstallable should ask pnpm to prune stale minimumReleaseAgeExclude entries",
+    );
   });
 
   test("update mode fixes the advisory: reports the runtime-dependency change and a fixed-advisory summary", () => {
