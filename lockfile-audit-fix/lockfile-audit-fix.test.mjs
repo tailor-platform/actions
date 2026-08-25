@@ -385,13 +385,33 @@ describe("main() end-to-end via a fake pnpm binary", () => {
       installArgs.includes("--config.minimum-release-age-exclude-prune=true"),
       "verifyInstallable should ask pnpm install to prune stale minimumReleaseAgeExclude entries",
     );
-
-    const dedupeArgs = JSON.parse(readFileSync(join(stateDir, "dedupe-1-args"), "utf8"));
-    assert.ok(
-      dedupeArgs.includes("--config.minimum-release-age-exclude-prune=true"),
-      "verifyInstallable should also run pnpm dedupe with the prune flag, since install skips " +
-        "re-resolution (and so the prune) when the lockfile is already up to date",
+    assert.equal(
+      existsSync(join(stateDir, "dedupe-1-args")),
+      false,
+      "dedupe should be skipped when the repo has no pnpm-workspace.yaml to prune",
     );
+  });
+
+  test("no advisories, but a pnpm-workspace.yaml exists: dedupe also gets the prune flag", () => {
+    writeFileSync(join(repoDir, "pnpm-lock.yaml"), "clean\n");
+    writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
+    writeFileSync(join(repoDir, "pnpm-workspace.yaml"), "minimumReleaseAge: 4320\n");
+    writeFileSync(join(stateDir, "audit-count"), "0");
+    writeFileSync(join(stateDir, "install-count"), "0");
+
+    try {
+      runMain({ FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}' });
+
+      const dedupeArgs = JSON.parse(readFileSync(join(stateDir, "dedupe-1-args"), "utf8"));
+      assert.ok(
+        dedupeArgs.includes("--config.minimum-release-age-exclude-prune=true"),
+        "verifyInstallable should run pnpm dedupe with the prune flag when a pnpm-workspace.yaml exists, " +
+          "since install skips re-resolution (and so the prune) when the lockfile is already up to date",
+      );
+    } finally {
+      // Leaving this behind would break later tests' "no pnpm-workspace.yaml yet" preconditions.
+      rmSync(join(repoDir, "pnpm-workspace.yaml"), { force: true });
+    }
   });
 
   test("update mode fixes the advisory: reports the runtime-dependency change and a fixed-advisory summary", () => {

@@ -176,29 +176,34 @@ function runFix(mode, cwd) {
  * some errors to stdout rather than stderr, so both are captured.
  *
  * `--config.minimum-release-age-exclude-prune=true` causes pnpm to also
- * drop any `minimumReleaseAgeExclude` entry pnpm-workspace.yaml no longer
- * needs, per the freshly-resolved lockfile (pnpm >=11.22.0; a no-op on
- * older pnpm, not an error) — but only on a real re-resolution. `install`
- * skips re-resolving (and so skips pruning) whenever the lockfile is
- * already "up to date" for package.json/pnpm-workspace.yaml — the exact
- * state a scheduled run with no new advisory to fix leaves it in. The
- * follow-up `dedupe` always re-resolves, so it's what actually prunes a
- * stale exclude entry in that case.
+ * drop any `minimumReleaseAgeExclude` entry in pnpm-workspace.yaml that it
+ * no longer needs, per the freshly-resolved lockfile (pnpm >=11.22.0; a
+ * no-op on older pnpm, not an error) — but only on a real re-resolution.
+ * `install` skips re-resolving (and so skips pruning) whenever the
+ * lockfile is already "up to date" for package.json/pnpm-workspace.yaml —
+ * the exact state a scheduled run with no new advisory to fix leaves it
+ * in. The follow-up `dedupe` always re-resolves, so it's what actually
+ * prunes a stale exclude entry in that case — skipped when there's no
+ * pnpm-workspace.yaml at all, since then there's nothing it could prune.
  * @param {string} cwd
  */
 function verifyInstallable(cwd) {
   const pruneFlag = "--config.minimum-release-age-exclude-prune=true";
   const opts = { cwd, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 1024 * 1024 * 64 };
+  let step = "install";
   try {
     execFileSync("pnpm", ["install", "--no-frozen-lockfile", "--ignore-scripts", pruneFlag], opts);
-    execFileSync("pnpm", ["dedupe", "--ignore-scripts", pruneFlag], opts);
+    if (existsSync(join(cwd, "pnpm-workspace.yaml"))) {
+      step = "dedupe";
+      execFileSync("pnpm", ["dedupe", "--ignore-scripts", pruneFlag], opts);
+    }
   } catch (e) {
     const output = [e.stdout, e.stderr]
       .map((s) => s?.toString().trim())
       .filter(Boolean)
       .join("\n")
       .slice(0, 2000);
-    throw new Error(output ? `pnpm install failed: ${output}` : `pnpm install failed: ${e.message}`);
+    throw new Error(output ? `pnpm ${step} failed: ${output}` : `pnpm ${step} failed: ${e.message}`);
   }
 }
 
