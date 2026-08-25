@@ -20,6 +20,14 @@
         "tests/**"
       ],
       "enabled": true
+    },
+    {
+      "description": "Group the Changesets toolchain (npm package + GitHub Action) into one PR, since their release workflow is fragile enough that both should be verified together",
+      "matchPackageNames": [
+        "@changesets/cli",
+        "changesets/action"
+      ],
+      "groupName": "changesets"
     }
   ]
 }
