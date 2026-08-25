@@ -17,7 +17,46 @@ import {
   loadFixedGroupNormalizer,
   diffRuntimeDeps,
   buildSummary,
+  splitNameSpec,
+  parseVer,
+  verGt,
+  findYamlBlock,
+  collapseExcludeDuplicates,
+  collapseOverrideDuplicates,
+  overrideTargetName,
+  isMentioned,
+  readLockfileOutsideOverrides,
+  pruneOrphanedOverrides,
+  getMinimumReleaseAgeMinutes,
+  pruneStaleExcludes,
+  normalizeWorkspace,
 } from "./lockfile-audit-fix.mjs";
+
+/**
+ * Temporarily replaces the global `fetch` for tests that exercise
+ * `pruneStaleExcludes`/`normalizeWorkspace` (both call the real npm
+ * registry otherwise). `impl` receives the same args as `fetch`.
+ */
+async function withFakeFetch(impl, fn) {
+  const original = globalThis.fetch;
+  globalThis.fetch = impl;
+  try {
+    return await fn();
+  } finally {
+    globalThis.fetch = original;
+  }
+}
+
+/**
+ * @param {Record<string, Record<string, string>>} publishTimes package name -> version -> ISO publish date
+ */
+function fakeRegistryFetch(publishTimes) {
+  return async (url) => {
+    const name = decodeURIComponent(String(url).replace("https://registry.npmjs.org/", ""));
+    if (!(name in publishTimes)) return { ok: false };
+    return { ok: true, json: async () => ({ time: publishTimes[name] }) };
+  };
+}
 
 describe("extractAdvisoryIds", () => {
   test("reads IDs from an object keyed by advisory ID (pnpm/npm-classic shape)", () => {
@@ -228,6 +267,455 @@ describe("buildSummary", () => {
   test("degrades gracefully when audit data is unavailable", () => {
     const summary = buildSummary(null, null);
     assert.match(summary, /unavailable/);
+  });
+
+  test("reports dropped exclude/override entries from pruneResult", () => {
+    const summary = buildSummary(null, null, {
+      droppedExcludes: ["hono@4.12.27"],
+      droppedOverrides: ["ghost-pkg@1"],
+    });
+    assert.match(summary, /Removed `minimumReleaseAgeExclude` entries/);
+    assert.match(summary, /`hono@4\.12\.27`/);
+    assert.match(summary, /Removed `overrides` entries/);
+    assert.match(summary, /`ghost-pkg@1`/);
+  });
+
+  test("omits both prune sections when nothing was dropped", () => {
+    const summary = buildSummary(null, null, {});
+    assert.doesNotMatch(summary, /Removed/);
+  });
+});
+
+describe("splitNameSpec / parseVer / verGt", () => {
+  test("splits a plain package name from its version", () => {
+    assert.deepEqual(splitNameSpec("hono@4.12.27"), ["hono", "4.12.27"]);
+  });
+
+  test("splits a scoped package name (second @ is the boundary)", () => {
+    assert.deepEqual(splitNameSpec("@hono/node-server@1.19.15"), ["@hono/node-server", "1.19.15"]);
+  });
+
+  test("returns a null version for a bare name-pattern entry", () => {
+    assert.deepEqual(splitNameSpec("@tailor-platform/*"), ["@tailor-platform/*", null]);
+  });
+
+  test("verGt compares parsed semver-ish triples", () => {
+    assert.equal(verGt("4.13.3", "4.12.27"), true);
+    assert.equal(verGt("4.12.27", "4.13.3"), false);
+    assert.equal(verGt("1.0.0", "1.0.0"), false);
+  });
+
+  test("verGt is false when either side doesn't parse as a version", () => {
+    assert.equal(verGt("not-a-version", "1.0.0"), false);
+    assert.equal(verGt("1.0.0", "<1.0.0"), false); // range operators aren't stripped by parseVer
+  });
+
+  test("parseVer ignores range operators and reads the embedded triple", () => {
+    assert.deepEqual(parseVer(">=3.0.0 <3.1.5"), [3, 0, 0]);
+    assert.equal(parseVer("not-a-version"), null);
+  });
+});
+
+describe("findYamlBlock", () => {
+  test("returns null when the key isn't present", () => {
+    assert.equal(findYamlBlock(["foo: bar"], "overrides"), null);
+  });
+
+  test("finds the block's start and the next top-level key's index", () => {
+    const lines = ["overrides:", "  a: 1", "  b: 2", "blockExoticSubdeps: true"];
+    assert.deepEqual(findYamlBlock(lines, "overrides"), { startIdx: 0, endIdx: 3 });
+  });
+
+  test("runs to the end of the file when the block is last", () => {
+    const lines = ["overrides:", "  a: 1", "  b: 2"];
+    assert.deepEqual(findYamlBlock(lines, "overrides"), { startIdx: 0, endIdx: 3 });
+  });
+});
+
+describe("collapseExcludeDuplicates", () => {
+  test("keeps only the highest-version entry for a package with overlapping ranges", () => {
+    const { lines, dropped } = collapseExcludeDuplicates(
+      "minimumReleaseAgeExclude:\n  - hono@4.12.27\n  - hono@4.13.3\n".split("\n"),
+    );
+    assert.equal(lines.join("\n"), "minimumReleaseAgeExclude:\n  - hono@4.13.3\n");
+    assert.deepEqual(dropped, ["hono@4.12.27"]);
+  });
+
+  test("drops the comment attached to the losing entry", () => {
+    const { lines, dropped } = collapseExcludeDuplicates(
+      [
+        "minimumReleaseAgeExclude:",
+        "  # a note about the old pin",
+        "  - hono@4.12.27",
+        "  - hono@4.13.3",
+        "",
+      ].join("\n").split("\n"),
+    );
+    assert.doesNotMatch(lines.join("\n"), /a note about the old pin/);
+    assert.deepEqual(dropped, ["hono@4.12.27"]);
+  });
+
+  test("passes name-pattern entries through untouched", () => {
+    const { lines, dropped } = collapseExcludeDuplicates(
+      'minimumReleaseAgeExclude:\n  - "@tailor-platform/*"\n  - politty\n'.split("\n"),
+    );
+    assert.equal(lines.join("\n"), 'minimumReleaseAgeExclude:\n  - "@tailor-platform/*"\n  - politty\n');
+    assert.deepEqual(dropped, []);
+  });
+
+  test("is a no-op when the block is absent", () => {
+    const lines = ["minimumReleaseAge: 4320"];
+    assert.deepEqual(collapseExcludeDuplicates(lines), { lines, dropped: [] });
+  });
+});
+
+describe("collapseOverrideDuplicates", () => {
+  test("keeps only the highest-version override for the same package", () => {
+    const { lines, dropped } = collapseOverrideDuplicates(
+      ["overrides:", "  hono@<4.12.27: 4.12.27", "  hono@<4.13.3: 4.13.3", ""].join("\n").split("\n"),
+    );
+    assert.equal(lines.join("\n"), ["overrides:", "  hono@<4.13.3: 4.13.3", ""].join("\n"));
+    assert.deepEqual(dropped, ["hono@<4.12.27"]);
+  });
+
+  test("leaves a single override for a package untouched", () => {
+    const lines = ["overrides:", "  esbuild@>=0.17.0 <0.28.1: 0.28.1", ""].join("\n").split("\n");
+    const result = collapseOverrideDuplicates(lines);
+    assert.equal(result.lines.join("\n"), lines.join("\n"));
+    assert.deepEqual(result.dropped, []);
+  });
+});
+
+describe("overrideTargetName / isMentioned", () => {
+  test("overrideTargetName reads the package name ahead of a version range", () => {
+    assert.equal(overrideTargetName("fast-uri@>=3.0.0 <3.1.4"), "fast-uri");
+  });
+
+  test("overrideTargetName resolves a dep-path key to its parent package", () => {
+    assert.equal(overrideTargetName("parent-pkg>child-pkg"), "parent-pkg");
+  });
+
+  test("overrideTargetName handles a scoped package name", () => {
+    assert.equal(overrideTargetName('"@scope/live@<1"'.replace(/^"|"$/g, "")), "@scope/live");
+  });
+
+  test("isMentioned finds a resolved package key", () => {
+    assert.equal(isMentioned("  fast-uri@3.1.4:\n    resolution: {}", "fast-uri"), true);
+  });
+
+  test("isMentioned finds a bare importer/link key", () => {
+    assert.equal(isMentioned("  '@scope/linked':\n    specifier: workspace:^", "@scope/linked"), true);
+  });
+
+  test("isMentioned does not confuse a package name with a longer one ending in it", () => {
+    assert.equal(isMentioned("  build@<1:\n    resolution: {}", "uild"), false);
+  });
+
+  test("isMentioned returns false when the name doesn't appear at all", () => {
+    assert.equal(isMentioned("  esbuild@0.28.1:\n    resolution: {}", "ghost-pkg"), false);
+  });
+});
+
+describe("readLockfileOutsideOverrides", () => {
+  test("strips the lockfile's own overrides mirror block", () => {
+    const text = ["overrides:", "  ghost-pkg@1: 2.0.0", "", "packages:", "", "  esbuild@0.28.1: {}", ""].join("\n");
+    const result = readLockfileOutsideOverrides(text);
+    assert.doesNotMatch(result, /ghost-pkg/);
+    assert.match(result, /esbuild@0\.28\.1/);
+  });
+
+  test("returns null when there's no packages block (not a real lockfile)", () => {
+    assert.equal(readLockfileOutsideOverrides("lockfileVersion: '9.0'\n"), null);
+  });
+
+  test("returns the text unchanged when there's no overrides block", () => {
+    const text = "packages:\n\n  esbuild@0.28.1: {}\n";
+    assert.equal(readLockfileOutsideOverrides(text), text);
+  });
+});
+
+// Ported from tailor-platform/sdk's lockfile-audit-fix-normalize.test.mjs.
+describe("pruneOrphanedOverrides", () => {
+  const LOCKFILE = [
+    "lockfileVersion: '9.0'",
+    "",
+    "overrides:",
+    "  ghost-pkg@1: 2.0.0",
+    "",
+    "importers:",
+    "",
+    "  .:",
+    "    devDependencies:",
+    "      '@scope/live':",
+    "        specifier: 1.0.0",
+    "        version: 1.0.0",
+    "      '@scope/linked':",
+    "        specifier: workspace:^",
+    "        version: link:packages/linked",
+    "      linked-tool:",
+    "        specifier: workspace:*",
+    "        version: link:packages/tool",
+    "",
+    "packages:",
+    "",
+    "  esbuild@0.28.1:",
+    "    resolution: {integrity: sha512-x}",
+    "",
+    "  '@scope/live@1.0.0':",
+    "    resolution: {integrity: sha512-y}",
+    "",
+    "  parent-pkg@2.0.0:",
+    "    resolution: {integrity: sha512-z}",
+    "",
+    "snapshots:",
+    "",
+    "  esbuild@0.28.1: {}",
+    "",
+    "  '@scope/live@1.0.0': {}",
+    "",
+    "  parent-pkg@2.0.0: {}",
+    "",
+  ].join("\n");
+
+  function overrideKeys(lines) {
+    const block = findYamlBlock(lines, "overrides");
+    if (!block) return [];
+    return lines
+      .slice(block.startIdx + 1, block.endIdx)
+      .map((l) => l.trim())
+      .filter((l) => l !== "" && !l.startsWith("#"))
+      .map((l) => l.slice(0, l.indexOf(":")));
+  }
+
+  test("drops overrides whose package left the dependency tree", () => {
+    const { lines, dropped } = pruneOrphanedOverrides(
+      ["overrides:", "  esbuild@>=0.17.0 <0.28.1: 0.28.1", "  fast-uri@>=3.0.0 <3.1.4: 3.1.4", "  ghost-pkg@1: 2.0.0"],
+      LOCKFILE,
+    );
+    assert.deepEqual(overrideKeys(lines), ["esbuild@>=0.17.0 <0.28.1"]);
+    assert.deepEqual(dropped.sort(), ["fast-uri@>=3.0.0 <3.1.4", "ghost-pkg@1"].sort());
+  });
+
+  test("keeps overrides reachable through resolved keys or dep paths", () => {
+    const { lines } = pruneOrphanedOverrides(['overrides:', '  "@scope/live@<1": 1.0.0', "  parent-pkg>child-pkg: 3.0.0"], LOCKFILE);
+    assert.deepEqual(overrideKeys(lines), ['"@scope/live@<1"', "parent-pkg>child-pkg"]);
+  });
+
+  test("keeps overrides on workspace-linked packages", () => {
+    const { lines, dropped } = pruneOrphanedOverrides(
+      ["overrides:", '  "@scope/linked@<1": 1.0.0', "  linked-tool@<1: 1.0.0"],
+      LOCKFILE,
+    );
+    assert.deepEqual(overrideKeys(lines), ['"@scope/linked@<1"', "linked-tool@<1"]);
+    assert.deepEqual(dropped, []);
+  });
+
+  test("does not confuse a package name with a longer one ending in it", () => {
+    const { lines } = pruneOrphanedOverrides(["overrides:", "  build@<1: 1.0.0"], LOCKFILE);
+    assert.deepEqual(overrideKeys(lines), []);
+  });
+
+  test("honours a keep-override opt-out comment", () => {
+    const { lines, dropped } = pruneOrphanedOverrides(
+      ["overrides:", "  # keep-override: pinned ahead of the dependency landing", "  future-pkg@<9: 9.0.0"],
+      LOCKFILE,
+    );
+    assert.deepEqual(overrideKeys(lines), ["future-pkg@<9"]);
+    assert.deepEqual(dropped, []);
+  });
+
+  test("keeps every override when the lockfile is missing", () => {
+    const { lines, dropped } = pruneOrphanedOverrides(["overrides:", "  fast-uri@>=3.0.0 <3.1.4: 3.1.4"], null);
+    assert.deepEqual(overrideKeys(lines), ["fast-uri@>=3.0.0 <3.1.4"]);
+    assert.deepEqual(dropped, []);
+  });
+
+  test("keeps every override when the lockfile has no packages block", () => {
+    const { lines, dropped } = pruneOrphanedOverrides(
+      ["overrides:", "  fast-uri@>=3.0.0 <3.1.4: 3.1.4"],
+      "lockfileVersion: '9.0'\n\noverrides:\n  fast-uri@x: 1\n",
+    );
+    assert.deepEqual(overrideKeys(lines), ["fast-uri@>=3.0.0 <3.1.4"]);
+    assert.deepEqual(dropped, []);
+  });
+
+  test("removes the overrides key itself once the block empties", () => {
+    const { lines } = pruneOrphanedOverrides(
+      ["minimumReleaseAge: 4320", "", "overrides:", "  ghost-pkg@1: 2.0.0", "", "blockExoticSubdeps: true"],
+      LOCKFILE,
+    );
+    assert.equal(lines.join("\n"), "minimumReleaseAge: 4320\n\nblockExoticSubdeps: true");
+  });
+});
+
+describe("getMinimumReleaseAgeMinutes", () => {
+  test("reads the configured value", () => {
+    assert.equal(getMinimumReleaseAgeMinutes(["minimumReleaseAge: 4320"]), 4320);
+  });
+
+  test("returns null when unset", () => {
+    assert.equal(getMinimumReleaseAgeMinutes(["trustPolicy: no-downgrade"]), null);
+  });
+});
+
+describe("pruneStaleExcludes", () => {
+  test("drops an entry once its version is old enough to no longer need the bypass", async () => {
+    const { lines, dropped } = await withFakeFetch(
+      fakeRegistryFetch({ hono: { "4.12.27": "2020-01-01T00:00:00.000Z" } }),
+      () => pruneStaleExcludes(["minimumReleaseAgeExclude:", "  - hono@4.12.27", ""], 4320),
+    );
+    assert.equal(lines.join("\n"), "minimumReleaseAgeExclude:\n");
+    assert.deepEqual(dropped, ["hono@4.12.27"]);
+  });
+
+  test("keeps an entry whose version is still within the minimumReleaseAge window", async () => {
+    const justPublished = new Date().toISOString();
+    const { lines, dropped } = await withFakeFetch(
+      fakeRegistryFetch({ hono: { "4.13.3": justPublished } }),
+      () => pruneStaleExcludes(["minimumReleaseAgeExclude:", "  - hono@4.13.3", ""], 4320),
+    );
+    assert.equal(lines.join("\n"), "minimumReleaseAgeExclude:\n  - hono@4.13.3\n");
+    assert.deepEqual(dropped, []);
+  });
+
+  test("keeps an entry conservatively when the publish time can't be determined", async () => {
+    const { lines, dropped } = await withFakeFetch(fakeRegistryFetch({}), () =>
+      pruneStaleExcludes(["minimumReleaseAgeExclude:", "  - unknown-pkg@1.0.0", ""], 4320),
+    );
+    assert.equal(lines.join("\n"), "minimumReleaseAgeExclude:\n  - unknown-pkg@1.0.0\n");
+    assert.deepEqual(dropped, []);
+  });
+
+  test("keeps a name-pattern entry untouched (no version to check)", async () => {
+    const { lines, dropped } = await pruneStaleExcludes(['minimumReleaseAgeExclude:', '  - "@tailor-platform/*"', ""], 4320);
+    assert.equal(lines.join("\n"), 'minimumReleaseAgeExclude:\n  - "@tailor-platform/*"\n');
+    assert.deepEqual(dropped, []);
+  });
+
+  test("is a no-op when minimumReleaseAge isn't set", async () => {
+    const lines = ["minimumReleaseAgeExclude:", "  - hono@4.12.27", ""];
+    assert.deepEqual(await pruneStaleExcludes(lines, null), { lines, dropped: [] });
+  });
+
+  // pnpm writes a `||`-separated disjunction for a package that needed the
+  // bypass at more than one version, e.g. erp-kit#1056's
+  // `hono@4.12.27 || 4.12.34` — a single entry, not two duplicate ones.
+  test("drops a `||`-disjunction entry once every listed version is old enough (erp-kit#1056 shape)", async () => {
+    const { lines, dropped } = await withFakeFetch(
+      fakeRegistryFetch({
+        hono: { "4.12.27": "2020-01-01T00:00:00.000Z", "4.12.34": "2020-02-01T00:00:00.000Z" },
+      }),
+      () => pruneStaleExcludes(["minimumReleaseAgeExclude:", "  - hono@4.12.27 || 4.12.34", ""], 4320),
+    );
+    assert.equal(lines.join("\n"), "minimumReleaseAgeExclude:\n");
+    assert.deepEqual(dropped, ["hono@4.12.27 || 4.12.34"]);
+  });
+
+  test("keeps a `||`-disjunction entry when even one listed version isn't provably stale", async () => {
+    const justPublished = new Date().toISOString();
+    const { lines, dropped } = await withFakeFetch(
+      fakeRegistryFetch({ hono: { "4.12.27": "2020-01-01T00:00:00.000Z", "4.12.34": justPublished } }),
+      () => pruneStaleExcludes(["minimumReleaseAgeExclude:", "  - hono@4.12.27 || 4.12.34", ""], 4320),
+    );
+    assert.equal(lines.join("\n"), "minimumReleaseAgeExclude:\n  - hono@4.12.27 || 4.12.34\n");
+    assert.deepEqual(dropped, []);
+  });
+
+  test("fetches a package's publish times only once even with multiple versions listed for it", async () => {
+    let calls = 0;
+    const baseImpl = fakeRegistryFetch({
+      hono: { "4.12.27": "2020-01-01T00:00:00.000Z", "4.12.34": "2020-02-01T00:00:00.000Z" },
+    });
+    await withFakeFetch(
+      async (url) => {
+        calls++;
+        return baseImpl(url);
+      },
+      () => pruneStaleExcludes(["minimumReleaseAgeExclude:", "  - hono@4.12.27 || 4.12.34", ""], 4320),
+    );
+    assert.equal(calls, 1);
+  });
+});
+
+describe("normalizeWorkspace", () => {
+  let cwd;
+
+  before(() => {
+    cwd = mkdtempSync(join(tmpdir(), "lockfile-audit-fix-normalize-workspace-"));
+  });
+
+  after(() => {
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  test("is a no-op when there's no pnpm-workspace.yaml", async () => {
+    const result = await normalizeWorkspace(cwd);
+    assert.deepEqual(result, { changed: false, droppedExcludes: [], droppedOverrides: [] });
+  });
+
+  test("collapses two separate exclude entries pnpm added for the same package at different advisory thresholds", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lockfile-audit-fix-normalize-collapse-"));
+    try {
+      writeFileSync(join(dir, "pnpm-workspace.yaml"), ["minimumReleaseAgeExclude:", "  - hono@4.12.27", "  - hono@4.13.3", ""].join("\n"));
+      writeFileSync(
+        join(dir, "pnpm-lock.yaml"),
+        ["lockfileVersion: '9.0'", "", "packages:", "", "  hono@4.13.3:", "    resolution: {integrity: sha512-x}", ""].join(
+          "\n",
+        ),
+      );
+
+      const result = await normalizeWorkspace(dir);
+      assert.equal(result.changed, true);
+      assert.deepEqual(result.droppedExcludes, ["hono@4.12.27"]);
+      assert.equal(readFileSync(join(dir, "pnpm-workspace.yaml"), "utf8"), "minimumReleaseAgeExclude:\n  - hono@4.13.3\n");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("reproduces the erp-kit#1056 case: drops a stale `||`-disjunction exclude entry via age-based pruning", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lockfile-audit-fix-normalize-1056-"));
+    try {
+      writeFileSync(
+        join(dir, "pnpm-workspace.yaml"),
+        ["minimumReleaseAge: 4320", "minimumReleaseAgeExclude:", "  - hono@4.12.27 || 4.12.34", ""].join("\n"),
+      );
+      writeFileSync(
+        join(dir, "pnpm-lock.yaml"),
+        ["lockfileVersion: '9.0'", "", "packages:", "", "  hono@4.13.3:", "    resolution: {integrity: sha512-x}", ""].join(
+          "\n",
+        ),
+      );
+
+      const result = await withFakeFetch(
+        fakeRegistryFetch({
+          hono: { "4.12.27": "2020-01-01T00:00:00.000Z", "4.12.34": "2020-02-01T00:00:00.000Z" },
+        }),
+        () => normalizeWorkspace(dir),
+      );
+      assert.equal(result.changed, true);
+      assert.deepEqual(result.droppedExcludes, ["hono@4.12.27 || 4.12.34"]);
+      assert.equal(
+        readFileSync(join(dir, "pnpm-workspace.yaml"), "utf8"),
+        "minimumReleaseAge: 4320\nminimumReleaseAgeExclude:\n",
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("is idempotent: a second pass reports no further changes", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lockfile-audit-fix-normalize-idempotent-"));
+    try {
+      writeFileSync(join(dir, "pnpm-workspace.yaml"), ["overrides:", "  esbuild@>=0.17.0 <0.28.1: 0.28.1", ""].join("\n"));
+      writeFileSync(join(dir, "pnpm-lock.yaml"), ["packages:", "", "  esbuild@0.28.1: {}", ""].join("\n"));
+
+      await normalizeWorkspace(dir);
+      const second = await normalizeWorkspace(dir);
+      assert.deepEqual(second, { changed: false, droppedExcludes: [], droppedOverrides: [] });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -535,5 +1023,58 @@ describe("main() end-to-end via a fake pnpm binary", () => {
     assert.equal(outputs.changed, "true");
     assert.equal(readFileSync(join(repoDir, "pnpm-lock.yaml"), "utf8"), overrideFixed);
     assert.equal(readFileSync(join(repoDir, "pnpm-workspace.yaml"), "utf8"), workspaceContent);
+  });
+
+  test("no advisories but two overlapping minimumReleaseAgeExclude entries exist for the same package: pruning alone flips changed=true", () => {
+    const lockfile = ["importers:", "  .:", "    dependencies:", "      hono:", "        specifier: ^4.13.3"].join("\n");
+    writeFileSync(join(repoDir, "pnpm-lock.yaml"), lockfile);
+    writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
+    writeFileSync(
+      join(repoDir, "pnpm-workspace.yaml"),
+      ["minimumReleaseAgeExclude:", "  - hono@4.12.27", "  - hono@4.13.3", ""].join("\n"),
+    );
+    writeFileSync(join(stateDir, "audit-count"), "0");
+    writeFileSync(join(stateDir, "install-count"), "0");
+
+    const outputs = runMain({ FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}' });
+
+    assert.equal(outputs.changed, "true");
+    assert.equal(
+      readFileSync(join(repoDir, "pnpm-workspace.yaml"), "utf8"),
+      "minimumReleaseAgeExclude:\n  - hono@4.13.3\n",
+    );
+    assert.match(outputs.summary, /Removed `minimumReleaseAgeExclude` entries/);
+    assert.match(outputs.summary, /hono@4\.12\.27/);
+  });
+
+  test("no advisories but an override targets a package no longer in the dependency tree: it gets pruned", () => {
+    const lockfile = [
+      "importers:",
+      "  .:",
+      "    dependencies:",
+      "      live-pkg:",
+      "        specifier: ^2.0.0",
+      "packages:",
+      "",
+      "  live-pkg@2.0.0:",
+      "    resolution: {integrity: sha512-x}",
+      "",
+    ].join("\n");
+    writeFileSync(join(repoDir, "pnpm-lock.yaml"), lockfile);
+    writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
+    writeFileSync(join(repoDir, "pnpm-workspace.yaml"), ["overrides:", "  ghost-pkg@1: 2.0.0", ""].join("\n"));
+    writeFileSync(join(stateDir, "audit-count"), "0");
+    writeFileSync(join(stateDir, "install-count"), "0");
+
+    const outputs = runMain({ FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}' });
+
+    assert.equal(outputs.changed, "true");
+    assert.equal(
+      readFileSync(join(repoDir, "pnpm-workspace.yaml"), "utf8"),
+      "",
+      "the overrides key emptied out entirely, leaving nothing else in the file",
+    );
+    assert.match(outputs.summary, /Removed `overrides` entries/);
+    assert.match(outputs.summary, /ghost-pkg@1/);
   });
 });
