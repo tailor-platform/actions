@@ -295,6 +295,12 @@ function writeFakePnpm(fakeBinDir) {
     "  process.exit(0);",
     "}",
     "",
+    'if (args[0] === "dedupe") {',
+    '  const n = nextCount("dedupe");',
+    '  writeFileSync(`${process.env.FAKE_PNPM_STATE}/dedupe-${n}-args`, JSON.stringify(args));',
+    "  process.exit(0);",
+    "}",
+    "",
     "process.exit(0);",
     "",
   ].join("\n");
@@ -377,7 +383,14 @@ describe("main() end-to-end via a fake pnpm binary", () => {
     const installArgs = JSON.parse(readFileSync(join(stateDir, "install-1-args"), "utf8"));
     assert.ok(
       installArgs.includes("--config.minimum-release-age-exclude-prune=true"),
-      "verifyInstallable should ask pnpm to prune stale minimumReleaseAgeExclude entries",
+      "verifyInstallable should ask pnpm install to prune stale minimumReleaseAgeExclude entries",
+    );
+
+    const dedupeArgs = JSON.parse(readFileSync(join(stateDir, "dedupe-1-args"), "utf8"));
+    assert.ok(
+      dedupeArgs.includes("--config.minimum-release-age-exclude-prune=true"),
+      "verifyInstallable should also run pnpm dedupe with the prune flag, since install skips " +
+        "re-resolution (and so the prune) when the lockfile is already up to date",
     );
   });
 

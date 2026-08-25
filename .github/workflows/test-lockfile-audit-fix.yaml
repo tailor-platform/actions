@@ -147,3 +147,63 @@ jobs:
             echo "::error::Expected a non-empty summary when changed=true"
             exit 1
           fi
+
+  # Runs on pnpm >=11.22.0, unlike the two jobs above: pruning stale
+  # minimumReleaseAgeExclude entries is a pnpm feature this action opts
+  # into via --config.minimum-release-age-exclude-prune=true, and only that
+  # pnpm version actually acts on it.
+  test-stale-exclude-entry-is-pruned:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 11.23.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+
+      - name: Build a fixture with a stale minimumReleaseAgeExclude disjunction entry
+        id: fixture
+        env:
+          FIXTURE_DIR: ${{ runner.temp }}/lockfile-audit-fix-stale-exclude
+        run: |
+          mkdir -p "$FIXTURE_DIR"
+          cp "$GITHUB_WORKSPACE/tests/lockfile-audit-fix/stale-exclude/package.json" "$FIXTURE_DIR/"
+          cp "$GITHUB_WORKSPACE/tests/lockfile-audit-fix/stale-exclude/pnpm-workspace.yaml" "$FIXTURE_DIR/"
+          cd "$FIXTURE_DIR"
+          pnpm install --no-frozen-lockfile
+          echo "fixture-dir=$FIXTURE_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: "Test: run the action against the fixture"
+        id: fix
+        uses: ./lockfile-audit-fix
+        with:
+          working-directory: ${{ steps.fixture.outputs.fixture-dir }}
+
+      - name: "Verify: the unresolved disjunction member is pruned, the resolved one is kept, changed=true"
+        env:
+          CHANGED: ${{ steps.fix.outputs.changed }}
+          FIXTURE_DIR: ${{ steps.fixture.outputs.fixture-dir }}
+        run: |
+          if [ "$CHANGED" != "true" ]; then
+            echo "::error::Expected changed=true once pnpm prunes the stale disjunction member, got '$CHANGED'"
+            exit 1
+          fi
+          if grep -q "2.0.0" "$FIXTURE_DIR/pnpm-workspace.yaml"; then
+            echo "::error::Expected the unresolved 'is-odd@2.0.0' disjunction member to be pruned"
+            cat "$FIXTURE_DIR/pnpm-workspace.yaml"
+            exit 1
+          fi
+          if ! grep -q "is-odd@3.0.1" "$FIXTURE_DIR/pnpm-workspace.yaml"; then
+            echo "::error::Expected the still-resolved 'is-odd@3.0.1' entry to remain"
+            cat "$FIXTURE_DIR/pnpm-workspace.yaml"
+            exit 1
+          fi
