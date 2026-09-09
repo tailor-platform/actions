@@ -75,7 +75,7 @@ jobs:
 
       - name: "Test: a clean lockfile reports no changes"
         id: fix
-        uses: ./lockfile-audit-fix
+        uses: $/lockfile-audit-fix
         with:
           working-directory: ${{ steps.fixture.outputs.fixture-dir }}
 
@@ -125,7 +125,7 @@ jobs:
 
       - name: "Test: a fixable advisory produces a lockfile change and a summary"
         id: fix
-        uses: ./lockfile-audit-fix
+        uses: $/lockfile-audit-fix
         with:
           working-directory: ${{ steps.fixture.outputs.fixture-dir }}
 
@@ -184,7 +184,7 @@ jobs:
 
       - name: "Test: run the action against the fixture"
         id: fix
-        uses: ./lockfile-audit-fix
+        uses: $/lockfile-audit-fix
         with:
           working-directory: ${{ steps.fixture.outputs.fixture-dir }}
 

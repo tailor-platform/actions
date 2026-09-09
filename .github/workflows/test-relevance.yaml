@@ -42,7 +42,7 @@ jobs:
 
       - name: "Test: all-zero sha-base is always relevant"
         id: relevance
-        uses: ./relevance
+        uses: $/relevance
         with:
           sha-base: "0000000000000000000000000000000000000000"
           sha-head: ${{ github.sha }}
@@ -90,7 +90,7 @@ jobs:
 
       - name: "Test: a path this commit actually touched is relevant"
         id: relevant-path
-        uses: ./relevance
+        uses: $/relevance
         with:
           sha-base: ${{ steps.parent.outputs.sha }}
           sha-head: ${{ github.sha }}
@@ -109,7 +109,7 @@ jobs:
 
       - name: "Test: a path this commit did not touch is not relevant"
         id: irrelevant-path
-        uses: ./relevance
+        uses: $/relevance
         with:
           sha-base: ${{ steps.parent.outputs.sha }}
           sha-head: ${{ github.sha }}

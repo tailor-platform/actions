@@ -72,7 +72,7 @@ jobs:
 
       - name: "Test: creates a commit, branch, and pull request against the mock API"
         id: create
-        uses: ./create-signed-pr
+        uses: $/create-signed-pr
         with:
           token: dummy-token
           paths: README.md

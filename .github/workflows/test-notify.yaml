@@ -23,7 +23,7 @@ jobs:
         with:
           persist-credentials: false
       - name: "Test: skips gracefully when slack-token is absent"
-        uses: ./notify
+        uses: $/notify
         with:
           provider: slack
           status: success
@@ -40,7 +40,7 @@ jobs:
         with:
           persist-credentials: false
       - name: "Test: skips gracefully when slack-channel-id is absent"
-        uses: ./notify
+        uses: $/notify
         with:
           provider: slack
           status: failure
@@ -59,7 +59,7 @@ jobs:
       - name: "Test: fails on unsupported provider"
         id: notify
         continue-on-error: true
-        uses: ./notify
+        uses: $/notify
         with:
           provider: unsupported-provider
           status: success

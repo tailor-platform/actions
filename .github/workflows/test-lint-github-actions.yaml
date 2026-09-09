@@ -47,7 +47,7 @@ jobs:
           cp tests/lint-github-actions/clean/ci.yaml .github/workflows/
 
       - name: "Test: a clean workflow passes"
-        uses: ./lint-github-actions
+        uses: $/lint-github-actions
 
   test-unpinned-action-fails:
     runs-on: ubuntu-latest
@@ -68,7 +68,7 @@ jobs:
       - name: "Test: a floating-tag uses: fails zizmor"
         id: lint
         continue-on-error: true
-        uses: ./lint-github-actions
+        uses: $/lint-github-actions
 
       - name: "Verify: outcome must be failure"
         env:
@@ -97,14 +97,14 @@ jobs:
           cp tests/lint-github-actions/unpinned-action/ci.yaml .github/workflows/unpinned-action.yaml
 
       - name: "Test: paths scoped to only the clean file passes despite the broken one being present"
-        uses: ./lint-github-actions
+        uses: $/lint-github-actions
         with:
           paths: .github/workflows/clean.yaml
 
       - name: "Test: paths scoped to the broken file fails"
         id: lint
         continue-on-error: true
-        uses: ./lint-github-actions
+        uses: $/lint-github-actions
         with:
           paths: .github/workflows/unpinned-action.yaml
 

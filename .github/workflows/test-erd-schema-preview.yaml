@@ -39,7 +39,7 @@ jobs:
 
       - name: "Test: export and upload"
         id: export
-        uses: ./erd-schema-export
+        uses: $/erd-schema-export
         with:
           namespace: tailordb
           package-manager: pnpm
@@ -89,7 +89,7 @@ jobs:
 
       - name: "Test: relevant namespace with no matching base run renders as added"
         id: preview
-        uses: ./erd-schema-preview
+        uses: $/erd-schema-preview
         with:
           namespace: tailordb
           package-manager: pnpm
@@ -143,7 +143,7 @@ jobs:
 
       - name: "Test: no relevant path skips rendering"
         id: preview
-        uses: ./erd-schema-preview
+        uses: $/erd-schema-preview
         with:
           namespace: tailordb
           package-manager: pnpm
@@ -209,7 +209,7 @@ jobs:
       - name: "Test: namespace missing at head is still treated as relevant"
         id: preview
         continue-on-error: true
-        uses: ./erd-schema-preview
+        uses: $/erd-schema-preview
         with:
           namespace: tailordb
           package-manager: pnpm
@@ -265,7 +265,7 @@ jobs:
 
       - name: Render preview
         id: preview
-        uses: ./erd-schema-preview
+        uses: $/erd-schema-preview
         with:
           namespace: tailordb
           package-manager: pnpm
@@ -283,7 +283,7 @@ jobs:
 
       - name: "Test: post the aggregated comment"
         id: comment
-        uses: ./erd-schema-comment
+        uses: $/erd-schema-comment
         with:
           base-ref: main
           github-token: ${{ secrets.GITHUB_TOKEN }}

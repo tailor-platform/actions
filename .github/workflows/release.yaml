@@ -77,7 +77,7 @@ jobs:
       # other means (e.g. manually via the GitHub UI).
       - name: Update major version tag
         if: steps.changesets.outputs.published == 'true'
-        uses: ./.github/actions/update-major-tag
+        uses: $/.github/actions/update-major-tag
         with:
           release-tag: v${{ fromJson(steps.changesets.outputs['published-packages'])[0].version }}
           ref: ${{ github.sha }}
