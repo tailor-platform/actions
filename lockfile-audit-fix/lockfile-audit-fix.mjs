@@ -50,6 +50,7 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync, appendFileSync } f
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { pathToFileURL } from "node:url";
+import { parseDocument, isMap } from "yaml";
 
 /**
  * `.advisories` is an object keyed by advisory ID in both npm's classic
@@ -154,6 +155,203 @@ function runFix(mode, cwd) {
     if (e.code === "ENOENT") throw new Error(`pnpm not found: ${e.message}`);
     // best-effort otherwise; the caller verifies installability separately
   }
+}
+
+/**
+ * Parses a `pnpm.overrides` selector into its bare package name and version
+ * range. `pnpm audit --fix override` only ever writes the plain
+ * `<name>[@<range>]` form (never the nested `<parent>>child@<range>`
+ * selector pnpm also supports for scoping an override to one dependency
+ * path). The `>` that marks a nested selector always lives in the name
+ * segment (before the last `@`) — unlike a `>`/`>=` range comparator, which
+ * lives after it — so the name/range split happens first and only the name
+ * half is checked, to avoid misreading a range like `>=3.0.0 <3.1.5` as
+ * nested.
+ * @param {string} selector
+ */
+function parseOverrideSelector(selector) {
+  const atIndex = selector.startsWith("@") ? selector.indexOf("@", 1) : selector.indexOf("@");
+  const name = atIndex === -1 ? selector : selector.slice(0, atIndex);
+  const range = atIndex === -1 ? null : selector.slice(atIndex + 1);
+  if (name.includes(">")) return { name: selector, range: null, nested: true };
+  return { name, range, nested: false };
+}
+
+/**
+ * Parses one of `pnpm audit --fix`'s own range shapes into a version
+ * interval: `<X`, `<=X`, `>=X`, `>=X <Y`, `>=X <=Y`, or a bare `X` (exact
+ * pin). Returns null for anything else (a prerelease/build-metadata tag, an
+ * `||` union, ...) so the caller abstains rather than guesses.
+ * @param {string | null} range
+ * @returns {{lower: string|null, lowerIncl: boolean, upper: string|null, upperIncl: boolean} | null}
+ */
+function parseVersionInterval(range) {
+  if (range == null) return { lower: null, lowerIncl: true, upper: null, upperIncl: true };
+  let lower = null;
+  let lowerIncl = true;
+  let upper = null;
+  let upperIncl = true;
+  for (const token of range.trim().split(/\s+/)) {
+    const m = token.match(/^(>=|>|<=|<)?(\d[\w.+-]*)$/);
+    if (!m) return null;
+    const [, op, version] = m;
+    if (op === ">=") {
+      lower = version;
+      lowerIncl = true;
+    } else if (op === ">") {
+      lower = version;
+      lowerIncl = false;
+    } else if (op === "<=") {
+      upper = version;
+      upperIncl = true;
+    } else if (op === "<") {
+      upper = version;
+      upperIncl = false;
+    } else {
+      // no operator: an exact pin is both its own lower and upper bound
+      lower = version;
+      lowerIncl = true;
+      upper = version;
+      upperIncl = true;
+    }
+  }
+  return { lower, lowerIncl, upper, upperIncl };
+}
+
+/**
+ * @param {string} version e.g. "3.1.18", "^18.2.5", "~1.2.3"
+ * @returns {number[] | null} dotted numeric parts, or null when any part
+ *   isn't a plain integer (a prerelease tag can't be compared numerically)
+ */
+function numericVersionParts(version) {
+  const parts = version.replace(/^[\^~]/, "").split(".");
+  return parts.every((p) => /^\d+$/.test(p)) ? parts.map(Number) : null;
+}
+
+/** @returns {number | null} -1/0/1, or null when either side can't be compared numerically */
+function compareVersions(a, b) {
+  const pa = numericVersionParts(a);
+  const pb = numericVersionParts(b);
+  if (!pa || !pb) return null;
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (diff !== 0) return diff < 0 ? -1 : 1;
+  }
+  return 0;
+}
+
+/**
+ * @param {ReturnType<typeof parseVersionInterval>} inner
+ * @param {ReturnType<typeof parseVersionInterval>} outer
+ * @returns {boolean} true if every version matching `inner` also matches `outer`
+ */
+function isIntervalSubset(inner, outer) {
+  if (!inner || !outer) return false;
+  if (outer.lower != null) {
+    if (inner.lower == null) return false;
+    const cmp = compareVersions(inner.lower, outer.lower);
+    if (cmp === null || cmp < 0) return false;
+    if (cmp === 0 && inner.lowerIncl && !outer.lowerIncl) return false;
+  }
+  if (outer.upper != null) {
+    if (inner.upper == null) return false;
+    const cmp = compareVersions(inner.upper, outer.upper);
+    if (cmp === null || cmp > 0) return false;
+    if (cmp === 0 && inner.upperIncl && !outer.upperIncl) return false;
+  }
+  return true;
+}
+
+/**
+ * Collapses redundant `pnpm.overrides` entries that `pnpm audit --fix
+ * override` accumulates across repeated runs: as GHSA advisory data for a
+ * package gets revised (a wider vulnerable range published, a newer patched
+ * version released), each run appends a brand-new `name@range: version`
+ * selector rather than replacing the one it already wrote for that package,
+ * so the override list only ever grows.
+ *
+ * An entry is dropped only when another surviving entry for the same bare
+ * package name *dominates* it: that entry's range is a superset of the
+ * dropped one's, and it pins to a version that's the same or newer — so
+ * every package version the dropped entry would have matched is still
+ * covered, at least as well, by the entry that remains. When two entries
+ * have an equal range and version, the one earlier in the original list
+ * wins (an arbitrary but stable tie-break — this never removes both). Any
+ * nested selector, or any range/version this can't parse as a plain
+ * numeric interval, is left untouched rather than guessed at.
+ * @param {[string, string][]} entries in original file order
+ * @returns {{survivors: [string, string][], removedKeys: string[]}}
+ */
+function dedupeOverrideEntries(entries) {
+  const parsed = entries.map(([key, version], index) => ({
+    key,
+    version,
+    index,
+    ...parseOverrideSelector(key),
+  }));
+
+  const removed = new Set();
+  for (const a of parsed) {
+    if (a.nested) continue;
+    const intervalA = parseVersionInterval(a.range);
+    if (!intervalA) continue;
+
+    const dominatedBy = parsed.find((b) => {
+      if (b.key === a.key || b.nested || b.name !== a.name) return false;
+      const intervalB = parseVersionInterval(b.range);
+      if (!intervalB) return false;
+      if (!isIntervalSubset(intervalA, intervalB)) return false;
+      const versionCmp = compareVersions(a.version, b.version);
+      if (versionCmp === null || versionCmp > 0) return false;
+      // equal range and version: keep whichever entry is earlier in the file
+      if (versionCmp === 0 && isIntervalSubset(intervalB, intervalA) && b.index > a.index) return false;
+      return true;
+    });
+    if (dominatedBy) removed.add(a.key);
+  }
+
+  return {
+    survivors: entries.filter(([key]) => !removed.has(key)),
+    removedKeys: entries.map(([key]) => key).filter((key) => removed.has(key)),
+  };
+}
+
+/**
+ * @param {string} workspacePath
+ * @returns {boolean} true if the file was rewritten
+ */
+function dedupeWorkspaceOverrides(workspacePath) {
+  if (!existsSync(workspacePath)) return false;
+  const doc = parseDocument(readFileSync(workspacePath, "utf8"));
+  const overridesNode = doc.get("overrides", true);
+  if (!isMap(overridesNode)) return false;
+
+  const entries = Object.entries(overridesNode.toJSON() ?? {});
+  const { removedKeys } = dedupeOverrideEntries(entries);
+  if (removedKeys.length === 0) return false;
+
+  for (const key of removedKeys) overridesNode.delete(key);
+  writeFileSync(workspacePath, String(doc));
+  return true;
+}
+
+/**
+ * @param {string} packageJsonPath
+ * @returns {boolean} true if the file was rewritten
+ */
+function dedupePackageJsonOverrides(packageJsonPath) {
+  const pkg = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+  const overrides = pkg.pnpm?.overrides;
+  if (!overrides || typeof overrides !== "object") return false;
+
+  const entries = Object.entries(overrides);
+  const { survivors, removedKeys } = dedupeOverrideEntries(entries);
+  if (removedKeys.length === 0) return false;
+
+  pkg.pnpm.overrides = Object.fromEntries(survivors);
+  writeFileSync(packageJsonPath, `${JSON.stringify(pkg, null, 2)}\n`);
+  return true;
 }
 
 /**
@@ -412,6 +610,8 @@ function main() {
   }
 
   runFix("override", cwd);
+  dedupeWorkspaceOverrides(workspacePath);
+  dedupePackageJsonOverrides(packageJsonPath);
   try {
     verifyInstallable(cwd);
   } catch (e) {
@@ -469,4 +669,11 @@ export {
   loadFixedGroupNormalizer,
   diffRuntimeDeps,
   buildSummary,
+  parseOverrideSelector,
+  parseVersionInterval,
+  compareVersions,
+  isIntervalSubset,
+  dedupeOverrideEntries,
+  dedupeWorkspaceOverrides,
+  dedupePackageJsonOverrides,
 };

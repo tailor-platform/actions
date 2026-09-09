@@ -17,6 +17,13 @@ import {
   loadFixedGroupNormalizer,
   diffRuntimeDeps,
   buildSummary,
+  parseOverrideSelector,
+  parseVersionInterval,
+  compareVersions,
+  isIntervalSubset,
+  dedupeOverrideEntries,
+  dedupeWorkspaceOverrides,
+  dedupePackageJsonOverrides,
 } from "./lockfile-audit-fix.mjs";
 
 describe("extractAdvisoryIds", () => {
@@ -187,6 +194,313 @@ describe("diffRuntimeDeps", () => {
     const before = withDeps("missing-dir", "foo");
     const after = withDeps("missing-dir", "foo-renamed");
     assert.deepEqual(diffRuntimeDeps({ beforeText: before, afterText: after, cwd }), []);
+  });
+});
+
+describe("parseOverrideSelector", () => {
+  test("splits a plain name@range selector", () => {
+    assert.deepEqual(parseOverrideSelector("brace-expansion@<1.1.18"), {
+      name: "brace-expansion",
+      range: "<1.1.18",
+      nested: false,
+    });
+  });
+
+  test("splits a scoped name@range selector on the second @", () => {
+    assert.deepEqual(parseOverrideSelector("@faker-js/faker@<=10.4.0"), {
+      name: "@faker-js/faker",
+      range: "<=10.4.0",
+      nested: false,
+    });
+  });
+
+  test("treats a bare name (no range) as unconditional", () => {
+    assert.deepEqual(parseOverrideSelector("trim"), { name: "trim", range: null, nested: false });
+  });
+
+  test("flags a nested parent>child selector so it's never deduped", () => {
+    assert.deepEqual(parseOverrideSelector("foo>bar@1.0.0"), { name: "foo>bar@1.0.0", range: null, nested: true });
+  });
+});
+
+describe("parseVersionInterval", () => {
+  test("parses an upper-bound-only range", () => {
+    assert.deepEqual(parseVersionInterval("<1.1.18"), {
+      lower: null,
+      lowerIncl: true,
+      upper: "1.1.18",
+      upperIncl: false,
+    });
+  });
+
+  test("parses a lower-and-upper range", () => {
+    assert.deepEqual(parseVersionInterval(">=3.0.0 <3.1.5"), {
+      lower: "3.0.0",
+      lowerIncl: true,
+      upper: "3.1.5",
+      upperIncl: false,
+    });
+  });
+
+  test("parses an inclusive upper bound", () => {
+    assert.deepEqual(parseVersionInterval(">=6.14.2 <=6.15.3"), {
+      lower: "6.14.2",
+      lowerIncl: true,
+      upper: "6.15.3",
+      upperIncl: true,
+    });
+  });
+
+  test("parses a bare exact version as both bounds", () => {
+    assert.deepEqual(parseVersionInterval("1.2.3"), { lower: "1.2.3", lowerIncl: true, upper: "1.2.3", upperIncl: true });
+  });
+
+  test("treats a null range as unconditional (unbounded both sides)", () => {
+    assert.deepEqual(parseVersionInterval(null), { lower: null, lowerIncl: true, upper: null, upperIncl: true });
+  });
+
+  test("returns null for a range it doesn't recognize", () => {
+    assert.equal(parseVersionInterval("1.2.3-rc.1 || 2.0.0"), null);
+  });
+});
+
+describe("compareVersions", () => {
+  test("compares dotted numeric versions", () => {
+    assert.equal(compareVersions("1.1.16", "1.1.18"), -1);
+    assert.equal(compareVersions("1.1.18", "1.1.16"), 1);
+    assert.equal(compareVersions("1.1.18", "1.1.18"), 0);
+  });
+
+  test("strips a leading ^ or ~ before comparing", () => {
+    assert.equal(compareVersions("^18.2.4", "^18.2.5"), -1);
+    assert.equal(compareVersions("~1.2.3", "1.2.3"), 0);
+  });
+
+  test("returns null when a part isn't a plain integer", () => {
+    assert.equal(compareVersions("1.2.3-rc.1", "1.2.3"), null);
+  });
+});
+
+describe("isIntervalSubset", () => {
+  test("a narrower upper-bounded range is a subset of a wider one", () => {
+    const inner = parseVersionInterval("<1.1.16");
+    const outer = parseVersionInterval("<1.1.18");
+    assert.equal(isIntervalSubset(inner, outer), true);
+    assert.equal(isIntervalSubset(outer, inner), false);
+  });
+
+  test("an inclusive upper bound is still a subset of a larger exclusive one", () => {
+    const inner = parseVersionInterval(">=3.0.0 <=3.1.3");
+    const outer = parseVersionInterval(">=3.0.0 <3.1.5");
+    assert.equal(isIntervalSubset(inner, outer), true);
+  });
+
+  test("a narrower lower bound with a tighter upper bound is a subset", () => {
+    const inner = parseVersionInterval(">=6.14.2 <=6.15.3");
+    const outer = parseVersionInterval(">=2.2.5 <6.16.0");
+    assert.equal(isIntervalSubset(inner, outer), true);
+    assert.equal(isIntervalSubset(outer, inner), false);
+  });
+
+  test("an unconditional (null) range is a superset of everything", () => {
+    const inner = parseVersionInterval("<1.1.18");
+    const outer = parseVersionInterval(null);
+    assert.equal(isIntervalSubset(inner, outer), true);
+    assert.equal(isIntervalSubset(outer, inner), false);
+  });
+});
+
+describe("dedupeOverrideEntries", () => {
+  test("collapses brace-expansion's three accumulated upper-bound entries into the widest one", () => {
+    const entries = [
+      ["brace-expansion@<1.1.16", "1.1.18"],
+      ["brace-expansion@<1.1.17", "1.1.18"],
+      ["brace-expansion@<1.1.18", "1.1.18"],
+    ];
+    const { survivors, removedKeys } = dedupeOverrideEntries(entries);
+    assert.deepEqual(survivors, [["brace-expansion@<1.1.18", "1.1.18"]]);
+    assert.deepEqual(removedKeys.sort(), ["brace-expansion@<1.1.16", "brace-expansion@<1.1.17"]);
+  });
+
+  test("collapses fast-uri's three overlapping ranges (mixed <, <=) into the widest one", () => {
+    const entries = [
+      ["fast-uri@>=3.0.0 <3.1.3", "3.1.6"],
+      ["fast-uri@>=3.0.0 <3.1.5", "3.1.6"],
+      ["fast-uri@>=3.0.0 <=3.1.3", "3.1.6"],
+    ];
+    const { survivors } = dedupeOverrideEntries(entries);
+    assert.deepEqual(survivors, [["fast-uri@>=3.0.0 <3.1.5", "3.1.6"]]);
+  });
+
+  test("drops the narrower-range entry even when its pinned version is older, as long as the wider entry's is newer", () => {
+    const entries = [
+      ["joi@>=18.0.0 <18.2.4", "^18.2.4"],
+      ["joi@>=18.0.0 <18.2.5", "^18.2.5"],
+    ];
+    const { survivors } = dedupeOverrideEntries(entries);
+    assert.deepEqual(survivors, [["joi@>=18.0.0 <18.2.5", "^18.2.5"]]);
+  });
+
+  test("drops a narrower-range entry nested inside a wider one even when the wider one was written first", () => {
+    const entries = [
+      ["qs@>=2.2.5 <6.16.0", "^6.16.0"],
+      ["qs@>=6.14.2 <=6.15.3", "^6.16.0"],
+    ];
+    const { survivors } = dedupeOverrideEntries(entries);
+    assert.deepEqual(survivors, [["qs@>=2.2.5 <6.16.0", "^6.16.0"]]);
+  });
+
+  test("keeps both entries when neither range is a subset of the other", () => {
+    const entries = [
+      ["pkg@<1.0.0", "1.0.0"],
+      ["pkg@>=2.0.0 <3.0.0", "2.0.0"],
+    ];
+    const { survivors, removedKeys } = dedupeOverrideEntries(entries);
+    assert.deepEqual(survivors, entries);
+    assert.deepEqual(removedKeys, []);
+  });
+
+  test("keeps the narrower entry when its pinned version is newer than the wider entry's", () => {
+    // The wider range's fix (1.0.0) wouldn't satisfy the narrower range's
+    // requirement (1.0.1), so dropping the narrower entry would under-fix it.
+    const entries = [
+      ["pkg@<1.0.0", "1.0.1"],
+      ["pkg@<2.0.0", "1.0.0"],
+    ];
+    const { survivors, removedKeys } = dedupeOverrideEntries(entries);
+    assert.deepEqual(survivors, entries);
+    assert.deepEqual(removedKeys, []);
+  });
+
+  test("keeps exactly one of two entries with an identical range and version (earlier one wins)", () => {
+    const entries = [
+      ["pkg@<1.0.0", "1.0.0"],
+      ["pkg@<1.0.0 ", "1.0.0"], // a hypothetical differently-spaced duplicate selector
+    ];
+    const { survivors, removedKeys } = dedupeOverrideEntries(entries);
+    assert.equal(survivors.length, 1);
+    assert.deepEqual(survivors[0], entries[0]);
+    assert.equal(removedKeys.length, 1);
+  });
+
+  test("leaves an unparsable range/version untouched", () => {
+    const entries = [
+      ["pkg@1.0.0-rc.1 || 2.0.0", "1.0.0"],
+      ["pkg@<3.0.0", "3.0.0"],
+    ];
+    const { survivors, removedKeys } = dedupeOverrideEntries(entries);
+    assert.deepEqual(survivors, entries);
+    assert.deepEqual(removedKeys, []);
+  });
+
+  test("never touches nested parent>child selectors", () => {
+    const entries = [
+      ["foo>brace-expansion@<1.1.16", "1.1.18"],
+      ["brace-expansion@<1.1.18", "1.1.18"],
+    ];
+    const { survivors, removedKeys } = dedupeOverrideEntries(entries);
+    assert.deepEqual(survivors, entries);
+    assert.deepEqual(removedKeys, []);
+  });
+});
+
+describe("dedupeWorkspaceOverrides", () => {
+  let cwd;
+
+  before(() => {
+    cwd = mkdtempSync(join(tmpdir(), "lockfile-audit-fix-dedupe-workspace-test-"));
+  });
+
+  after(() => {
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  test("rewrites pnpm-workspace.yaml, dropping dominated entries and preserving the rest", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(
+      workspacePath,
+      [
+        "packages:",
+        "  - packages/*",
+        "",
+        "overrides:",
+        "  brace-expansion@<1.1.16: 1.1.18",
+        "  brace-expansion@<1.1.18: 1.1.18",
+        "  nanoid@<3.3.18: 3.3.18",
+        "",
+      ].join("\n"),
+    );
+
+    const changed = dedupeWorkspaceOverrides(workspacePath);
+    assert.equal(changed, true);
+
+    const result = readFileSync(workspacePath, "utf8");
+    assert.doesNotMatch(result, /brace-expansion@<1\.1\.16/);
+    assert.match(result, /brace-expansion@<1\.1\.18: 1\.1\.18/);
+    assert.match(result, /nanoid@<3\.3\.18: 3\.3\.18/);
+    assert.match(result, /packages\/\*/); // untouched sections survive round-trip
+  });
+
+  test("is a no-op when there is nothing to dedupe", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    const original = readFileSync(workspacePath, "utf8");
+    assert.equal(dedupeWorkspaceOverrides(workspacePath), false);
+    assert.equal(readFileSync(workspacePath, "utf8"), original);
+  });
+
+  test("returns false when the file doesn't exist", () => {
+    assert.equal(dedupeWorkspaceOverrides(join(cwd, "missing.yaml")), false);
+  });
+
+  test("returns false when the file has no overrides section", () => {
+    const workspacePath = join(cwd, "no-overrides.yaml");
+    writeFileSync(workspacePath, "packages:\n  - packages/*\n");
+    assert.equal(dedupeWorkspaceOverrides(workspacePath), false);
+  });
+});
+
+describe("dedupePackageJsonOverrides", () => {
+  let cwd;
+
+  before(() => {
+    cwd = mkdtempSync(join(tmpdir(), "lockfile-audit-fix-dedupe-package-json-test-"));
+  });
+
+  after(() => {
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  test("rewrites package.json's pnpm.overrides, dropping dominated entries", () => {
+    const packageJsonPath = join(cwd, "package.json");
+    writeFileSync(
+      packageJsonPath,
+      JSON.stringify(
+        {
+          name: "root-pkg",
+          pnpm: {
+            overrides: {
+              "joi@>=18.0.0 <18.2.4": "^18.2.4",
+              "joi@>=18.0.0 <18.2.5": "^18.2.5",
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const changed = dedupePackageJsonOverrides(packageJsonPath);
+    assert.equal(changed, true);
+
+    const pkg = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+    assert.deepEqual(pkg.pnpm.overrides, { "joi@>=18.0.0 <18.2.5": "^18.2.5" });
+    assert.equal(pkg.name, "root-pkg");
+  });
+
+  test("returns false when there is no pnpm.overrides object", () => {
+    const packageJsonPath = join(cwd, "plain.json");
+    writeFileSync(packageJsonPath, JSON.stringify({ name: "plain-pkg" }));
+    assert.equal(dedupePackageJsonOverrides(packageJsonPath), false);
   });
 });
 
