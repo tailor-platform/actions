@@ -157,6 +157,266 @@ function runFix(mode, cwd) {
 }
 
 /**
+ * Parses a `pnpm.overrides` selector into its bare package name and version
+ * range. `pnpm audit --fix override` only ever writes the plain
+ * `<name>[@<range>]` form (never the nested `<parent>>child@<range>`
+ * selector pnpm also supports for scoping an override to one dependency
+ * path). The `>` that marks a nested selector always lives in the name
+ * segment (before the last `@`) — unlike a `>`/`>=` range comparator, which
+ * lives after it — so the name/range split happens first and only the name
+ * half is checked, to avoid misreading a range like `>=3.0.0 <3.1.5` as
+ * nested.
+ * @param {string} selector
+ */
+function parseOverrideSelector(selector) {
+  const atIndex = selector.startsWith("@") ? selector.indexOf("@", 1) : selector.indexOf("@");
+  const name = atIndex === -1 ? selector : selector.slice(0, atIndex);
+  const range = atIndex === -1 ? null : selector.slice(atIndex + 1);
+  if (name.includes(">")) return { name: selector, range: null, nested: true };
+  return { name, range, nested: false };
+}
+
+/**
+ * Parses one of `pnpm audit --fix`'s own range shapes into a version
+ * interval: `<X`, `<=X`, `>=X`, `>=X <Y`, `>=X <=Y`, or a bare `X` (exact
+ * pin). Returns null for anything else (a prerelease/build-metadata tag, an
+ * `||` union, ...) so the caller abstains rather than guesses.
+ * @param {string | null} range
+ * @returns {{lower: string|null, lowerIncl: boolean, upper: string|null, upperIncl: boolean} | null}
+ */
+function parseVersionInterval(range) {
+  if (range == null) return { lower: null, lowerIncl: true, upper: null, upperIncl: true };
+  let lower = null;
+  let lowerIncl = true;
+  let upper = null;
+  let upperIncl = true;
+  for (const token of range.trim().split(/\s+/)) {
+    const m = token.match(/^(>=|>|<=|<)?(\d[\w.+-]*)$/);
+    if (!m) return null;
+    const [, op, version] = m;
+    if (op === ">=") {
+      lower = version;
+      lowerIncl = true;
+    } else if (op === ">") {
+      lower = version;
+      lowerIncl = false;
+    } else if (op === "<=") {
+      upper = version;
+      upperIncl = true;
+    } else if (op === "<") {
+      upper = version;
+      upperIncl = false;
+    } else {
+      // no operator: an exact pin is both its own lower and upper bound
+      lower = version;
+      lowerIncl = true;
+      upper = version;
+      upperIncl = true;
+    }
+  }
+  return { lower, lowerIncl, upper, upperIncl };
+}
+
+/**
+ * @param {string} version e.g. "3.1.18", "^18.2.5", "~1.2.3"
+ * @returns {number[] | null} dotted numeric parts, or null when any part
+ *   isn't a plain integer (a prerelease tag can't be compared numerically)
+ */
+function numericVersionParts(version) {
+  const parts = version.replace(/^[\^~]/, "").split(".");
+  return parts.every((p) => /^\d+$/.test(p)) ? parts.map(Number) : null;
+}
+
+/** @returns {number | null} -1/0/1, or null when either side can't be compared numerically */
+function compareVersions(a, b) {
+  const pa = numericVersionParts(a);
+  const pb = numericVersionParts(b);
+  if (!pa || !pb) return null;
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (diff !== 0) return diff < 0 ? -1 : 1;
+  }
+  return 0;
+}
+
+/**
+ * @param {ReturnType<typeof parseVersionInterval>} inner
+ * @param {ReturnType<typeof parseVersionInterval>} outer
+ * @returns {boolean} true if every version matching `inner` also matches `outer`
+ */
+function isIntervalSubset(inner, outer) {
+  if (!inner || !outer) return false;
+  if (outer.lower != null) {
+    if (inner.lower == null) return false;
+    const cmp = compareVersions(inner.lower, outer.lower);
+    if (cmp === null || cmp < 0) return false;
+    if (cmp === 0 && inner.lowerIncl && !outer.lowerIncl) return false;
+  }
+  if (outer.upper != null) {
+    if (inner.upper == null) return false;
+    const cmp = compareVersions(inner.upper, outer.upper);
+    if (cmp === null || cmp > 0) return false;
+    if (cmp === 0 && inner.upperIncl && !outer.upperIncl) return false;
+  }
+  return true;
+}
+
+/**
+ * Collapses redundant `pnpm.overrides` entries that `pnpm audit --fix
+ * override` accumulates across repeated runs: as GHSA advisory data for a
+ * package gets revised (a wider vulnerable range published, a newer patched
+ * version released), each run appends a brand-new `name@range: version`
+ * selector rather than replacing the one it already wrote for that package,
+ * so the override list only ever grows.
+ *
+ * An entry is dropped only when another surviving entry for the same bare
+ * package name *dominates* it: that entry's range is a superset of the
+ * dropped one's, and it pins to a version that's the same or newer — so
+ * every package version the dropped entry would have matched is still
+ * covered, at least as well, by the entry that remains. When two entries
+ * have an equal range and version, the one earlier in the original list
+ * wins (an arbitrary but stable tie-break — this never removes both). Any
+ * nested selector, or any range/version this can't parse as a plain
+ * numeric interval, is left untouched rather than guessed at.
+ * @param {[string, string][]} entries in original file order
+ * @returns {{survivors: [string, string][], removedKeys: string[]}}
+ */
+function dedupeOverrideEntries(entries) {
+  const parsed = entries.map(([key, version], index) => ({
+    key,
+    version,
+    index,
+    ...parseOverrideSelector(key),
+  }));
+
+  const removed = new Set();
+  for (const a of parsed) {
+    if (a.nested) continue;
+    const intervalA = parseVersionInterval(a.range);
+    if (!intervalA) continue;
+
+    const dominatedBy = parsed.find((b) => {
+      if (b.key === a.key || b.nested || b.name !== a.name) return false;
+      const intervalB = parseVersionInterval(b.range);
+      if (!intervalB) return false;
+      if (!isIntervalSubset(intervalA, intervalB)) return false;
+      const versionCmp = compareVersions(a.version, b.version);
+      if (versionCmp === null || versionCmp > 0) return false;
+      // equal range and version: keep whichever entry is earlier in the file
+      if (versionCmp === 0 && isIntervalSubset(intervalB, intervalA) && b.index > a.index) return false;
+      return true;
+    });
+    if (dominatedBy) removed.add(a.key);
+  }
+
+  return {
+    survivors: entries.filter(([key]) => !removed.has(key)),
+    removedKeys: entries.map(([key]) => key).filter((key) => removed.has(key)),
+  };
+}
+
+/**
+ * Parses one line of pnpm-workspace.yaml's `overrides:` block into its raw
+ * key and value. pnpm quotes a key when it starts with `@` (a plain YAML
+ * scalar can't start with that character) but never quotes one that merely
+ * contains range operators like `<`/`>=` mid-string, so both forms show up
+ * across real entries; this unquotes either. Returns null for anything
+ * that isn't a `key: value` line (a comment, a blank line, ...), which the
+ * caller then leaves untouched.
+ * @param {string} line
+ * @returns {{key: string, value: string} | null}
+ */
+function parseOverrideLine(line) {
+  if (/^\s*#/.test(line)) return null;
+  const m = line.match(/^\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^:\s][^:]*?):\s*(.+?)\s*$/);
+  if (!m) return null;
+  let key = m[1];
+  if ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'"))) {
+    key = key.slice(1, -1);
+  }
+  return { key, value: m[2] };
+}
+
+/**
+ * Finds the line range of pnpm-workspace.yaml's top-level `overrides:`
+ * block: the line index of `overrides:` itself, and the exclusive end
+ * index where a line returns to column 0 (the next top-level key). Blank
+ * lines inside the block don't end it.
+ * @param {string[]} lines
+ * @returns {{headerIdx: number, endIdx: number} | null}
+ */
+function findOverridesBlock(lines) {
+  const headerIdx = lines.findIndex((l) => /^overrides:\s*$/.test(l));
+  if (headerIdx === -1) return null;
+  let endIdx = lines.length;
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    if (lines[i].trim() === "") continue;
+    if (!/^\s/.test(lines[i])) {
+      endIdx = i;
+      break;
+    }
+  }
+  return { headerIdx, endIdx };
+}
+
+/**
+ * Edits pnpm-workspace.yaml's `overrides:` block by deleting whole lines,
+ * not by parsing/re-serializing the file with a YAML library: this action
+ * runs via `node "${{ github.action_path }}/lockfile-audit-fix.mjs"` with
+ * no install step for its own dependencies, in both the composite action
+ * itself and this repo's own unit-tests job, so it can only rely on
+ * Node's built-in modules (matching parseImporters above, which parses
+ * pnpm-lock.yaml's importers block as raw indented text for the same
+ * reason). Deleting matched lines outright also guarantees every
+ * untouched line survives byte-for-byte, comments included.
+ * @param {string} workspacePath
+ * @returns {boolean} true if the file was rewritten
+ */
+function dedupeWorkspaceOverrides(workspacePath) {
+  if (!existsSync(workspacePath)) return false;
+  const lines = readFileSync(workspacePath, "utf8").split("\n");
+  const block = findOverridesBlock(lines);
+  if (!block) return false;
+
+  const parsedLines = [];
+  for (let i = block.headerIdx + 1; i < block.endIdx; i++) {
+    const parsed = parseOverrideLine(lines[i]);
+    if (parsed) parsedLines.push({ ...parsed, lineIndex: i });
+  }
+  if (parsedLines.length === 0) return false;
+
+  const entries = parsedLines.map(({ key, value }) => [key, value]);
+  const { removedKeys } = dedupeOverrideEntries(entries);
+  if (removedKeys.length === 0) return false;
+
+  const removedKeySet = new Set(removedKeys);
+  const removedIndexes = new Set(
+    parsedLines.filter(({ key }) => removedKeySet.has(key)).map(({ lineIndex }) => lineIndex),
+  );
+  writeFileSync(workspacePath, lines.filter((_, i) => !removedIndexes.has(i)).join("\n"));
+  return true;
+}
+
+/**
+ * @param {string} packageJsonPath
+ * @returns {boolean} true if the file was rewritten
+ */
+function dedupePackageJsonOverrides(packageJsonPath) {
+  const pkg = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+  const overrides = pkg.pnpm?.overrides;
+  if (!overrides || typeof overrides !== "object") return false;
+
+  const entries = Object.entries(overrides);
+  const { survivors, removedKeys } = dedupeOverrideEntries(entries);
+  if (removedKeys.length === 0) return false;
+
+  pkg.pnpm.overrides = Object.fromEntries(survivors);
+  writeFileSync(packageJsonPath, `${JSON.stringify(pkg, null, 2)}\n`);
+  return true;
+}
+
+/**
  * Explicit `--no-frozen-lockfile`, not just the absence of
  * `--frozen-lockfile`: pnpm auto-enables frozen mode whenever it sees
  * `CI=true` in the environment (true on every GitHub Actions runner by
@@ -412,6 +672,8 @@ function main() {
   }
 
   runFix("override", cwd);
+  dedupeWorkspaceOverrides(workspacePath);
+  dedupePackageJsonOverrides(packageJsonPath);
   try {
     verifyInstallable(cwd);
   } catch (e) {
@@ -469,4 +731,13 @@ export {
   loadFixedGroupNormalizer,
   diffRuntimeDeps,
   buildSummary,
+  parseOverrideSelector,
+  parseVersionInterval,
+  compareVersions,
+  isIntervalSubset,
+  dedupeOverrideEntries,
+  parseOverrideLine,
+  findOverridesBlock,
+  dedupeWorkspaceOverrides,
+  dedupePackageJsonOverrides,
 };
