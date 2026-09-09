@@ -1,0 +1,10 @@
+rules:
+  # `uses: ./xxx` is intentional here: these are same-repo action/reusable-workflow
+  # references invoked at the current checkout's commit (test workflows calling
+  # this repo's own actions, and update-major-tag.yaml calling its sibling
+  # action). GitHub's newer `$/...` self-repository syntax is not yet supported
+  # by actionlint (as of actionlint v1.7.12, the latest release), so switching
+  # to it would make `pnpm lint` and any actionlint-based CI permanently red
+  # until actionlint catches up. Revisit once actionlint supports `$/...`.
+  self-repository:
+    disable: true
