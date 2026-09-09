@@ -50,7 +50,6 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync, appendFileSync } f
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { pathToFileURL } from "node:url";
-import { parseDocument, isMap } from "yaml";
 
 /**
  * `.advisories` is an object keyed by advisory ID in both npm's classic
@@ -318,21 +317,84 @@ function dedupeOverrideEntries(entries) {
 }
 
 /**
+ * Parses one line of pnpm-workspace.yaml's `overrides:` block into its raw
+ * key and value. pnpm quotes a key when it starts with `@` (a plain YAML
+ * scalar can't start with that character) but never quotes one that merely
+ * contains range operators like `<`/`>=` mid-string, so both forms show up
+ * across real entries; this unquotes either. Returns null for anything
+ * that isn't a `key: value` line (a comment, a blank line, ...), which the
+ * caller then leaves untouched.
+ * @param {string} line
+ * @returns {{key: string, value: string} | null}
+ */
+function parseOverrideLine(line) {
+  if (/^\s*#/.test(line)) return null;
+  const m = line.match(/^\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^:\s][^:]*?):\s*(.+?)\s*$/);
+  if (!m) return null;
+  let key = m[1];
+  if ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'"))) {
+    key = key.slice(1, -1);
+  }
+  return { key, value: m[2] };
+}
+
+/**
+ * Finds the line range of pnpm-workspace.yaml's top-level `overrides:`
+ * block: the line index of `overrides:` itself, and the exclusive end
+ * index where a line returns to column 0 (the next top-level key). Blank
+ * lines inside the block don't end it.
+ * @param {string[]} lines
+ * @returns {{headerIdx: number, endIdx: number} | null}
+ */
+function findOverridesBlock(lines) {
+  const headerIdx = lines.findIndex((l) => /^overrides:\s*$/.test(l));
+  if (headerIdx === -1) return null;
+  let endIdx = lines.length;
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    if (lines[i].trim() === "") continue;
+    if (!/^\s/.test(lines[i])) {
+      endIdx = i;
+      break;
+    }
+  }
+  return { headerIdx, endIdx };
+}
+
+/**
+ * Edits pnpm-workspace.yaml's `overrides:` block by deleting whole lines,
+ * not by parsing/re-serializing the file with a YAML library: this action
+ * runs via `node "${{ github.action_path }}/lockfile-audit-fix.mjs"` with
+ * no install step for its own dependencies, in both the composite action
+ * itself and this repo's own unit-tests job, so it can only rely on
+ * Node's built-in modules (matching parseImporters above, which parses
+ * pnpm-lock.yaml's importers block as raw indented text for the same
+ * reason). Deleting matched lines outright also guarantees every
+ * untouched line survives byte-for-byte, comments included.
  * @param {string} workspacePath
  * @returns {boolean} true if the file was rewritten
  */
 function dedupeWorkspaceOverrides(workspacePath) {
   if (!existsSync(workspacePath)) return false;
-  const doc = parseDocument(readFileSync(workspacePath, "utf8"));
-  const overridesNode = doc.get("overrides", true);
-  if (!isMap(overridesNode)) return false;
+  const lines = readFileSync(workspacePath, "utf8").split("\n");
+  const block = findOverridesBlock(lines);
+  if (!block) return false;
 
-  const entries = Object.entries(overridesNode.toJSON() ?? {});
+  const parsedLines = [];
+  for (let i = block.headerIdx + 1; i < block.endIdx; i++) {
+    const parsed = parseOverrideLine(lines[i]);
+    if (parsed) parsedLines.push({ ...parsed, lineIndex: i });
+  }
+  if (parsedLines.length === 0) return false;
+
+  const entries = parsedLines.map(({ key, value }) => [key, value]);
   const { removedKeys } = dedupeOverrideEntries(entries);
   if (removedKeys.length === 0) return false;
 
-  for (const key of removedKeys) overridesNode.delete(key);
-  writeFileSync(workspacePath, String(doc));
+  const removedKeySet = new Set(removedKeys);
+  const removedIndexes = new Set(
+    parsedLines.filter(({ key }) => removedKeySet.has(key)).map(({ lineIndex }) => lineIndex),
+  );
+  writeFileSync(workspacePath, lines.filter((_, i) => !removedIndexes.has(i)).join("\n"));
   return true;
 }
 
@@ -674,6 +736,8 @@ export {
   compareVersions,
   isIntervalSubset,
   dedupeOverrideEntries,
+  parseOverrideLine,
+  findOverridesBlock,
   dedupeWorkspaceOverrides,
   dedupePackageJsonOverrides,
 };

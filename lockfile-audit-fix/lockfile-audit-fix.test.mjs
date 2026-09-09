@@ -22,6 +22,8 @@ import {
   compareVersions,
   isIntervalSubset,
   dedupeOverrideEntries,
+  parseOverrideLine,
+  findOverridesBlock,
   dedupeWorkspaceOverrides,
   dedupePackageJsonOverrides,
 } from "./lockfile-audit-fix.mjs";
@@ -401,6 +403,46 @@ describe("dedupeOverrideEntries", () => {
     const { survivors, removedKeys } = dedupeOverrideEntries(entries);
     assert.deepEqual(survivors, entries);
     assert.deepEqual(removedKeys, []);
+  });
+});
+
+describe("parseOverrideLine", () => {
+  test("parses an unquoted key containing range operators", () => {
+    assert.deepEqual(parseOverrideLine("  brace-expansion@<1.1.16: 1.1.18"), {
+      key: "brace-expansion@<1.1.16",
+      value: "1.1.18",
+    });
+  });
+
+  test("unquotes a key that starts with @ (quoted because a plain scalar can't start with it)", () => {
+    assert.deepEqual(parseOverrideLine('  "@faker-js/faker@<=10.4.0": ^10.5.0'), {
+      key: "@faker-js/faker@<=10.4.0",
+      value: "^10.5.0",
+    });
+  });
+
+  test("returns null for a comment line", () => {
+    assert.equal(parseOverrideLine("  # a comment: with a colon"), null);
+  });
+
+  test("returns null for a blank line", () => {
+    assert.equal(parseOverrideLine("   "), null);
+  });
+});
+
+describe("findOverridesBlock", () => {
+  test("finds the header and end index, stopping at the next top-level key", () => {
+    const lines = ["packages:", "  - packages/*", "", "overrides:", "  foo: 1.0.0", "  bar: 2.0.0", "other:", "  x: 1"];
+    assert.deepEqual(findOverridesBlock(lines), { headerIdx: 3, endIdx: 6 });
+  });
+
+  test("treats a blank line inside the block as part of it, not a terminator", () => {
+    const lines = ["overrides:", "  foo: 1.0.0", "", "  bar: 2.0.0"];
+    assert.deepEqual(findOverridesBlock(lines), { headerIdx: 0, endIdx: 4 });
+  });
+
+  test("returns null when there's no overrides key", () => {
+    assert.equal(findOverridesBlock(["packages:", "  - packages/*"]), null);
   });
 });
 
