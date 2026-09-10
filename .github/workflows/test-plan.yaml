@@ -64,7 +64,7 @@ jobs:
           echo "Created test workspace: $WORKSPACE_ID"
 
       - name: Run plan action (with workspace-id)
-        uses: ./plan
+        uses: $/plan
         with:
           workspace-id: ${{ steps.setup.outputs.workspace-id }}
           label: test-plan
@@ -78,7 +78,7 @@ jobs:
       # action reports "not provisioned" instead of running a dry-run. No
       # github-token is passed here, so no PR comment is posted (summary only).
       - name: Run plan action (empty workspace-id, not provisioned)
-        uses: ./plan
+        uses: $/plan
         with:
           workspace-id: ""
           working-directory: tests/deploy

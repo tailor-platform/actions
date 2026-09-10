@@ -40,7 +40,7 @@ jobs:
 
       - name: "Test: exports a namespace"
         id: export
-        uses: ./_internal/erd-export
+        uses: $/_internal/erd-export
         with:
           namespace: tailordb
           package-manager: pnpm
@@ -84,7 +84,7 @@ jobs:
         id: export
         env:
           FAKE_NAMESPACE_MISSING: "1"
-        uses: ./_internal/erd-export
+        uses: $/_internal/erd-export
         with:
           namespace: missing
           package-manager: pnpm
@@ -127,7 +127,7 @@ jobs:
         continue-on-error: true
         env:
           FAKE_NO_OUTPUT: "1"
-        uses: ./_internal/erd-export
+        uses: $/_internal/erd-export
         with:
           namespace: tailordb
           package-manager: pnpm
@@ -167,7 +167,7 @@ jobs:
         run: pnpm install
 
       - name: "Setup: a first export writes a real output file"
-        uses: ./_internal/erd-export
+        uses: $/_internal/erd-export
         with:
           namespace: tailordb
           package-manager: pnpm
@@ -178,7 +178,7 @@ jobs:
         continue-on-error: true
         env:
           FAKE_NO_OUTPUT: "1"
-        uses: ./_internal/erd-export
+        uses: $/_internal/erd-export
         with:
           namespace: tailordb
           package-manager: pnpm
@@ -220,7 +220,7 @@ jobs:
       - name: "Test: upload=true without artifact-name fails fast"
         id: export
         continue-on-error: true
-        uses: ./_internal/erd-export
+        uses: $/_internal/erd-export
         with:
           namespace: tailordb
           package-manager: pnpm
@@ -263,7 +263,7 @@ jobs:
       - name: "Test: a namespace of '..' is rejected before the recursive delete"
         id: export
         continue-on-error: true
-        uses: ./_internal/erd-export
+        uses: $/_internal/erd-export
         with:
           namespace: ".."
           package-manager: pnpm
@@ -305,7 +305,7 @@ jobs:
       - name: "Test: an output-directory of '/' is rejected before the recursive delete"
         id: export-root
         continue-on-error: true
-        uses: ./_internal/erd-export
+        uses: $/_internal/erd-export
         with:
           namespace: tailordb
           package-manager: pnpm
@@ -324,7 +324,7 @@ jobs:
       - name: "Test: an output-directory outside RUNNER_TEMP is rejected"
         id: export-outside-temp
         continue-on-error: true
-        uses: ./_internal/erd-export
+        uses: $/_internal/erd-export
         with:
           namespace: tailordb
           package-manager: pnpm
@@ -343,7 +343,7 @@ jobs:
       - name: "Test: a textual RUNNER_TEMP prefix that escapes via '..' is rejected"
         id: export-traversal
         continue-on-error: true
-        uses: ./_internal/erd-export
+        uses: $/_internal/erd-export
         with:
           namespace: tailordb
           package-manager: pnpm
@@ -384,7 +384,7 @@ jobs:
         run: pnpm install
 
       - name: "Test: upload=true uploads the exported HTML"
-        uses: ./_internal/erd-export
+        uses: $/_internal/erd-export
         with:
           namespace: tailordb
           package-manager: pnpm

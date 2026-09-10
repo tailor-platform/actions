@@ -28,7 +28,7 @@ jobs:
 
       - name: "Test: posts links when links is non-empty"
         id: post
-        uses: ./_internal/erd-comment
+        uses: $/_internal/erd-comment
         with:
           links: '[{"label": "tailordb", "url": "https://example.com/tailordb.html"}]'
           base-ref: main
@@ -57,7 +57,7 @@ jobs:
 
       - name: "Test: updates to a no-changes status when links is empty"
         id: update
-        uses: ./_internal/erd-comment
+        uses: $/_internal/erd-comment
         with:
           links: "[]"
           github-token: ${{ secrets.GITHUB_TOKEN }}

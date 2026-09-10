@@ -56,7 +56,7 @@ jobs:
         run: pnpm install
 
       - name: "Test: allowed license passes"
-        uses: ./check-licenses
+        uses: $/check-licenses
         with:
           working-directory: tests/check-licenses/pass
 
@@ -87,7 +87,7 @@ jobs:
       - name: "Test: disallowed license fails"
         id: check
         continue-on-error: true
-        uses: ./check-licenses
+        uses: $/check-licenses
         with:
           working-directory: tests/check-licenses/fail
 
@@ -125,7 +125,7 @@ jobs:
         run: pnpm install
 
       - name: "Test: additional-licenses allows an otherwise-disallowed license"
-        uses: ./check-licenses
+        uses: $/check-licenses
         with:
           working-directory: tests/check-licenses/fail
           additional-licenses: GPL-3.0
@@ -157,7 +157,7 @@ jobs:
       - name: "Test: denied-licenses rejects an otherwise-allowed license"
         id: check
         continue-on-error: true
-        uses: ./check-licenses
+        uses: $/check-licenses
         with:
           working-directory: tests/check-licenses/pass
           denied-licenses: MIT
@@ -198,7 +198,7 @@ jobs:
       - name: "Test: excluding MIT's group (notice) via license-groups fails"
         id: check
         continue-on-error: true
-        uses: ./check-licenses
+        uses: $/check-licenses
         with:
           working-directory: tests/check-licenses/pass
           license-groups: "reciprocal,unencumbered"
@@ -215,7 +215,7 @@ jobs:
       - name: "Test: an unknown license-groups value fails with a clear error"
         id: check-invalid
         continue-on-error: true
-        uses: ./check-licenses
+        uses: $/check-licenses
         with:
           working-directory: tests/check-licenses/pass
           license-groups: "bogus"
@@ -254,19 +254,19 @@ jobs:
         run: pnpm install
 
       - name: "Test: chain matches app-a -> mid-pkg -> gpl-leaf"
-        uses: ./check-licenses
+        uses: $/check-licenses
         with:
           working-directory: tests/check-licenses/chain
           package-exceptions: '{"GPL-3.0": [["app-a", "mid-pkg"]]}'
 
       - name: "Test: chain matches with a glob on the violating package itself"
-        uses: ./check-licenses
+        uses: $/check-licenses
         with:
           working-directory: tests/check-licenses/chain
           package-exceptions: '{"GPL-3.0": [["app-a", "gpl-*"]]}'
 
       - name: "Test: chain matches skipping the intermediate package (gaps allowed)"
-        uses: ./check-licenses
+        uses: $/check-licenses
         with:
           working-directory: tests/check-licenses/chain
           package-exceptions: '{"GPL-3.0": [["app-a", "gpl-leaf"]]}'
@@ -274,7 +274,7 @@ jobs:
       - name: "Test: wrong workspace project name does not match"
         id: check-wrong-project
         continue-on-error: true
-        uses: ./check-licenses
+        uses: $/check-licenses
         with:
           working-directory: tests/check-licenses/chain
           package-exceptions: '{"GPL-3.0": [["app-b", "mid-pkg"]]}'
@@ -291,7 +291,7 @@ jobs:
       - name: "Test: reversed chain order does not match"
         id: check-wrong-order
         continue-on-error: true
-        uses: ./check-licenses
+        uses: $/check-licenses
         with:
           working-directory: tests/check-licenses/chain
           package-exceptions: '{"GPL-3.0": [["mid-pkg", "app-a"]]}'
@@ -308,7 +308,7 @@ jobs:
       - name: "Test: chain for a different license does not match"
         id: check-wrong-license
         continue-on-error: true
-        uses: ./check-licenses
+        uses: $/check-licenses
         with:
           working-directory: tests/check-licenses/chain
           package-exceptions: '{"MPL-2.0": [["app-a", "mid-pkg"]]}'
@@ -325,7 +325,7 @@ jobs:
       - name: "Test: invalid JSON fails with a clear error"
         id: check-invalid-json
         continue-on-error: true
-        uses: ./check-licenses
+        uses: $/check-licenses
         with:
           working-directory: tests/check-licenses/chain
           package-exceptions: "not valid json"
@@ -369,7 +369,7 @@ jobs:
       - name: "Test: approving only one of two routes still fails"
         id: check-partial
         continue-on-error: true
-        uses: ./check-licenses
+        uses: $/check-licenses
         with:
           working-directory: tests/check-licenses/chain-multi-path
           package-exceptions: '{"GPL-3.0": [["app-a", "mid-pkg"]]}'
@@ -384,7 +384,7 @@ jobs:
           fi
 
       - name: "Test: approving every route passes"
-        uses: ./check-licenses
+        uses: $/check-licenses
         with:
           working-directory: tests/check-licenses/chain-multi-path
           package-exceptions: '{"GPL-3.0": [["app-a", "mid-pkg"], ["app-b", "gpl-leaf"]]}'

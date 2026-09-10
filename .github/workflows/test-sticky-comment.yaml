@@ -28,7 +28,7 @@ jobs:
 
       - name: "Test: post new sticky comment"
         id: post
-        uses: ./_internal/sticky-comment
+        uses: $/_internal/sticky-comment
         with:
           marker-prefix: "<!-- test-sticky-comment -->"
           body: |
@@ -49,7 +49,7 @@ jobs:
 
       - name: "Test: update existing sticky comment"
         id: update
-        uses: ./_internal/sticky-comment
+        uses: $/_internal/sticky-comment
         with:
           marker-prefix: "<!-- test-sticky-comment -->"
           body: |

@@ -64,7 +64,7 @@ jobs:
 
       - name: Run deploy action
         id: deploy
-        uses: ./deploy
+        uses: $/deploy
         with:
           workspace-id: ${{ steps.setup.outputs.workspace-id }}
           working-directory: tests/deploy

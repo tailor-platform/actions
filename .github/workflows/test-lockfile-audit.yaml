@@ -89,7 +89,7 @@ jobs:
       - name: "Test: a newly introduced advisory fails"
         id: audit
         continue-on-error: true
-        uses: ./lockfile-audit
+        uses: $/lockfile-audit
         with:
           working-directory: ${{ steps.fixture.outputs.fixture-dir }}
           base-sha: ${{ steps.fixture.outputs.base-sha }}
@@ -145,7 +145,7 @@ jobs:
           git commit -q -m head
 
       - name: "Test: a lockfile change with only the pre-existing advisory passes"
-        uses: ./lockfile-audit
+        uses: $/lockfile-audit
         with:
           working-directory: ${{ steps.fixture.outputs.fixture-dir }}
           base-sha: ${{ steps.fixture.outputs.base-sha }}
@@ -205,7 +205,7 @@ jobs:
       - name: "Test: a base-sha absent from this checkout's history fails hard"
         id: audit
         continue-on-error: true
-        uses: ./lockfile-audit
+        uses: $/lockfile-audit
         with:
           working-directory: ${{ steps.fixture.outputs.fixture-dir }}
           # Well-formed but unreachable in this fixture's tiny history —
