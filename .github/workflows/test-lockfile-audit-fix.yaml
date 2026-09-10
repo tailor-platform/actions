@@ -8,10 +8,19 @@ name: Test Lockfile-Audit-Fix Action
 # package.json/pnpm-lock.yaml pair to run `pnpm audit --fix` against.
 #
 # The vulnerable fixture depends on a real, still-flagged npm advisory
-# (trim@0.0.1, GHSA-w5p7-h5w8-2hfq) rather than a fabricated one, since
+# (minimist@1.2.5, GHSA-xvch-5gv4-984h) rather than a fabricated one, since
 # `pnpm audit` resolves against the real registry/advisory API. The exact
 # fixed version pnpm settles on isn't asserted (that's the registry's
 # call, and could drift) — only that a fix was attempted.
+#
+# Whatever advisory this fixture uses next, its patched version must not
+# itself be deprecated: pnpm/pnpm#13832 made `pnpm audit` deliberately
+# report `patched_versions: null` — and propose no fix — for an advisory
+# whose only patched versions are deprecated. That change landed on pnpm's
+# main branch (both the 11.x and 12.x lines release off the same trunk),
+# so it affects any pnpm release cut after 2026-08-20, not just v12.
+# trim@0.0.1 (GHSA-w5p7-h5w8-2hfq) hit exactly this once its only "patched"
+# version, 0.0.3, was deprecated too.
 
 on:
   pull_request:

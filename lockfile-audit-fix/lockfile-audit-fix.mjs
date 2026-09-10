@@ -13,7 +13,7 @@
  * "update" mode patches vulnerable versions directly in the lockfile but can
  * silently stop short: a package with two advisories at different
  * patched-version thresholds gets bumped to the version that clears only the
- * first one, and an exactly-pinned dependency (`"trim": "0.0.1"`, not a
+ * first one, and an exactly-pinned dependency (`"minimist": "1.2.5"`, not a
  * range) can't be bumped at all this way. "override" mode reaches further,
  * but pnpm resolves the override into an installable lockfile only once
  * `pnpm install` actually runs afterward — and depending on whether the
