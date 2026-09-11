@@ -482,6 +482,8 @@ Runs `pnpm audit --fix` against `pnpm-lock.yaml` (update mode, falling back to o
 
 This action does not commit or open a pull request; it only fixes the lockfile in the working tree and reports what changed. Pair it with a commit/PR step of your own so you control where a changeset gets inserted (if `runtime-deps-changed` calls for one).
 
+It also cleans up after override mode's own accumulation: when repeated runs leave multiple `pnpm.overrides`/`pnpm-workspace.yaml overrides:` selectors for the same package as GHSA advisory ranges and patched versions get revised over time, an entry is dropped only when another surviving entry for the same package covers a superset version range and pins to the same or a newer version (so no fix coverage is lost) — and separately, an entry whose target package no longer appears anywhere in the dependency tree is dropped outright, since it protects nothing. To pin a package ahead of it actually landing in the tree (so it isn't pruned as orphaned), add a `# keep-override: <reason>` comment directly above the entry in `pnpm-workspace.yaml` — there's no equivalent for `package.json`'s `pnpm.overrides`, since JSON has no comments.
+
 **Prerequisites:** The caller is responsible for checkout and pnpm setup.
 
 #### Usage

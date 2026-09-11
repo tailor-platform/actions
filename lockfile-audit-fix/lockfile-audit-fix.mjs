@@ -417,6 +417,193 @@ function dedupePackageJsonOverrides(packageJsonPath) {
 }
 
 /**
+ * pnpm's dep-path syntax (`parent>child`) and range operators (`>=3.0.0`)
+ * share the `>` character, so only the leading name segment is read here.
+ * For a nested `parent>child` selector this resolves to `parent` — which is
+ * the right target anyway: an override keyed on a parent that has left the
+ * tree is dead too.
+ */
+const OVERRIDE_TARGET = /^(?:@[^/@\s>]+\/)?[^@\s>]+/;
+
+/**
+ * A `# keep-override: <reason>` comment immediately above a
+ * pnpm-workspace.yaml override entry opts it out of orphan-pruning — for a
+ * pin intentionally placed ahead of the package actually landing in the
+ * dependency tree.
+ */
+const KEEP_OVERRIDE_COMMENT = /^#\s*keep-override\s*:/i;
+
+/**
+ * @param {string} key a `pnpm.overrides`/`pnpm-workspace.yaml overrides:` key
+ * @returns {string | null} the bare target package name, or null if unparsable
+ */
+function overrideTargetName(key) {
+  const match = key.match(OVERRIDE_TARGET);
+  return match ? match[0] : null;
+}
+
+/**
+ * True if `name` appears anywhere in `haystack` (a pnpm-lock.yaml with its
+ * own `overrides:` block excluded — see readLockfileOutsideOverrides) either
+ * as a resolved package key/peer-dependency suffix (`name@version`) or a
+ * bare importer/workspace-link key (`name:` or `'@scope/name':` — the only
+ * form a workspace link ever takes, since it gets no `packages:` entry to
+ * carry a version). Any mention counts as present, so this only ever errs
+ * toward keeping an override rather than dropping a live one. The leading
+ * boundary check is what keeps a `uri` override from matching
+ * `fast-uri@3.1.4`.
+ * @param {string} haystack
+ * @param {string} name
+ */
+function isMentioned(haystack, name) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^a-zA-Z0-9@._/-])${escaped}(@|["']?\\s*:)`, "m").test(haystack);
+}
+
+/**
+ * Reads pnpm-lock.yaml with its own top-level `overrides:` block (a mirror
+ * of pnpm-workspace.yaml's `overrides:`) excluded first — scanning the file
+ * whole would make every override look "mentioned" off the back of its own
+ * entry. Returns null when the file is missing or doesn't look like a real
+ * lockfile (no top-level `packages:` key), so callers abstain from pruning
+ * rather than act on a bad read.
+ * @param {string} lockfilePath
+ * @returns {string | null}
+ */
+function readLockfileOutsideOverrides(lockfilePath) {
+  if (!existsSync(lockfilePath)) return null;
+  const lines = readFileSync(lockfilePath, "utf8").split("\n");
+  if (!lines.some((l) => /^packages:\s*$/.test(l))) return null;
+  const block = findOverridesBlock(lines);
+  if (!block) return lines.join("\n");
+  return [...lines.slice(0, block.headerIdx), ...lines.slice(block.endIdx)].join("\n");
+}
+
+/**
+ * Drops `pnpm.overrides`/`pnpm-workspace.yaml overrides:` entries whose
+ * target package is no longer mentioned anywhere in the dependency tree
+ * (`lockfileText`, see readLockfileOutsideOverrides) — an override like that
+ * protects nothing, since pnpm never resolves it into anything, yet nothing
+ * else ever removes it, so the list only grows over time otherwise. Any
+ * entry whose target name can't be parsed is left untouched rather than
+ * guessed at.
+ * @param {[string, string][]} entries
+ * @param {string} lockfileText
+ * @returns {{survivors: [string, string][], removedKeys: string[]}}
+ */
+function pruneOrphanedOverrideEntries(entries, lockfileText) {
+  const survivors = [];
+  const removedKeys = [];
+  for (const [key, value] of entries) {
+    const name = overrideTargetName(key);
+    if (name && !isMentioned(lockfileText, name)) {
+      removedKeys.push(key);
+      continue;
+    }
+    survivors.push([key, value]);
+  }
+  return { survivors, removedKeys };
+}
+
+/**
+ * Prunes pnpm-workspace.yaml's `overrides:` block of entries whose target
+ * package is no longer mentioned anywhere in pnpm-lock.yaml's dependency
+ * tree — same line-deletion approach as dedupeWorkspaceOverrides, for the
+ * same reason (no YAML library available). Unlike dedupeWorkspaceOverrides,
+ * a dropped entry also takes any plain comment immediately above it with it
+ * (that comment only ever explained the now-dead entry), except a
+ * `# keep-override: <reason>` comment, which opts the entry out of pruning
+ * entirely instead.
+ * @param {string} workspacePath
+ * @param {string} lockfilePath
+ * @returns {boolean} true if the file was rewritten
+ */
+function pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath) {
+  if (!existsSync(workspacePath)) return false;
+  const lines = readFileSync(workspacePath, "utf8").split("\n");
+  const block = findOverridesBlock(lines);
+  if (!block) return false;
+
+  const lockfileText = readLockfileOutsideOverrides(lockfilePath);
+  if (lockfileText === null) return false;
+
+  const { headerIdx, endIdx } = block;
+  const body = lines.slice(headerIdx + 1, endIdx);
+
+  const kept = [];
+  const removedKeys = [];
+  let comments = [];
+  for (const raw of body) {
+    const trimmed = raw.trim();
+    if (trimmed === "") {
+      kept.push(...comments, raw);
+      comments = [];
+      continue;
+    }
+    if (trimmed.startsWith("#")) {
+      comments.push(raw);
+      continue;
+    }
+    const parsed = parseOverrideLine(raw);
+    if (!parsed) {
+      kept.push(...comments, raw);
+      comments = [];
+      continue;
+    }
+    const name = overrideTargetName(parsed.key);
+    const optedOut = comments.some((c) => KEEP_OVERRIDE_COMMENT.test(c.trim()));
+    if (name && !optedOut && !isMentioned(lockfileText, name)) {
+      removedKeys.push(parsed.key);
+      comments = [];
+      continue;
+    }
+    kept.push(...comments, raw);
+    comments = [];
+  }
+  kept.push(...comments);
+
+  if (removedKeys.length === 0) return false;
+  for (const key of removedKeys) {
+    console.log(`Dropping orphaned override entry "${key}" (not in the dependency tree).`);
+  }
+
+  // A childless `overrides:` parses as null rather than an empty map. pnpm
+  // tolerates that, but the whole key is dropped along with its last entry
+  // instead of relying on it.
+  const hasEntries = kept.some((l) => l.trim() !== "" && !l.trim().startsWith("#"));
+  const newLines = hasEntries
+    ? [...lines.slice(0, headerIdx + 1), ...kept, ...lines.slice(endIdx)]
+    : [...lines.slice(0, headerIdx), ...lines.slice(endIdx)];
+  writeFileSync(workspacePath, newLines.join("\n"));
+  return true;
+}
+
+/**
+ * @param {string} packageJsonPath
+ * @param {string} lockfilePath
+ * @returns {boolean} true if the file was rewritten
+ */
+function pruneOrphanedPackageJsonOverrides(packageJsonPath, lockfilePath) {
+  const pkg = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+  const overrides = pkg.pnpm?.overrides;
+  if (!overrides || typeof overrides !== "object") return false;
+
+  const lockfileText = readLockfileOutsideOverrides(lockfilePath);
+  if (lockfileText === null) return false;
+
+  const entries = Object.entries(overrides);
+  const { survivors, removedKeys } = pruneOrphanedOverrideEntries(entries, lockfileText);
+  if (removedKeys.length === 0) return false;
+  for (const key of removedKeys) {
+    console.log(`Dropping orphaned override entry "${key}" (not in the dependency tree).`);
+  }
+
+  pkg.pnpm.overrides = Object.fromEntries(survivors);
+  writeFileSync(packageJsonPath, `${JSON.stringify(pkg, null, 2)}\n`);
+  return true;
+}
+
+/**
  * Explicit `--no-frozen-lockfile`, not just the absence of
  * `--frozen-lockfile`: pnpm auto-enables frozen mode whenever it sees
  * `CI=true` in the environment (true on every GitHub Actions runner by
@@ -674,6 +861,8 @@ function main() {
   runFix("override", cwd);
   dedupeWorkspaceOverrides(workspacePath);
   dedupePackageJsonOverrides(packageJsonPath);
+  pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath);
+  pruneOrphanedPackageJsonOverrides(packageJsonPath, lockfilePath);
   try {
     verifyInstallable(cwd);
   } catch (e) {
@@ -740,4 +929,10 @@ export {
   findOverridesBlock,
   dedupeWorkspaceOverrides,
   dedupePackageJsonOverrides,
+  overrideTargetName,
+  isMentioned,
+  readLockfileOutsideOverrides,
+  pruneOrphanedOverrideEntries,
+  pruneOrphanedWorkspaceOverrides,
+  pruneOrphanedPackageJsonOverrides,
 };
