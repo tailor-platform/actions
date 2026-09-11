@@ -368,10 +368,10 @@ function findTopLevelBlock(lines, key) {
     // YAML also allows a block sequence's `-` items to sit at the same
     // column as their own key (unlike a mapping's key: value children,
     // which always need deeper indentation) — e.g.
-    // `minimumReleaseAgeExclude:\n- foo@1.0.0`. A real top-level key can
-    // never itself start with an unquoted `-` (that's only valid as a
-    // sequence-entry marker), so this is unambiguous.
-    if (/^-/.test(lines[i])) continue;
+    // `minimumReleaseAgeExclude:\n- foo@1.0.0`. The indicator must be
+    // followed by whitespace (or end the line); `-feature: enabled` is a
+    // valid plain mapping key and must still end the preceding block.
+    if (/^-(?:\s|$)/.test(lines[i])) continue;
     if (!/^\s/.test(lines[i])) {
       endIdx = i;
       break;

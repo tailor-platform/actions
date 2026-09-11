@@ -495,6 +495,11 @@ describe("findOverridesBlock", () => {
     const lines = ["minimumReleaseAgeExclude:", "- foo@1.0.0", "- bar@2.0.0", "other:", "  x: 1"];
     assert.deepEqual(findTopLevelBlock(lines, "minimumReleaseAgeExclude"), { headerIdx: 0, endIdx: 3 });
   });
+
+  test("stops before a top-level mapping key that begins with a hyphen", () => {
+    const lines = ["overrides:", "  foo@<1: 1.0.0", "-feature: enabled", "other: true"];
+    assert.deepEqual(findOverridesBlock(lines), { headerIdx: 0, endIdx: 2 });
+  });
 });
 
 describe("findTopLevelBlock", () => {
