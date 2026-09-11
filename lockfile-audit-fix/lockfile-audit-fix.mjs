@@ -503,20 +503,23 @@ function isMentioned(haystack, name) {
  * of pnpm-workspace.yaml's `overrides:`) excluded first — scanning the file
  * whole would make every override look "mentioned" off the back of its own
  * entry. Returns null when the file is missing or doesn't look like a real
- * lockfile, so callers abstain from pruning rather than act on a bad read.
- * `lockfileVersion:` (not `packages:`) is the sanity check: a workspace
- * with no external dependencies at all (every importer only depends on
- * other workspace packages) has pnpm omit the `packages:` key entirely,
- * while `lockfileVersion:` is always the first line of any real
- * pnpm-lock.yaml, verified against a real `pnpm install` on such a
- * workspace.
+ * lockfile (no top-level `packages:` key — matched as a bare prefix, so
+ * `packages: {}`, trailing whitespace, or a trailing comment don't defeat
+ * it, only its complete absence does), so callers abstain from pruning
+ * rather than act on a bad read. This deliberately also abstains on a
+ * workspace with no external dependencies at all (every importer only
+ * depends on other workspace packages), where pnpm omits the `packages:`
+ * key entirely — matching tailor-platform/sdk's own
+ * lockfile-audit-fix-normalize.mjs, which chose the same conservative
+ * trade-off (its own test: "keeps every override when the lockfile has no
+ * packages block") over trying to positively recognize that specific shape.
  * @param {string} lockfilePath
  * @returns {string | null}
  */
 function readLockfileOutsideOverrides(lockfilePath) {
   if (!existsSync(lockfilePath)) return null;
   const lines = readFileSync(lockfilePath, "utf8").split("\n");
-  if (!lines.some((l) => /^lockfileVersion\s*:/.test(l))) return null;
+  if (!lines.some((l) => /^packages\s*:/.test(l))) return null;
   const block = findOverridesBlock(lines);
   if (!block) return lines.join("\n");
   return [...lines.slice(0, block.headerIdx), ...lines.slice(block.endIdx)].join("\n");
