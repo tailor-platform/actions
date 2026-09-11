@@ -492,20 +492,28 @@ function logPrunedOverrideKeys(removedKeys) {
 
 /**
  * True if `name` appears anywhere in `haystack` (a pnpm-lock.yaml with its
- * own `overrides:` block excluded — see readLockfileOutsideOverrides) either
- * as a resolved package key/peer-dependency suffix (`name@version`) or a
- * bare importer/workspace-link key (`name:` or `'@scope/name':` — the only
- * form a workspace link ever takes, since it gets no `packages:` entry to
- * carry a version). Any mention counts as present, so this only ever errs
- * toward keeping an override rather than dropping a live one. The leading
- * boundary check is what keeps a `uri` override from matching
- * `fast-uri@3.1.4`.
+ * own `overrides:` block excluded — see readLockfileOutsideOverrides) as any
+ * of: a resolved package key/peer-dependency suffix (`name@version`), a bare
+ * importer/workspace-link key (`name:` or `'@scope/name':` — the only form a
+ * workspace link ever takes, since it gets no `packages:` entry to carry a
+ * version), a pre-v6 (`lockfileVersion` 5.x and earlier) slash-delimited
+ * package key (`/name/version:`), or a pre-v6 underscore-joined
+ * peer-resolution suffix (`name@version_peer@peerVersion`) — verified
+ * against real `pnpm@7` output, since this action doesn't require a minimum
+ * pnpm/lockfile version and a caller could still be on one. Any mention
+ * counts as present, so this only ever errs toward keeping an override
+ * rather than dropping a live one. The leading boundary check is what keeps
+ * a `uri` override from matching `fast-uri@3.1.4`; `_` and `/` are
+ * deliberately not in its excluded set (unlike letters/digits/`@`/`.`/`-`),
+ * since both legitimately precede a package name in those pre-v6 shapes and
+ * loosening the boundary there only ever adds more matches, never causes a
+ * live override to look orphaned.
  * @param {string} haystack
  * @param {string} name
  */
 function isMentioned(haystack, name) {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(^|[^a-zA-Z0-9@._/-])${escaped}(@|["']?\\s*:)`, "m").test(haystack);
+  return new RegExp(`(^|[^a-zA-Z0-9@.-])${escaped}(@|\\/|["']?\\s*:)`, "m").test(haystack);
 }
 
 /**

@@ -725,6 +725,29 @@ describe("isMentioned", () => {
   test("returns false when there is no mention at all", () => {
     assert.equal(isMentioned("some-other-pkg@1.0.0", "ghost-pkg"), false);
   });
+
+  test("matches a pre-v6 underscore-joined peer-resolution suffix", () => {
+    // Regression test: verified against a real `pnpm@7.33.7 install
+    // --lockfile-only` output (lockfileVersion: 5.4), where a peer dep is
+    // recorded as e.g. `eslint-plugin-react: 7.34.0_eslint@8.57.0` — the
+    // peer's own name/version has no `@`/`:` of its own directly after it in
+    // isolation, but is joined to the parent's version with `_`. An earlier
+    // version excluded `_` from the boundary check, so `isMentioned(...,
+    // "eslint")` returned false when this was the only occurrence, risking
+    // deletion of a still-live override.
+    assert.equal(isMentioned("  eslint-plugin-react: 7.34.0_eslint@8.57.0\n", "eslint"), true);
+  });
+
+  test("matches a pre-v6 slash-delimited package key", () => {
+    // Regression test: verified against real pnpm@7.33.7 output — a v5/v6
+    // lockfile's packages: section keys look like `/is-odd/3.0.1:` (leading
+    // and trailing slash), not the v9 `is-odd@3.0.1:` form.
+    assert.equal(isMentioned("  /is-odd/3.0.1:\n    resolution: {}\n", "is-odd"), true);
+  });
+
+  test("matches a pre-v6 scoped slash-delimited package key", () => {
+    assert.equal(isMentioned("  /@scope/live/1.0.0:\n    resolution: {}\n", "@scope/live"), true);
+  });
 });
 
 describe("readLockfileOutsideOverrides", () => {
