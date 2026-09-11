@@ -350,7 +350,11 @@ function parseOverrideLine(line) {
  * @returns {{headerIdx: number, endIdx: number} | null}
  */
 function findTopLevelBlock(lines, key) {
-  const headerRe = new RegExp(`^${key}\\s*:\\s*$`);
+  // A trailing `# ...` inline comment on the header line itself is valid
+  // YAML and doesn't change the block's meaning, so it's tolerated the same
+  // way renovate-policy-check.mjs's own header check does (a plain prefix
+  // test, no end-of-line anchor at all).
+  const headerRe = new RegExp(`^${key}\\s*:\\s*(#.*)?$`);
   const headerIdx = lines.findIndex((l) => headerRe.test(l));
   if (headerIdx === -1) return null;
   let endIdx = lines.length;
@@ -590,6 +594,17 @@ function pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath) {
       continue;
     }
     const name = overrideTargetName(parsed.key);
+    // Deliberately checks every comment directly above this entry, not just
+    // the nearest one (unlike RENOVATE_SECURITY_COMMENT's hasMarker check
+    // in annotateMinimumReleaseAgeExclude below): there's no external
+    // checker whose "only the last pendingComment counts" parsing this has
+    // to match, `# keep-override:` is this action's own convention, and
+    // dedupeWorkspaceOverrides above already sweeps a removed entry's whole
+    // comment block away with it, so a marker reaching this point always
+    // precedes only the entry it was written for. Requiring it to be the
+    // nearest line would make it easier to lose an intentional opt-out to
+    // an added note, the opposite of this file's "err toward keeping"
+    // stance elsewhere.
     const optedOut = comments.some((c) => KEEP_OVERRIDE_COMMENT.test(c.trim()));
     if (name && !optedOut && !isMentioned(lockfileText, name)) {
       removedKeys.push(parsed.key);
@@ -649,14 +664,20 @@ const RENOVATE_SECURITY_COMMENT = /^#\s*Renovate security update\s*:/i;
 /**
  * Parses a `-` list item under pnpm-workspace.yaml's
  * `minimumReleaseAgeExclude:` block into its raw entry text, unquoting a
- * double-quoted value if present. Returns null for anything that isn't a
- * `- <value>` line (a comment, a blank line, ...).
+ * single- or double-quoted value if present (a scoped package name, `@`-led,
+ * has to be quoted one way or the other in YAML). Returns null for anything
+ * that isn't a `- <value>` line (a comment, a blank line, ...).
  * @param {string} line
  * @returns {string | null}
  */
 function parseExcludeListItem(line) {
-  const m = line.match(/^\s*-\s*"?([^"]+?)"?\s*$/);
-  return m ? m[1].trim() : null;
+  const m = line.match(/^\s*-\s*(.+?)\s*$/);
+  if (!m) return null;
+  let value = m[1];
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    value = value.slice(1, -1);
+  }
+  return value;
 }
 
 /**

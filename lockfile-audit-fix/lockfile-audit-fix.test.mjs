@@ -459,6 +459,11 @@ describe("findOverridesBlock", () => {
     const lines = ["overrides :", "  foo: 1.0.0"];
     assert.deepEqual(findOverridesBlock(lines), { headerIdx: 0, endIdx: 2 });
   });
+
+  test("tolerates a trailing inline comment on the header line", () => {
+    const lines = ["minimumReleaseAgeExclude: # keep this list documented", "  - foo@1.0.0"];
+    assert.deepEqual(findTopLevelBlock(lines, "minimumReleaseAgeExclude"), { headerIdx: 0, endIdx: 2 });
+  });
 });
 
 describe("findTopLevelBlock", () => {
@@ -978,8 +983,17 @@ describe("parseExcludeListItem", () => {
     assert.equal(parseExcludeListItem("  - fast-uri@3.1.6"), "fast-uri@3.1.6");
   });
 
-  test("unquotes a quoted list item", () => {
+  test("unquotes a double-quoted list item", () => {
     assert.equal(parseExcludeListItem('  - "fast-uri@3.1.6"'), "fast-uri@3.1.6");
+  });
+
+  test("unquotes a single-quoted scoped bare name (no false version from the leading @)", () => {
+    // Regression test: an earlier version only stripped double quotes, so
+    // `'@scope/pkg'` came back as the literal string "'@scope/pkg'" (quotes
+    // included) — splitExcludeEntry then read the leading `'` as the name
+    // and everything after the `@` (including the trailing `'`) as a bogus
+    // version, wrongly marking a bare (unversioned) entry as version-pinned.
+    assert.equal(parseExcludeListItem("  - '@scope/pkg'"), "@scope/pkg");
   });
 
   test("returns null for a comment line", () => {
@@ -1100,6 +1114,16 @@ describe("annotateMinimumReleaseAgeExclude", () => {
   test("leaves a bare (unversioned) entry untouched", () => {
     const workspacePath = join(cwd, "pnpm-workspace.yaml");
     const original = ["minimumReleaseAgeExclude:", "  - is-odd", ""].join("\n");
+    writeFileSync(workspacePath, original);
+
+    const changed = annotateMinimumReleaseAgeExclude(workspacePath);
+    assert.equal(changed, false);
+    assert.equal(readFileSync(workspacePath, "utf8"), original);
+  });
+
+  test("leaves a bare single-quoted scoped name untouched (no false version from the leading @)", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    const original = ["minimumReleaseAgeExclude:", "  - '@scope/pkg'", ""].join("\n");
     writeFileSync(workspacePath, original);
 
     const changed = annotateMinimumReleaseAgeExclude(workspacePath);
