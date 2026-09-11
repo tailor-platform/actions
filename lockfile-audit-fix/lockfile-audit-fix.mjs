@@ -360,6 +360,11 @@ function findTopLevelBlock(lines, key) {
   let endIdx = lines.length;
   for (let i = headerIdx + 1; i < lines.length; i++) {
     if (lines[i].trim() === "") continue;
+    // A column-0 `# ...` comment is valid YAML even between items of an
+    // indented block (comments don't participate in the indentation
+    // structure), so it doesn't end the block either — only a genuine
+    // next top-level key does.
+    if (/^#/.test(lines[i])) continue;
     if (!/^\s/.test(lines[i])) {
       endIdx = i;
       break;

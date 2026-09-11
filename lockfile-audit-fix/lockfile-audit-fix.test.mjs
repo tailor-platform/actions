@@ -464,6 +464,24 @@ describe("findOverridesBlock", () => {
     const lines = ["minimumReleaseAgeExclude: # keep this list documented", "  - foo@1.0.0"];
     assert.deepEqual(findTopLevelBlock(lines, "minimumReleaseAgeExclude"), { headerIdx: 0, endIdx: 2 });
   });
+
+  test("treats a column-0 comment between entries as part of the block, not a terminator", () => {
+    // Regression test: a comment doesn't participate in YAML's indentation
+    // structure, so it's valid to write one at column 0 between items of an
+    // indented block. An earlier version treated any non-indented,
+    // non-blank line as the next top-level key, so an entry after such a
+    // comment silently fell outside the detected range and was never
+    // pruned or annotated.
+    const lines = [
+      "overrides:",
+      "  foo@<1: 1.0.0",
+      "# a column-0 comment inside the block",
+      "  bar@<1: 1.0.0",
+      "other:",
+      "  x: 1",
+    ];
+    assert.deepEqual(findOverridesBlock(lines), { headerIdx: 0, endIdx: 4 });
+  });
 });
 
 describe("findTopLevelBlock", () => {
@@ -999,6 +1017,26 @@ describe("pruneOrphanedWorkspaceOverrides", () => {
     const afterFirstRun = readFileSync(workspacePath, "utf8");
     assert.equal(pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath), false);
     assert.equal(readFileSync(workspacePath, "utf8"), afterFirstRun);
+  });
+
+  test("prunes an entry that sits after a column-0 comment inside the block", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(
+      workspacePath,
+      [
+        "overrides:",
+        "  esbuild@<0.28.1: 0.28.1",
+        "# a column-0 comment inside the block",
+        "  ghost-pkg@1: 2.0.0",
+        "",
+      ].join("\n"),
+    );
+
+    const changed = pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath);
+    assert.equal(changed, true);
+    const result = readFileSync(workspacePath, "utf8");
+    assert.doesNotMatch(result, /ghost-pkg/);
+    assert.match(result, /esbuild@<0\.28\.1: 0\.28\.1/);
   });
 
   test("returns false when the file doesn't exist", () => {
