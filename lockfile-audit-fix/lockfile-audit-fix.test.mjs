@@ -1996,6 +1996,32 @@ describe("main() end-to-end via a fake pnpm binary", () => {
     );
   });
 
+  test("workspace lockfile discovery failure rolls back the override result", () => {
+    const before = "lockfileVersion: '9.0'\n\nimporters:\n  .:\n    dependencies:\n      vulnerable-pkg:\n        specifier: ^1.0.0\n";
+    const updateOnly = before.replace("^1.0.0", "^1.0.1");
+    const overrideBroken = before.replace("^1.0.0", "^2.0.0");
+    writeFileSync(join(repoDir, "pnpm-lock.yaml"), before);
+    writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
+    writeFileSync(join(stateDir, "audit-count"), "0");
+    writeFileSync(join(stateDir, "install-count"), "0");
+    writeFileSync(join(stateDir, "dedupe-count"), "0");
+
+    let outputs;
+    assert.doesNotThrow(() => {
+      outputs = runMain({
+        FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}',
+        FAKE_PNPM_FIX_UPDATE_LOCKFILE: updateOnly,
+        FAKE_PNPM_FIX_OVERRIDE_LOCKFILE: overrideBroken,
+        FAKE_PNPM_FIX_OVERRIDE_WORKSPACE: "overrides:\n  vulnerable-pkg@<2.0.0: 2.0.0\n",
+        FAKE_PNPM_LIST_JSON: "not-json",
+      });
+    });
+
+    assert.equal(outputs.changed, "true");
+    assert.equal(readFileSync(join(repoDir, "pnpm-lock.yaml"), "utf8"), updateOnly);
+    assert.equal(existsSync(join(repoDir, "pnpm-workspace.yaml")), false);
+  });
+
   test("override mode creates pnpm-workspace.yaml from scratch, then its install fails: rollback deletes the file entirely", () => {
     // Regression test: a naive rollback that only restores pnpm-lock.yaml
     // (or only writes pnpm-workspace.yaml when a prior snapshot had one)

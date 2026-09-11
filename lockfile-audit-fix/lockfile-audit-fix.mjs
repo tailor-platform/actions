@@ -1179,14 +1179,14 @@ function main() {
   }
 
   runFix("override", cwd);
-  dedupeWorkspaceOverrides(workspacePath);
-  dedupePackageJsonOverrides(packageJsonPath);
-  const lockfilePaths = findPnpmLockfiles(cwd);
-  pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath, lockfilePaths);
-  pruneOrphanedPackageJsonOverrides(packageJsonPath, lockfilePath, lockfilePaths);
-  annotateMinimumReleaseAgeExclude(workspacePath);
-  pruneEmptyWorkspaceScaffold(workspacePath, original.workspace);
   try {
+    dedupeWorkspaceOverrides(workspacePath);
+    dedupePackageJsonOverrides(packageJsonPath);
+    const lockfilePaths = findPnpmLockfiles(cwd);
+    pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath, lockfilePaths);
+    pruneOrphanedPackageJsonOverrides(packageJsonPath, lockfilePath, lockfilePaths);
+    annotateMinimumReleaseAgeExclude(workspacePath);
+    pruneEmptyWorkspaceScaffold(workspacePath, original.workspace);
     verifyInstallable(cwd);
   } catch (e) {
     // fallback is still `original` here when the update-mode install above
@@ -1194,7 +1194,7 @@ function main() {
     // result that may never have existed.
     const revertTarget = fallback === original ? "their original state" : "the update-mode-only result";
     console.log(
-      `::warning::pnpm verification failed after the override fallback; reverting pnpm-lock.yaml, pnpm-workspace.yaml, and package.json to ${revertTarget}. ${e.message}`,
+      `::warning::Override-mode cleanup or verification failed; reverting pnpm-lock.yaml, pnpm-workspace.yaml, and package.json to ${revertTarget}. ${e.message}`,
     );
     restore(fallback);
   }
