@@ -503,23 +503,26 @@ function isMentioned(haystack, name) {
  * of pnpm-workspace.yaml's `overrides:`) excluded first — scanning the file
  * whole would make every override look "mentioned" off the back of its own
  * entry. Returns null when the file is missing or doesn't look like a real
- * lockfile (no top-level `packages:` key — matched as a bare prefix, so
- * `packages: {}`, trailing whitespace, or a trailing comment don't defeat
- * it, only its complete absence does), so callers abstain from pruning
- * rather than act on a bad read. This deliberately also abstains on a
- * workspace with no external dependencies at all (every importer only
- * depends on other workspace packages), where pnpm omits the `packages:`
- * key entirely — matching tailor-platform/sdk's own
- * lockfile-audit-fix-normalize.mjs, which chose the same conservative
- * trade-off (its own test: "keeps every override when the lockfile has no
- * packages block") over trying to positively recognize that specific shape.
+ * lockfile, so callers abstain from pruning rather than act on a bad read.
+ * `lockfileVersion:` (not `packages:`) is the sanity check: a workspace
+ * whose external dependencies have all been removed (verified against a
+ * real `pnpm install`) has pnpm omit the `packages:` key entirely, and
+ * that's exactly the case this feature most needs to catch — the last
+ * override's target left the tree along with everything else. This
+ * deliberately diverges from tailor-platform/sdk's own
+ * lockfile-audit-fix-normalize.mjs, which checks for `packages:` instead
+ * and has a test asserting the opposite (abstain when it's absent); an
+ * override can only exist in the first place because a package it once
+ * targeted was in the tree, so "the tree emptied out entirely" is a real
+ * (if narrow) path to an orphaned override, not just a lockfile that
+ * doesn't look real.
  * @param {string} lockfilePath
  * @returns {string | null}
  */
 function readLockfileOutsideOverrides(lockfilePath) {
   if (!existsSync(lockfilePath)) return null;
   const lines = readFileSync(lockfilePath, "utf8").split("\n");
-  if (!lines.some((l) => /^packages\s*:/.test(l))) return null;
+  if (!lines.some((l) => /^lockfileVersion\s*:/.test(l))) return null;
   const block = findOverridesBlock(lines);
   if (!block) return lines.join("\n");
   return [...lines.slice(0, block.headerIdx), ...lines.slice(block.endIdx)].join("\n");

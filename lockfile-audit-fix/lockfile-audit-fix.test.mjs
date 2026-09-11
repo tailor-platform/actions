@@ -761,20 +761,23 @@ describe("readLockfileOutsideOverrides", () => {
     assert.notEqual(text, null);
   });
 
-  test("abstains (returns null) on a real lockfile with no packages: key at all, matching sdk's own tested trade-off", () => {
+  test("still recognizes a real lockfile with no packages: key at all (a workspace whose external dependencies have all been removed)", () => {
     // Verified against a real `pnpm install`: a workspace where every
     // importer only depends on other workspace packages gets no `packages:`
     // key in pnpm-lock.yaml whatsoever, not even an empty `packages: {}`.
-    // tailor-platform/sdk's own lockfile-audit-fix-normalize.mjs has an
-    // identical test ("keeps every override when the lockfile has no
-    // packages block") asserting this exact conservative abstain, rather
-    // than trying to special-case this one shape — matched here for parity.
+    // Checking lockfileVersion: instead of packages: means pruning still
+    // runs here — the exact case this feature most needs to catch, since
+    // an override can only exist because its target was once in the tree,
+    // and "the tree emptied out entirely" is one real way for that target
+    // to have left it.
     const lockfilePath = join(cwd, "workspace-only-lock.yaml");
     writeFileSync(
       lockfilePath,
       ["lockfileVersion: '9.0'", "", "importers:", "", "  .: {}", "", "  packages/a: {}", ""].join("\n"),
     );
-    assert.equal(readLockfileOutsideOverrides(lockfilePath), null);
+    const text = readLockfileOutsideOverrides(lockfilePath);
+    assert.notEqual(text, null);
+    assert.match(text, /packages\/a/);
   });
 
   test("returns null when the file doesn't look like a real lockfile", () => {
@@ -951,16 +954,15 @@ describe("pruneOrphanedWorkspaceOverrides", () => {
     assert.equal(readFileSync(workspacePath, "utf8"), original);
   });
 
-  test("keeps every override when the lockfile has no packages: block, matching sdk's own tested trade-off", () => {
+  test("still prunes when the lockfile has no packages: block at all (the tree emptied out entirely)", () => {
     const workspacePath = join(cwd, "pnpm-workspace.yaml");
-    const original = ["overrides:", "  ghost-pkg@1: 2.0.0", ""].join("\n");
-    writeFileSync(workspacePath, original);
+    writeFileSync(workspacePath, ["overrides:", "  ghost-pkg@1: 2.0.0", ""].join("\n"));
     const noPackagesLockfilePath = join(cwd, "no-packages-lock.yaml");
     writeFileSync(noPackagesLockfilePath, "lockfileVersion: '9.0'\n\nimporters:\n\n  .: {}\n");
 
     const changed = pruneOrphanedWorkspaceOverrides(workspacePath, noPackagesLockfilePath);
-    assert.equal(changed, false);
-    assert.equal(readFileSync(workspacePath, "utf8"), original);
+    assert.equal(changed, true);
+    assert.doesNotMatch(readFileSync(workspacePath, "utf8"), /ghost-pkg/);
   });
 
   test("is idempotent: a second run makes no further changes", () => {
