@@ -26,6 +26,18 @@ import {
   findOverridesBlock,
   dedupeWorkspaceOverrides,
   dedupePackageJsonOverrides,
+  overrideTargetName,
+  isMentioned,
+  readLockfileOutsideOverrides,
+  pruneOrphanedOverrideEntries,
+  pruneOrphanedWorkspaceOverrides,
+  pruneOrphanedPackageJsonOverrides,
+  findTopLevelBlock,
+  parseExcludeListItem,
+  splitExcludeEntry,
+  annotateMinimumReleaseAgeExclude,
+  isYamlContentEmpty,
+  pruneEmptyWorkspaceScaffold,
 } from "./lockfile-audit-fix.mjs";
 
 describe("extractAdvisoryIds", () => {
@@ -444,6 +456,68 @@ describe("findOverridesBlock", () => {
   test("returns null when there's no overrides key", () => {
     assert.equal(findOverridesBlock(["packages:", "  - packages/*"]), null);
   });
+
+  test("tolerates whitespace before the colon (valid YAML pnpm never emits, but a hand-edited file might)", () => {
+    const lines = ["overrides :", "  foo: 1.0.0"];
+    assert.deepEqual(findOverridesBlock(lines), { headerIdx: 0, endIdx: 2 });
+  });
+
+  test("tolerates a trailing inline comment on the header line", () => {
+    const lines = ["minimumReleaseAgeExclude: # keep this list documented", "  - foo@1.0.0"];
+    assert.deepEqual(findTopLevelBlock(lines, "minimumReleaseAgeExclude"), { headerIdx: 0, endIdx: 2 });
+  });
+
+  test("treats a column-0 comment between entries as part of the block, not a terminator", () => {
+    // Regression test: a comment doesn't participate in YAML's indentation
+    // structure, so it's valid to write one at column 0 between items of an
+    // indented block. An earlier version treated any non-indented,
+    // non-blank line as the next top-level key, so an entry after such a
+    // comment silently fell outside the detected range and was never
+    // pruned or annotated.
+    const lines = [
+      "overrides:",
+      "  foo@<1: 1.0.0",
+      "# a column-0 comment inside the block",
+      "  bar@<1: 1.0.0",
+      "other:",
+      "  x: 1",
+    ];
+    assert.deepEqual(findOverridesBlock(lines), { headerIdx: 0, endIdx: 4 });
+  });
+
+  test("treats an indentationless block-sequence item (- at column 0) as part of the block", () => {
+    // Regression test: YAML allows a sequence's `-` items to sit at the
+    // same column as their own key (unlike a mapping's key: value
+    // children, which always need deeper indentation) — e.g.
+    // `minimumReleaseAgeExclude:\n- foo@1.0.0`. An earlier version treated
+    // the first `-` line as ending the block, so the whole sequence was
+    // invisible to annotate/prune.
+    const lines = ["minimumReleaseAgeExclude:", "- foo@1.0.0", "- bar@2.0.0", "other:", "  x: 1"];
+    assert.deepEqual(findTopLevelBlock(lines, "minimumReleaseAgeExclude"), { headerIdx: 0, endIdx: 3 });
+  });
+
+  test("stops before a top-level mapping key that begins with a hyphen", () => {
+    const lines = ["overrides:", "  foo@<1: 1.0.0", "-feature: enabled", "other: true"];
+    assert.deepEqual(findOverridesBlock(lines), { headerIdx: 0, endIdx: 2 });
+  });
+});
+
+describe("findTopLevelBlock", () => {
+  test("finds a block for an arbitrary top-level key, not just overrides", () => {
+    const lines = [
+      "minimumReleaseAge: 4320",
+      "minimumReleaseAgeExclude:",
+      "  - foo@1.0.0",
+      "  - bar@2.0.0",
+      "overrides:",
+      "  baz: 1.0.0",
+    ];
+    assert.deepEqual(findTopLevelBlock(lines, "minimumReleaseAgeExclude"), { headerIdx: 1, endIdx: 4 });
+  });
+
+  test("returns null when the key isn't present", () => {
+    assert.equal(findTopLevelBlock(["packages:", "  - packages/*"], "minimumReleaseAgeExclude"), null);
+  });
 });
 
 describe("dedupeWorkspaceOverrides", () => {
@@ -481,6 +555,61 @@ describe("dedupeWorkspaceOverrides", () => {
     assert.match(result, /brace-expansion@<1\.1\.18: 1\.1\.18/);
     assert.match(result, /nanoid@<3\.3\.18: 3\.3\.18/);
     assert.match(result, /packages\/\*/); // untouched sections survive round-trip
+  });
+
+  test("removes a dominated entry's preceding comment along with it", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(
+      workspacePath,
+      [
+        "overrides:",
+        "  # a note about the narrower pin",
+        "  brace-expansion@<1.1.16: 1.1.18",
+        "  brace-expansion@<1.1.18: 1.1.18",
+        "",
+      ].join("\n"),
+    );
+
+    const changed = dedupeWorkspaceOverrides(workspacePath);
+    assert.equal(changed, true);
+
+    const result = readFileSync(workspacePath, "utf8");
+    assert.doesNotMatch(result, /a note about the narrower pin/);
+    assert.match(result, /brace-expansion@<1\.1\.18: 1\.1\.18/);
+  });
+
+  test("removing a dominated entry's keep-override marker doesn't leak it onto the next unrelated entry", () => {
+    // Regression test for a real interaction bug: dedupeWorkspaceOverrides
+    // used to delete only the dominated entry's own line, leaving its
+    // preceding comment (here, a # keep-override: marker) to be read by
+    // pruneOrphanedWorkspaceOverrides right after as belonging to whatever
+    // entry happened to survive next instead.
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(
+      workspacePath,
+      [
+        "overrides:",
+        "  # keep-override: pinned ahead of the dependency landing",
+        "  brace-expansion@<1.1.16: 1.1.18",
+        "  brace-expansion@<1.1.18: 1.1.18",
+        "  ghost-pkg@1: 2.0.0",
+        "",
+      ].join("\n"),
+    );
+    const lockfilePath = join(cwd, "pnpm-lock.yaml");
+    writeFileSync(lockfilePath, ORPHAN_TEST_LOCKFILE);
+
+    dedupeWorkspaceOverrides(workspacePath);
+    const afterDedupe = readFileSync(workspacePath, "utf8");
+    assert.doesNotMatch(afterDedupe, /keep-override/);
+
+    const pruned = pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath);
+    assert.equal(pruned, true);
+    assert.doesNotMatch(
+      readFileSync(workspacePath, "utf8"),
+      /ghost-pkg/,
+      "ghost-pkg should still be pruned as orphaned — the orphaned keep-override marker must not have attached to it",
+    );
   });
 
   test("is a no-op when there is nothing to dedupe", () => {
@@ -546,6 +675,880 @@ describe("dedupePackageJsonOverrides", () => {
   });
 });
 
+// `ghost-pkg` appears only in this lockfile's own `overrides:` block — the
+// trap readLockfileOutsideOverrides exists to defuse. `parent-pkg` is only
+// reachable through a `parent>child` dep-path selector's parent half.
+// `@scope/live` is a regular resolved dependency (its own `packages:`/
+// `snapshots:` entry, reachable via a quoted `"@scope/live@<range>"`
+// override key), while `linked-tool` is a workspace link, which never gets
+// a `packages:` entry (so it only ever shows up as a bare importer key).
+const ORPHAN_TEST_LOCKFILE = [
+  "lockfileVersion: '9.0'",
+  "",
+  "settings:",
+  "  autoInstallPeers: true",
+  "",
+  "overrides:",
+  "  ghost-pkg@1: 2.0.0",
+  "",
+  "importers:",
+  "",
+  "  .:",
+  "    devDependencies:",
+  "      '@scope/live':",
+  "        specifier: 1.0.0",
+  "        version: 1.0.0",
+  "      linked-tool:",
+  "        specifier: workspace:*",
+  "        version: link:packages/tool",
+  "",
+  "packages:",
+  "",
+  "  esbuild@0.28.1:",
+  "    resolution: {integrity: sha512-x}",
+  "",
+  "  '@scope/live@1.0.0':",
+  "    resolution: {integrity: sha512-y}",
+  "",
+  "  parent-pkg@2.0.0:",
+  "    resolution: {integrity: sha512-z}",
+  "",
+  "snapshots:",
+  "",
+  "  esbuild@0.28.1: {}",
+  "",
+  "  '@scope/live@1.0.0': {}",
+  "",
+  "  parent-pkg@2.0.0: {}",
+  "",
+].join("\n");
+
+describe("overrideTargetName", () => {
+  test("reads the bare name from a plain name@range key", () => {
+    assert.equal(overrideTargetName("brace-expansion@<1.1.18"), "brace-expansion");
+  });
+
+  test("reads the bare name from a scoped name@range key", () => {
+    assert.equal(overrideTargetName("@faker-js/faker@<=10.4.0"), "@faker-js/faker");
+  });
+
+  test("resolves a nested parent>child selector to its parent", () => {
+    assert.equal(overrideTargetName("parent-pkg>child-pkg"), "parent-pkg");
+  });
+
+  test("reads a bare name with no range as itself", () => {
+    assert.equal(overrideTargetName("trim"), "trim");
+  });
+});
+
+describe("isMentioned", () => {
+  test("matches a resolved package key", () => {
+    assert.equal(isMentioned("esbuild@0.28.1:\n  resolution: {}", "esbuild"), true);
+  });
+
+  test("matches a bare workspace-link key", () => {
+    assert.equal(isMentioned("linked-tool:\n  specifier: workspace:*", "linked-tool"), true);
+  });
+
+  test("matches a quoted scoped bare key", () => {
+    assert.equal(isMentioned("'@scope/live':\n  specifier: 1.0.0", "@scope/live"), true);
+  });
+
+  test("does not match a longer package name that merely contains it", () => {
+    assert.equal(isMentioned("esbuild@0.28.1", "build"), false);
+  });
+
+  test("returns false when there is no mention at all", () => {
+    assert.equal(isMentioned("some-other-pkg@1.0.0", "ghost-pkg"), false);
+  });
+
+  test("matches a pre-v6 underscore-joined peer-resolution suffix", () => {
+    // Regression test: verified against a real `pnpm@7.33.7 install
+    // --lockfile-only` output (lockfileVersion: 5.4), where a peer dep is
+    // recorded as e.g. `eslint-plugin-react: 7.34.0_eslint@8.57.0` — the
+    // peer's own name/version has no `@`/`:` of its own directly after it in
+    // isolation, but is joined to the parent's version with `_`. An earlier
+    // version excluded `_` from the boundary check, so `isMentioned(...,
+    // "eslint")` returned false when this was the only occurrence, risking
+    // deletion of a still-live override.
+    assert.equal(isMentioned("  eslint-plugin-react: 7.34.0_eslint@8.57.0\n", "eslint"), true);
+  });
+
+  test("matches a pre-v6 slash-delimited package key", () => {
+    // Regression test: verified against real pnpm@7.33.7 output — a v5/v6
+    // lockfile's packages: section keys look like `/is-odd/3.0.1:` (leading
+    // and trailing slash), not the v9 `is-odd@3.0.1:` form.
+    assert.equal(isMentioned("  /is-odd/3.0.1:\n    resolution: {}\n", "is-odd"), true);
+  });
+
+  test("matches a pre-v6 scoped slash-delimited package key", () => {
+    assert.equal(isMentioned("  /@scope/live/1.0.0:\n    resolution: {}\n", "@scope/live"), true);
+  });
+});
+
+describe("readLockfileOutsideOverrides", () => {
+  let cwd;
+
+  before(() => {
+    cwd = mkdtempSync(join(tmpdir(), "lockfile-audit-fix-read-lockfile-test-"));
+  });
+
+  after(() => {
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  test("excludes the lockfile's own overrides: block but keeps the rest", () => {
+    const lockfilePath = join(cwd, "pnpm-lock.yaml");
+    writeFileSync(lockfilePath, ORPHAN_TEST_LOCKFILE);
+
+    const text = readLockfileOutsideOverrides(lockfilePath);
+    assert.doesNotMatch(text, /ghost-pkg@1: 2\.0\.0/);
+    assert.match(text, /esbuild@0\.28\.1/);
+  });
+
+  test("returns null when the file doesn't exist", () => {
+    assert.equal(readLockfileOutsideOverrides(join(cwd, "missing.yaml")), null);
+  });
+
+  test("accepts a lockfile whose packages: key is the inline empty-map form", () => {
+    const lockfilePath = join(cwd, "empty-packages-lock.yaml");
+    writeFileSync(
+      lockfilePath,
+      ["lockfileVersion: '9.0'", "", "importers:", "", "  .: {}", "", "packages: {}", ""].join("\n"),
+    );
+    const text = readLockfileOutsideOverrides(lockfilePath);
+    assert.notEqual(text, null);
+  });
+
+  test("still recognizes a real lockfile with no packages: key at all (a workspace whose external dependencies have all been removed)", () => {
+    // Verified against a real `pnpm install`: a workspace where every
+    // importer only depends on other workspace packages gets no `packages:`
+    // key in pnpm-lock.yaml whatsoever, not even an empty `packages: {}`.
+    // Checking lockfileVersion: instead of packages: means pruning still
+    // runs here — the exact case this feature most needs to catch, since
+    // an override can only exist because its target was once in the tree,
+    // and "the tree emptied out entirely" is one real way for that target
+    // to have left it.
+    const lockfilePath = join(cwd, "workspace-only-lock.yaml");
+    writeFileSync(
+      lockfilePath,
+      ["lockfileVersion: '9.0'", "", "importers:", "", "  .: {}", "", "  packages/a: {}", ""].join("\n"),
+    );
+    const text = readLockfileOutsideOverrides(lockfilePath);
+    assert.notEqual(text, null);
+    assert.match(text, /packages\/a/);
+  });
+
+  test("returns null when the file doesn't look like a real lockfile", () => {
+    const notALockfile = join(cwd, "not-a-lockfile.yaml");
+    writeFileSync(notALockfile, "overrides:\n  foo: 1.0.0\n");
+    assert.equal(readLockfileOutsideOverrides(notALockfile), null);
+  });
+});
+
+describe("pruneOrphanedOverrideEntries", () => {
+  // pruneOrphanedOverrideEntries takes the dependency-tree text as-is (it
+  // doesn't strip an overrides: block itself — that's readLockfileOutsideOverrides's
+  // job), so the fixture here must not contain one; otherwise `ghost-pkg`
+  // would look "mentioned" off the back of its own override entry.
+  let treeText;
+
+  before(() => {
+    const dir = mkdtempSync(join(tmpdir(), "lockfile-audit-fix-prune-entries-test-"));
+    const lockfilePath = join(dir, "pnpm-lock.yaml");
+    writeFileSync(lockfilePath, ORPHAN_TEST_LOCKFILE);
+    treeText = readLockfileOutsideOverrides(lockfilePath);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("drops an entry whose target package isn't mentioned in the tree", () => {
+    const entries = [
+      ["esbuild@<0.28.1", "0.28.1"],
+      ["ghost-pkg@1", "2.0.0"],
+    ];
+    const { survivors, removedKeys } = pruneOrphanedOverrideEntries(entries, treeText);
+    assert.deepEqual(survivors, [["esbuild@<0.28.1", "0.28.1"]]);
+    assert.deepEqual(removedKeys, ["ghost-pkg@1"]);
+  });
+
+  test("keeps an entry reachable through a parent>child dep-path selector", () => {
+    const entries = [["parent-pkg>child-pkg", "3.0.0"]];
+    const { survivors, removedKeys } = pruneOrphanedOverrideEntries(entries, treeText);
+    assert.deepEqual(survivors, entries);
+    assert.deepEqual(removedKeys, []);
+  });
+
+  test("keeps an entry pinning a workspace-linked package", () => {
+    const entries = [["linked-tool@<1", "1.0.0"]];
+    const { survivors, removedKeys } = pruneOrphanedOverrideEntries(entries, treeText);
+    assert.deepEqual(survivors, entries);
+    assert.deepEqual(removedKeys, []);
+  });
+
+  test("keeps a scoped entry reachable through a resolved packages: key", () => {
+    // Unquoted here, matching how this function actually receives keys:
+    // parseOverrideLine already strips YAML quoting before
+    // pruneOrphanedWorkspaceOverrides calls overrideTargetName, and a
+    // package.json key is never quote-wrapped to begin with. The quoted
+    // YAML-line form is covered separately at the
+    // pruneOrphanedWorkspaceOverrides level below.
+    const entries = [["@scope/live@<1", "1.0.0"]];
+    const { survivors, removedKeys } = pruneOrphanedOverrideEntries(entries, treeText);
+    assert.deepEqual(survivors, entries);
+    assert.deepEqual(removedKeys, []);
+  });
+});
+
+describe("pruneOrphanedWorkspaceOverrides", () => {
+  let cwd;
+  let lockfilePath;
+
+  before(() => {
+    cwd = mkdtempSync(join(tmpdir(), "lockfile-audit-fix-prune-workspace-test-"));
+    lockfilePath = join(cwd, "pnpm-lock.yaml");
+    writeFileSync(lockfilePath, ORPHAN_TEST_LOCKFILE);
+  });
+
+  after(() => {
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  test("drops an orphaned entry and its attached comment, keeping a live entry", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(
+      workspacePath,
+      [
+        "packages:",
+        "  - packages/*",
+        "",
+        "overrides:",
+        "  esbuild@<0.28.1: 0.28.1",
+        "  # a note about a dead pin",
+        "  ghost-pkg@1: 2.0.0",
+        "",
+      ].join("\n"),
+    );
+
+    const changed = pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath);
+    assert.equal(changed, true);
+
+    const result = readFileSync(workspacePath, "utf8");
+    assert.match(result, /esbuild@<0\.28\.1: 0\.28\.1/);
+    assert.doesNotMatch(result, /ghost-pkg/);
+    assert.doesNotMatch(result, /a note about a dead pin/);
+    assert.match(result, /packages\/\*/); // untouched sections survive round-trip
+  });
+
+  test("keeps an override used by a sibling project lockfile", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    const siblingDir = join(cwd, "packages", "app");
+    const siblingLockfilePath = join(siblingDir, "pnpm-lock.yaml");
+    mkdirSync(siblingDir, { recursive: true });
+    writeFileSync(workspacePath, ["overrides:", "  is-odd: 3.0.1", ""].join("\n"));
+    writeFileSync(
+      siblingLockfilePath,
+      ["lockfileVersion: '9.0'", "", "packages:", "", "  is-odd@3.0.1:", "    resolution: {}", ""].join("\n"),
+    );
+
+    const changed = pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath, [siblingLockfilePath]);
+
+    assert.equal(changed, false);
+    assert.match(readFileSync(workspacePath, "utf8"), /is-odd: 3\.0\.1/);
+  });
+
+  test("honours a keep-override opt-out comment", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(
+      workspacePath,
+      ["overrides:", "  # keep-override: pinned ahead of the dependency landing", "  future-pkg@<9: 9.0.0", ""].join(
+        "\n",
+      ),
+    );
+
+    const changed = pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath);
+    assert.equal(changed, false);
+    assert.match(readFileSync(workspacePath, "utf8"), /future-pkg@<9: 9\.0\.0/);
+  });
+
+  test("keeps a plain comment attached to a live entry untouched", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(
+      workspacePath,
+      ["overrides:", "  # pinned for a known transitive issue", "  esbuild@<0.28.1: 0.28.1", ""].join("\n"),
+    );
+
+    const changed = pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath);
+    assert.equal(changed, false);
+    const result = readFileSync(workspacePath, "utf8");
+    assert.match(result, /# pinned for a known transitive issue/);
+    assert.match(result, /esbuild@<0\.28\.1: 0\.28\.1/);
+  });
+
+  test("drops a quoted scoped orphaned entry (unquote -> scope-aware name -> mention check, end to end)", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(
+      workspacePath,
+      ["overrides:", '  "@scope/dead@<1": 1.0.0', "  esbuild@<0.28.1: 0.28.1", ""].join("\n"),
+    );
+
+    const changed = pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath);
+    assert.equal(changed, true);
+    const result = readFileSync(workspacePath, "utf8");
+    assert.doesNotMatch(result, /@scope\/dead/);
+    assert.match(result, /esbuild@<0\.28\.1: 0\.28\.1/);
+  });
+
+  test("removes the whole overrides: key once its last entry is pruned", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(workspacePath, ["packages:", "  - packages/*", "", "overrides:", "  ghost-pkg@1: 2.0.0", ""].join("\n"));
+
+    const changed = pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath);
+    assert.equal(changed, true);
+
+    const result = readFileSync(workspacePath, "utf8");
+    assert.doesNotMatch(result, /overrides:/);
+    assert.match(result, /packages\/\*/);
+  });
+
+  test("preserves a trailing column-0 comment when removing the now-empty overrides: key", () => {
+    // Regression test: when the block collapses to empty, the header-removal
+    // branch used to discard the whole `kept` array (which, in this
+    // situation, only ever holds comments/blanks not attached to the
+    // removed entry — anything genuinely attached to it was already dropped
+    // alongside it), silently deleting an unrelated trailing comment along
+    // with the pointless `overrides:` key.
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(
+      workspacePath,
+      [
+        "packages:",
+        "  - packages/*",
+        "",
+        "overrides:",
+        "  ghost-pkg@1: 2.0.0",
+        "# a note for the section below, not for ghost-pkg",
+        "other:",
+        "  x: 1",
+        "",
+      ].join("\n"),
+    );
+
+    const changed = pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath);
+    assert.equal(changed, true);
+
+    const result = readFileSync(workspacePath, "utf8");
+    assert.doesNotMatch(result, /overrides:/);
+    assert.match(result, /# a note for the section below, not for ghost-pkg/);
+    assert.match(result, /other:/);
+  });
+
+  test("keeps a quoted scoped entry reachable through a resolved packages: key", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    const original = ["overrides:", '  "@scope/live@<1": 1.0.0', ""].join("\n");
+    writeFileSync(workspacePath, original);
+
+    const changed = pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath);
+    assert.equal(changed, false);
+    assert.equal(readFileSync(workspacePath, "utf8"), original);
+  });
+
+  test("is a no-op when the lockfile can't be read (abstains rather than guesses)", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    const original = ["overrides:", "  ghost-pkg@1: 2.0.0", ""].join("\n");
+    writeFileSync(workspacePath, original);
+
+    const changed = pruneOrphanedWorkspaceOverrides(workspacePath, join(cwd, "missing-lockfile.yaml"));
+    assert.equal(changed, false);
+    assert.equal(readFileSync(workspacePath, "utf8"), original);
+  });
+
+  test("still prunes when the lockfile has no packages: block at all (the tree emptied out entirely)", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(workspacePath, ["overrides:", "  ghost-pkg@1: 2.0.0", ""].join("\n"));
+    const noPackagesLockfilePath = join(cwd, "no-packages-lock.yaml");
+    writeFileSync(noPackagesLockfilePath, "lockfileVersion: '9.0'\n\nimporters:\n\n  .: {}\n");
+
+    const changed = pruneOrphanedWorkspaceOverrides(workspacePath, noPackagesLockfilePath);
+    assert.equal(changed, true);
+    assert.doesNotMatch(readFileSync(workspacePath, "utf8"), /ghost-pkg/);
+  });
+
+  test("is idempotent: a second run makes no further changes", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(
+      workspacePath,
+      ["overrides:", "  esbuild@<0.28.1: 0.28.1", "  ghost-pkg@1: 2.0.0", ""].join("\n"),
+    );
+
+    assert.equal(pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath), true);
+    const afterFirstRun = readFileSync(workspacePath, "utf8");
+    assert.equal(pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath), false);
+    assert.equal(readFileSync(workspacePath, "utf8"), afterFirstRun);
+  });
+
+  test("prunes an entry that sits after a column-0 comment inside the block", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(
+      workspacePath,
+      [
+        "overrides:",
+        "  esbuild@<0.28.1: 0.28.1",
+        "# a column-0 comment inside the block",
+        "  ghost-pkg@1: 2.0.0",
+        "",
+      ].join("\n"),
+    );
+
+    const changed = pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath);
+    assert.equal(changed, true);
+    const result = readFileSync(workspacePath, "utf8");
+    assert.doesNotMatch(result, /ghost-pkg/);
+    assert.match(result, /esbuild@<0\.28\.1: 0\.28\.1/);
+  });
+
+  test("returns false when the file doesn't exist", () => {
+    assert.equal(pruneOrphanedWorkspaceOverrides(join(cwd, "missing.yaml"), lockfilePath), false);
+  });
+
+  test("returns false when the file has no overrides section", () => {
+    const workspacePath = join(cwd, "no-overrides.yaml");
+    writeFileSync(workspacePath, "packages:\n  - packages/*\n");
+    assert.equal(pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath), false);
+  });
+});
+
+describe("pruneOrphanedPackageJsonOverrides", () => {
+  let cwd;
+  let lockfilePath;
+
+  before(() => {
+    cwd = mkdtempSync(join(tmpdir(), "lockfile-audit-fix-prune-package-json-test-"));
+    lockfilePath = join(cwd, "pnpm-lock.yaml");
+    writeFileSync(lockfilePath, ORPHAN_TEST_LOCKFILE);
+  });
+
+  after(() => {
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  test("drops an orphaned entry from package.json's pnpm.overrides", () => {
+    const packageJsonPath = join(cwd, "package.json");
+    writeFileSync(
+      packageJsonPath,
+      JSON.stringify(
+        {
+          name: "root-pkg",
+          pnpm: { overrides: { "esbuild@<0.28.1": "0.28.1", "ghost-pkg@1": "2.0.0" } },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const changed = pruneOrphanedPackageJsonOverrides(packageJsonPath, lockfilePath);
+    assert.equal(changed, true);
+
+    const pkg = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+    assert.deepEqual(pkg.pnpm.overrides, { "esbuild@<0.28.1": "0.28.1" });
+    assert.equal(pkg.name, "root-pkg");
+  });
+
+  test("keeps an override used by an additional project lockfile", () => {
+    const packageJsonPath = join(cwd, "package-with-sibling-lockfile.json");
+    const siblingLockfilePath = join(cwd, "sibling-pnpm-lock.yaml");
+    writeFileSync(packageJsonPath, JSON.stringify({ name: "root-pkg", pnpm: { overrides: { "is-odd": "3.0.1" } } }));
+    writeFileSync(siblingLockfilePath, "lockfileVersion: '9.0'\n\npackages:\n\n  is-odd@3.0.1:\n    resolution: {}\n");
+
+    const changed = pruneOrphanedPackageJsonOverrides(packageJsonPath, lockfilePath, [siblingLockfilePath]);
+
+    assert.equal(changed, false);
+    assert.deepEqual(JSON.parse(readFileSync(packageJsonPath, "utf8")).pnpm.overrides, { "is-odd": "3.0.1" });
+  });
+
+  test("drops the pnpm.overrides key entirely (and pnpm too) once every entry is orphaned", () => {
+    // Regression test: unlike dedupe (which always keeps at least one
+    // survivor per package), orphan-pruning can empty the overrides object
+    // out completely — leaving `pnpm.overrides: {}` (or `pnpm: {}`) behind
+    // is pointless clutter.
+    const packageJsonPath = join(cwd, "package.json");
+    writeFileSync(
+      packageJsonPath,
+      JSON.stringify({ name: "root-pkg", pnpm: { overrides: { "ghost-pkg@1": "2.0.0" } } }, null, 2),
+    );
+
+    const changed = pruneOrphanedPackageJsonOverrides(packageJsonPath, lockfilePath);
+    assert.equal(changed, true);
+
+    const pkg = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+    assert.equal(pkg.pnpm, undefined);
+    assert.equal(pkg.name, "root-pkg");
+  });
+
+  test("drops only the overrides key, keeping other pnpm settings, once every entry is orphaned", () => {
+    const packageJsonPath = join(cwd, "package.json");
+    writeFileSync(
+      packageJsonPath,
+      JSON.stringify(
+        { name: "root-pkg", pnpm: { overrides: { "ghost-pkg@1": "2.0.0" }, autoInstallPeers: false } },
+        null,
+        2,
+      ),
+    );
+
+    const changed = pruneOrphanedPackageJsonOverrides(packageJsonPath, lockfilePath);
+    assert.equal(changed, true);
+
+    const pkg = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+    assert.equal(pkg.pnpm.overrides, undefined);
+    assert.equal(pkg.pnpm.autoInstallPeers, false);
+  });
+
+  test("returns false when there is no pnpm.overrides object", () => {
+    const packageJsonPath = join(cwd, "plain.json");
+    writeFileSync(packageJsonPath, JSON.stringify({ name: "plain-pkg" }));
+    assert.equal(pruneOrphanedPackageJsonOverrides(packageJsonPath, lockfilePath), false);
+  });
+
+  test("is a no-op when the lockfile can't be read", () => {
+    const packageJsonPath = join(cwd, "unreadable-lockfile.json");
+    const original = { name: "root-pkg", pnpm: { overrides: { "ghost-pkg@1": "2.0.0" } } };
+    writeFileSync(packageJsonPath, JSON.stringify(original, null, 2));
+
+    const changed = pruneOrphanedPackageJsonOverrides(packageJsonPath, join(cwd, "missing-lockfile.yaml"));
+    assert.equal(changed, false);
+    assert.deepEqual(JSON.parse(readFileSync(packageJsonPath, "utf8")), original);
+  });
+});
+
+describe("isYamlContentEmpty", () => {
+  test("treats a blank string as empty", () => {
+    assert.equal(isYamlContentEmpty("\n"), true);
+  });
+
+  test("treats comment-only content as empty", () => {
+    assert.equal(isYamlContentEmpty("# just a note\n\n# another\n"), true);
+  });
+
+  test("treats any real content as non-empty", () => {
+    assert.equal(isYamlContentEmpty("packages:\n  - packages/*\n"), false);
+  });
+});
+
+describe("pruneEmptyWorkspaceScaffold", () => {
+  let cwd;
+
+  before(() => {
+    cwd = mkdtempSync(join(tmpdir(), "lockfile-audit-fix-prune-scaffold-test-"));
+  });
+
+  after(() => {
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  test("deletes a blank file this run created (originalWorkspaceText is null)", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(workspacePath, "\n");
+
+    const deleted = pruneEmptyWorkspaceScaffold(workspacePath, null);
+    assert.equal(deleted, true);
+    assert.equal(existsSync(workspacePath), false);
+  });
+
+  test("deletes a comment-only file this run created (a stray trailing comment isn't meaningful content)", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(workspacePath, "# a note for the section below, not for ghost-pkg\n");
+
+    const deleted = pruneEmptyWorkspaceScaffold(workspacePath, null);
+    assert.equal(deleted, true);
+    assert.equal(existsSync(workspacePath), false);
+  });
+
+  test("leaves a blank file alone if it already existed before this run", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(workspacePath, "\n");
+
+    const deleted = pruneEmptyWorkspaceScaffold(workspacePath, "packages:\n  - packages/*\n");
+    assert.equal(deleted, false);
+    assert.equal(existsSync(workspacePath), true);
+  });
+
+  test("leaves a newly created file alone if it still has meaningful content", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(workspacePath, "overrides:\n  foo@<1: 1.0.0\n");
+
+    const deleted = pruneEmptyWorkspaceScaffold(workspacePath, null);
+    assert.equal(deleted, false);
+    assert.equal(existsSync(workspacePath), true);
+  });
+
+  test("returns false when the file doesn't exist", () => {
+    assert.equal(pruneEmptyWorkspaceScaffold(join(cwd, "missing.yaml"), null), false);
+  });
+});
+
+describe("parseExcludeListItem", () => {
+  test("parses an unquoted list item", () => {
+    assert.equal(parseExcludeListItem("  - fast-uri@3.1.6"), "fast-uri@3.1.6");
+  });
+
+  test("unquotes a double-quoted list item", () => {
+    assert.equal(parseExcludeListItem('  - "fast-uri@3.1.6"'), "fast-uri@3.1.6");
+  });
+
+  test("unquotes a single-quoted scoped bare name (no false version from the leading @)", () => {
+    // Regression test: an earlier version only stripped double quotes, so
+    // `'@scope/pkg'` came back as the literal string "'@scope/pkg'" (quotes
+    // included) — splitExcludeEntry then read the leading `'` as the name
+    // and everything after the `@` (including the trailing `'`) as a bogus
+    // version, wrongly marking a bare (unversioned) entry as version-pinned.
+    assert.equal(parseExcludeListItem("  - '@scope/pkg'"), "@scope/pkg");
+  });
+
+  test("unquotes a single-quoted scoped bare name with a trailing inline comment", () => {
+    // Regression test: matching to the closing quote (not to end of line)
+    // means a trailing "# ..." comment is simply never included, rather
+    // than defeating the value.endsWith(quote) check an earlier version
+    // relied on and leaking the comment text into a later marker comment.
+    assert.equal(parseExcludeListItem("  - '@scope/pkg' # kept for backward compat"), "@scope/pkg");
+  });
+
+  test("drops a trailing inline comment on an unquoted entry", () => {
+    assert.equal(parseExcludeListItem("  - fast-uri@3.1.6 # kept for backward compat"), "fast-uri@3.1.6");
+  });
+
+  test("returns null for a comment line", () => {
+    assert.equal(parseExcludeListItem("  # a comment"), null);
+  });
+
+  test("returns null for a blank line", () => {
+    assert.equal(parseExcludeListItem("   "), null);
+  });
+});
+
+describe("splitExcludeEntry", () => {
+  test("splits a versioned entry", () => {
+    assert.deepEqual(splitExcludeEntry("fast-uri@3.1.6"), { name: "fast-uri", version: "3.1.6" });
+  });
+
+  test("splits a scoped versioned entry on the second @", () => {
+    assert.deepEqual(splitExcludeEntry("@faker-js/faker@10.5.0"), { name: "@faker-js/faker", version: "10.5.0" });
+  });
+
+  test("treats a bare name (no version) as having a null version", () => {
+    assert.deepEqual(splitExcludeEntry("is-odd"), { name: "is-odd", version: null });
+  });
+});
+
+describe("annotateMinimumReleaseAgeExclude", () => {
+  let cwd;
+
+  before(() => {
+    cwd = mkdtempSync(join(tmpdir(), "lockfile-audit-fix-annotate-exclude-test-"));
+  });
+
+  after(() => {
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  test("inserts a marker comment above a versioned entry with none", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(
+      workspacePath,
+      ["minimumReleaseAge: 4320", "minimumReleaseAgeExclude:", "  - fast-uri@3.1.6", ""].join("\n"),
+    );
+
+    const changed = annotateMinimumReleaseAgeExclude(workspacePath);
+    assert.equal(changed, true);
+
+    const result = readFileSync(workspacePath, "utf8");
+    assert.match(result, /# Renovate security update: fast-uri@3\.1\.6\n {2}- fast-uri@3\.1\.6/);
+  });
+
+  test("does not duplicate an already-present marker comment", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    const original = [
+      "minimumReleaseAgeExclude:",
+      "  # Renovate security update: fast-uri@3.1.6",
+      "  - fast-uri@3.1.6",
+      "",
+    ].join("\n");
+    writeFileSync(workspacePath, original);
+
+    const changed = annotateMinimumReleaseAgeExclude(workspacePath);
+    assert.equal(changed, false);
+    assert.equal(readFileSync(workspacePath, "utf8"), original);
+  });
+
+  test("recognizes an existing marker case-insensitively and with extra whitespace", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    const original = [
+      "minimumReleaseAgeExclude:",
+      "  #   renovate security update  :   fast-uri@3.1.6",
+      "  - fast-uri@3.1.6",
+      "",
+    ].join("\n");
+    writeFileSync(workspacePath, original);
+
+    const changed = annotateMinimumReleaseAgeExclude(workspacePath);
+    assert.equal(changed, false);
+    assert.equal(readFileSync(workspacePath, "utf8"), original);
+  });
+
+  test("keeps an unrelated existing comment and adds the marker alongside it", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(
+      workspacePath,
+      ["minimumReleaseAgeExclude:", "  # pinned intentionally", "  - fast-uri@3.1.6", ""].join("\n"),
+    );
+
+    const changed = annotateMinimumReleaseAgeExclude(workspacePath);
+    assert.equal(changed, true);
+
+    const result = readFileSync(workspacePath, "utf8");
+    assert.match(result, /# pinned intentionally\n {2}# Renovate security update: fast-uri@3\.1\.6\n {2}- fast-uri@3\.1\.6/);
+  });
+
+  test("inserts a new marker when an existing one isn't the nearest comment (matches renovate-policy-check.mjs, which only reads the nearest one)", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(
+      workspacePath,
+      [
+        "minimumReleaseAgeExclude:",
+        "  # Renovate security update: fast-uri@3.1.6",
+        "  # a later, unrelated note",
+        "  - fast-uri@3.1.6",
+        "",
+      ].join("\n"),
+    );
+
+    const changed = annotateMinimumReleaseAgeExclude(workspacePath);
+    assert.equal(changed, true);
+
+    const result = readFileSync(workspacePath, "utf8");
+    assert.match(
+      result,
+      /# Renovate security update: fast-uri@3\.1\.6\n {2}# a later, unrelated note\n {2}# Renovate security update: fast-uri@3\.1\.6\n {2}- fast-uri@3\.1\.6/,
+    );
+  });
+
+  test("leaves a bare (unversioned) entry untouched", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    const original = ["minimumReleaseAgeExclude:", "  - is-odd", ""].join("\n");
+    writeFileSync(workspacePath, original);
+
+    const changed = annotateMinimumReleaseAgeExclude(workspacePath);
+    assert.equal(changed, false);
+    assert.equal(readFileSync(workspacePath, "utf8"), original);
+  });
+
+  test("leaves a tag-pinned entry (not a numeric version) untouched", () => {
+    // renovate-policy-check.mjs's own versionPinned check is /@\d/, so
+    // "foo@latest" was never subject to the marker requirement — marking it
+    // anyway would mislabel a tag/range exclude as an automated security
+    // update.
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    const original = ["minimumReleaseAgeExclude:", "  - is-odd@latest", ""].join("\n");
+    writeFileSync(workspacePath, original);
+
+    const changed = annotateMinimumReleaseAgeExclude(workspacePath);
+    assert.equal(changed, false);
+    assert.equal(readFileSync(workspacePath, "utf8"), original);
+  });
+
+  test("leaves a range-pinned entry (not a numeric version) untouched", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    const original = ["minimumReleaseAgeExclude:", "  - is-odd@^1.2.3", ""].join("\n");
+    writeFileSync(workspacePath, original);
+
+    const changed = annotateMinimumReleaseAgeExclude(workspacePath);
+    assert.equal(changed, false);
+    assert.equal(readFileSync(workspacePath, "utf8"), original);
+  });
+
+  test("leaves a bare single-quoted scoped name untouched (no false version from the leading @)", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    const original = ["minimumReleaseAgeExclude:", "  - '@scope/pkg'", ""].join("\n");
+    writeFileSync(workspacePath, original);
+
+    const changed = annotateMinimumReleaseAgeExclude(workspacePath);
+    assert.equal(changed, false);
+    assert.equal(readFileSync(workspacePath, "utf8"), original);
+  });
+
+  test("leaves a bare single-quoted scoped name with a trailing inline comment untouched", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    const original = ["minimumReleaseAgeExclude:", "  - '@scope/pkg' # kept for backward compat", ""].join("\n");
+    writeFileSync(workspacePath, original);
+
+    const changed = annotateMinimumReleaseAgeExclude(workspacePath);
+    assert.equal(changed, false);
+    assert.equal(readFileSync(workspacePath, "utf8"), original);
+  });
+
+  test("preserves the original quoting of the list item itself", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(
+      workspacePath,
+      ["minimumReleaseAgeExclude:", '  - "fast-uri@3.1.6"', ""].join("\n"),
+    );
+
+    const changed = annotateMinimumReleaseAgeExclude(workspacePath);
+    assert.equal(changed, true);
+
+    const result = readFileSync(workspacePath, "utf8");
+    assert.match(result, /# Renovate security update: fast-uri@3\.1\.6\n {2}- "fast-uri@3\.1\.6"/);
+  });
+
+  test("annotates multiple independent versioned entries", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(
+      workspacePath,
+      ["minimumReleaseAgeExclude:", "  - fast-uri@3.1.6", "  - esbuild@0.28.1", ""].join("\n"),
+    );
+
+    const changed = annotateMinimumReleaseAgeExclude(workspacePath);
+    assert.equal(changed, true);
+
+    const result = readFileSync(workspacePath, "utf8");
+    assert.match(result, /# Renovate security update: fast-uri@3\.1\.6/);
+    assert.match(result, /# Renovate security update: esbuild@0\.28\.1/);
+  });
+
+  test("annotates an indentationless block-sequence item, matching its own (lack of) indent", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(workspacePath, ["minimumReleaseAgeExclude:", "- fast-uri@3.1.6", ""].join("\n"));
+
+    const changed = annotateMinimumReleaseAgeExclude(workspacePath);
+    assert.equal(changed, true);
+
+    const result = readFileSync(workspacePath, "utf8");
+    assert.match(result, /^# Renovate security update: fast-uri@3\.1\.6\n- fast-uri@3\.1\.6/m);
+  });
+
+  test("returns false when the file doesn't exist", () => {
+    assert.equal(annotateMinimumReleaseAgeExclude(join(cwd, "missing.yaml")), false);
+  });
+
+  test("returns false when there's no minimumReleaseAgeExclude section", () => {
+    const workspacePath = join(cwd, "no-exclude.yaml");
+    writeFileSync(workspacePath, "packages:\n  - packages/*\n");
+    assert.equal(annotateMinimumReleaseAgeExclude(workspacePath), false);
+  });
+
+  test("is idempotent: a second run makes no further changes", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(
+      workspacePath,
+      ["minimumReleaseAgeExclude:", "  - fast-uri@3.1.6", "  - esbuild@0.28.1", ""].join("\n"),
+    );
+
+    assert.equal(annotateMinimumReleaseAgeExclude(workspacePath), true);
+    const afterFirstRun = readFileSync(workspacePath, "utf8");
+    assert.equal(annotateMinimumReleaseAgeExclude(workspacePath), false);
+    assert.equal(readFileSync(workspacePath, "utf8"), afterFirstRun);
+  });
+});
+
 describe("buildSummary", () => {
   const before = {
     advisories: {
@@ -606,9 +1609,13 @@ describe("buildSummary", () => {
  *   FAKE_PNPM_INSTALL_FAIL_<n>     - "1" makes the n-th `pnpm install` call
  *                                    (1-indexed: 1 = after update,
  *                                    2 = after override) fail
+ *   FAKE_PNPM_INSTALL_<n>_EXTRA_LOCKFILE - if set, writes this content to
+ *                                    FAKE_PNPM_EXTRA_LOCKFILE_PATH during
+ *                                    the n-th install
  *   FAKE_PNPM_DEDUPE_FAIL_<n>      - same, for the n-th `pnpm dedupe` call
  *                                    (only made when pnpm-workspace.yaml
  *                                    mentions minimumReleaseAgeExclude)
+ *   FAKE_PNPM_LIST_JSON             - stdout for `pnpm list --recursive`
  *   FAKE_PNPM_STATE                - directory for the call counters
  */
 function writeFakePnpm(fakeBinDir) {
@@ -647,6 +1654,8 @@ function writeFakePnpm(fakeBinDir) {
     'if (args[0] === "install") {',
     '  const n = nextCount("install");',
     '  writeFileSync(`${process.env.FAKE_PNPM_STATE}/install-${n}-args`, JSON.stringify(args));',
+    '  const extraLockfile = process.env[`FAKE_PNPM_INSTALL_${n}_EXTRA_LOCKFILE`];',
+    '  if (extraLockfile !== undefined) writeFileSync(process.env.FAKE_PNPM_EXTRA_LOCKFILE_PATH, extraLockfile);',
     '  if (process.env[`FAKE_PNPM_INSTALL_FAIL_${n}`] === "1") {',
     '    process.stderr.write("install failed\\n");',
     "    process.exit(1);",
@@ -661,6 +1670,11 @@ function writeFakePnpm(fakeBinDir) {
     '    process.stderr.write("dedupe failed\\n");',
     "    process.exit(1);",
     "  }",
+    "  process.exit(0);",
+    "}",
+    "",
+    'if (args[0] === "list") {',
+    '  process.stdout.write(process.env.FAKE_PNPM_LIST_JSON ?? JSON.stringify([{ path: process.cwd() }]));',
     "  process.exit(0);",
     "}",
     "",
@@ -810,12 +1824,51 @@ describe("main() end-to-end via a fake pnpm binary", () => {
     }
   });
 
-  test("install succeeds but dedupe fails: rolls back and reports dedupe (not install) as the failed step", () => {
+  test("no advisories, but pnpm-workspace.yaml has a pre-existing unannotated minimumReleaseAgeExclude entry: it gets backfilled, reporting changed=true", () => {
+    // annotateMinimumReleaseAgeExclude runs unconditionally (like the
+    // override dedupe/prune calls it sits next to), so a legacy entry from
+    // before this feature existed gets its marker comment backfilled even
+    // on a run that finds no advisories to fix and makes no override
+    // changes of its own.
     writeFileSync(join(repoDir, "pnpm-lock.yaml"), "clean\n");
     writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
     writeFileSync(
       join(repoDir, "pnpm-workspace.yaml"),
       ["minimumReleaseAge: 4320", "minimumReleaseAgeExclude:", "  - foo@1.0.0", ""].join("\n"),
+    );
+    writeFileSync(join(stateDir, "audit-count"), "0");
+    writeFileSync(join(stateDir, "install-count"), "0");
+    writeFileSync(join(stateDir, "dedupe-count"), "0");
+
+    try {
+      const outputs = runMain({ FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}' });
+
+      assert.equal(outputs.changed, "true");
+      assert.match(
+        readFileSync(join(repoDir, "pnpm-workspace.yaml"), "utf8"),
+        /# Renovate security update: foo@1\.0\.0\n {2}- foo@1\.0\.0/,
+      );
+    } finally {
+      rmSync(join(repoDir, "pnpm-workspace.yaml"), { force: true });
+    }
+  });
+
+  test("install succeeds but dedupe fails: rolls back and reports dedupe (not install) as the failed step", () => {
+    // The exclude entry here is pre-annotated so annotateMinimumReleaseAgeExclude
+    // is a no-op and this test stays about the install/dedupe rollback path
+    // only; the backfill-on-a-legacy-entry behavior itself has its own test
+    // above ("...it gets backfilled, reporting changed=true").
+    writeFileSync(join(repoDir, "pnpm-lock.yaml"), "clean\n");
+    writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
+    writeFileSync(
+      join(repoDir, "pnpm-workspace.yaml"),
+      [
+        "minimumReleaseAge: 4320",
+        "minimumReleaseAgeExclude:",
+        "  # Renovate security update: foo@1.0.0",
+        "  - foo@1.0.0",
+        "",
+      ].join("\n"),
     );
     writeFileSync(join(stateDir, "audit-count"), "0");
     writeFileSync(join(stateDir, "install-count"), "0");
@@ -953,6 +2006,104 @@ describe("main() end-to-end via a fake pnpm binary", () => {
     );
   });
 
+  test("workspace lockfile discovery failure happens before any fix mutates files", () => {
+    const before = "lockfileVersion: '9.0'\n\nimporters:\n  .:\n    dependencies:\n      vulnerable-pkg:\n        specifier: ^1.0.0\n";
+    const updateOnly = before.replace("^1.0.0", "^1.0.1");
+    const overrideBroken = before.replace("^1.0.0", "^2.0.0");
+    const workspaceBefore = "packages:\n  - packages/*\n";
+    writeFileSync(join(repoDir, "pnpm-lock.yaml"), before);
+    writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
+    writeFileSync(join(repoDir, "pnpm-workspace.yaml"), workspaceBefore);
+    writeFileSync(join(stateDir, "audit-count"), "0");
+    writeFileSync(join(stateDir, "install-count"), "0");
+    writeFileSync(join(stateDir, "dedupe-count"), "0");
+
+    assert.throws(() => {
+      runMain({
+        FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}',
+        FAKE_PNPM_FIX_UPDATE_LOCKFILE: updateOnly,
+        FAKE_PNPM_FIX_OVERRIDE_LOCKFILE: overrideBroken,
+        FAKE_PNPM_FIX_OVERRIDE_WORKSPACE: "overrides:\n  vulnerable-pkg@<2.0.0: 2.0.0\n",
+        FAKE_PNPM_LIST_JSON: "not-json",
+      });
+    });
+
+    assert.equal(readFileSync(join(repoDir, "pnpm-lock.yaml"), "utf8"), before);
+    assert.equal(readFileSync(join(repoDir, "pnpm-workspace.yaml"), "utf8"), workspaceBefore);
+  });
+
+  test("failed override verification restores a sibling project lockfile", () => {
+    const siblingDir = join(repoDir, "packages", "app");
+    const siblingLockfilePath = join(siblingDir, "pnpm-lock.yaml");
+    const siblingBefore = "lockfileVersion: '9.0'\n\nimporters:\n  .: {}\n";
+    mkdirSync(siblingDir, { recursive: true });
+    writeFileSync(join(repoDir, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n\nimporters:\n  .: {}\n");
+    writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "root-pkg" }));
+    writeFileSync(join(repoDir, "pnpm-workspace.yaml"), "packages:\n  - packages/*\n");
+    writeFileSync(join(siblingDir, "package.json"), JSON.stringify({ name: "app-pkg" }));
+    writeFileSync(siblingLockfilePath, siblingBefore);
+    writeFileSync(join(stateDir, "audit-count"), "0");
+    writeFileSync(join(stateDir, "install-count"), "0");
+    writeFileSync(join(stateDir, "dedupe-count"), "0");
+
+    try {
+      runMain({
+        FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}',
+        FAKE_PNPM_LIST_JSON: JSON.stringify([{ path: repoDir }, { path: siblingDir }]),
+        FAKE_PNPM_EXTRA_LOCKFILE_PATH: siblingLockfilePath,
+        FAKE_PNPM_INSTALL_2_EXTRA_LOCKFILE: siblingBefore.replace(".:", ".:\n    dependencies:\n      new-pkg: {}"),
+        FAKE_PNPM_INSTALL_FAIL_2: "1",
+      });
+
+      assert.equal(readFileSync(siblingLockfilePath, "utf8"), siblingBefore);
+    } finally {
+      rmSync(join(repoDir, "packages"), { recursive: true, force: true });
+      rmSync(join(repoDir, "pnpm-workspace.yaml"), { force: true });
+    }
+  });
+
+  test("reports runtime dependency changes from a sibling project lockfile", () => {
+    const siblingDir = join(repoDir, "packages", "app");
+    const siblingLockfilePath = join(siblingDir, "pnpm-lock.yaml");
+    const siblingBefore = "lockfileVersion: '9.0'\n\nimporters:\n  .: {}\n";
+    const siblingAfter = [
+      "lockfileVersion: '9.0'",
+      "",
+      "importers:",
+      "  .:",
+      "    dependencies:",
+      "      new-pkg:",
+      "        specifier: ^1.0.0",
+      "",
+    ].join("\n");
+    mkdirSync(siblingDir, { recursive: true });
+    writeFileSync(join(repoDir, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n\nimporters:\n  .: {}\n");
+    writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "root-pkg" }));
+    writeFileSync(join(repoDir, "pnpm-workspace.yaml"), "packages:\n  - packages/*\n");
+    writeFileSync(join(siblingDir, "package.json"), JSON.stringify({ name: "app-pkg" }));
+    writeFileSync(siblingLockfilePath, siblingBefore);
+    writeFileSync(join(stateDir, "audit-count"), "0");
+    writeFileSync(join(stateDir, "install-count"), "0");
+    writeFileSync(join(stateDir, "dedupe-count"), "0");
+
+    try {
+      const outputs = runMain({
+        FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}',
+        FAKE_PNPM_LIST_JSON: JSON.stringify([{ path: repoDir }, { path: siblingDir }]),
+        FAKE_PNPM_EXTRA_LOCKFILE_PATH: siblingLockfilePath,
+        FAKE_PNPM_INSTALL_2_EXTRA_LOCKFILE: siblingAfter,
+      });
+
+      assert.equal(outputs.changed, "true");
+      assert.equal(outputs["runtime-deps-changed"], "true");
+      assert.equal(outputs["changed-names"], "app-pkg");
+      assert.equal(readFileSync(siblingLockfilePath, "utf8"), siblingAfter);
+    } finally {
+      rmSync(join(repoDir, "packages"), { recursive: true, force: true });
+      rmSync(join(repoDir, "pnpm-workspace.yaml"), { force: true });
+    }
+  });
+
   test("override mode creates pnpm-workspace.yaml from scratch, then its install fails: rollback deletes the file entirely", () => {
     // Regression test: a naive rollback that only restores pnpm-lock.yaml
     // (or only writes pnpm-workspace.yaml when a prior snapshot had one)
@@ -1012,5 +2163,136 @@ describe("main() end-to-end via a fake pnpm binary", () => {
     assert.equal(outputs.changed, "true");
     assert.equal(readFileSync(join(repoDir, "pnpm-lock.yaml"), "utf8"), overrideFixed);
     assert.equal(readFileSync(join(repoDir, "pnpm-workspace.yaml"), "utf8"), workspaceContent);
+  });
+
+  test("override mode writes an orphaned override alongside a live one: the orphaned one is pruned before install", () => {
+    // Unlike the fixture lockfiles used elsewhere in this describe block,
+    // this one has a real `packages:` block, so readLockfileOutsideOverrides
+    // treats it as a real dependency tree instead of abstaining.
+    const before = [
+      "lockfileVersion: '9.0'",
+      "",
+      "importers:",
+      "  .:",
+      "    dependencies:",
+      "      live-pkg:",
+      "        specifier: ^1.0.0",
+      "",
+      "packages:",
+      "",
+      "  live-pkg@1.0.1:",
+      "    resolution: {integrity: sha512-x}",
+      "",
+    ].join("\n");
+    writeFileSync(join(repoDir, "pnpm-lock.yaml"), before);
+    writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
+    writeFileSync(join(stateDir, "audit-count"), "0");
+    writeFileSync(join(stateDir, "install-count"), "0");
+    writeFileSync(join(stateDir, "dedupe-count"), "0");
+
+    const outputs = runMain({
+      FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}',
+      // update mode makes no changes; override mode writes an override for
+      // the live dependency plus one for a package no longer in the tree.
+      FAKE_PNPM_FIX_OVERRIDE_WORKSPACE: "overrides:\n  live-pkg@<1.0.1: 1.0.1\n  ghost-pkg@<2: 2.0.0\n",
+    });
+
+    assert.equal(outputs.changed, "true");
+    const workspace = readFileSync(join(repoDir, "pnpm-workspace.yaml"), "utf8");
+    assert.match(workspace, /live-pkg@<1\.0\.1: 1\.0\.1/);
+    assert.doesNotMatch(workspace, /ghost-pkg/);
+
+    const stdout = readFileSync(join(stateDir, "last-stdout.txt"), "utf8");
+    assert.match(stdout, /Dropping orphaned override entry "ghost-pkg@<2"/);
+  });
+
+  test("keeps a root override used only by a sibling project lockfile", () => {
+    const siblingDir = join(repoDir, "packages", "app");
+    mkdirSync(siblingDir, { recursive: true });
+    writeFileSync(join(repoDir, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n\nimporters:\n  .: {}\n");
+    writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
+    writeFileSync(join(repoDir, "pnpm-workspace.yaml"), "packages:\n  - packages/*\noverrides:\n  is-odd: 3.0.1\n");
+    writeFileSync(
+      join(siblingDir, "pnpm-lock.yaml"),
+      "lockfileVersion: '9.0'\n\npackages:\n\n  is-odd@3.0.1:\n    resolution: {}\n",
+    );
+    writeFileSync(join(stateDir, "audit-count"), "0");
+    writeFileSync(join(stateDir, "install-count"), "0");
+    writeFileSync(join(stateDir, "dedupe-count"), "0");
+
+    try {
+      const outputs = runMain({
+        FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}',
+        FAKE_PNPM_LIST_JSON: JSON.stringify([{ path: repoDir }, { path: siblingDir }]),
+      });
+
+      assert.equal(outputs.changed, "false");
+      assert.match(readFileSync(join(repoDir, "pnpm-workspace.yaml"), "utf8"), /is-odd: 3\.0\.1/);
+    } finally {
+      rmSync(join(repoDir, "packages"), { recursive: true, force: true });
+      rmSync(join(repoDir, "pnpm-workspace.yaml"), { force: true });
+    }
+  });
+
+  test("override mode writes an unannotated minimumReleaseAgeExclude entry: a marker comment is inserted before install", () => {
+    const before = ["importers:", "  .:", "    dependencies:", "      vulnerable-pkg:", "        specifier: ^1.0.0"].join(
+      "\n",
+    );
+    writeFileSync(join(repoDir, "pnpm-lock.yaml"), before);
+    writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
+    writeFileSync(join(stateDir, "audit-count"), "0");
+    writeFileSync(join(stateDir, "install-count"), "0");
+    writeFileSync(join(stateDir, "dedupe-count"), "0");
+
+    const outputs = runMain({
+      FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}',
+      FAKE_PNPM_FIX_OVERRIDE_WORKSPACE: "minimumReleaseAgeExclude:\n  - fast-uri@3.1.6\n",
+    });
+
+    assert.equal(outputs.changed, "true");
+    const workspace = readFileSync(join(repoDir, "pnpm-workspace.yaml"), "utf8");
+    assert.match(workspace, /# Renovate security update: fast-uri@3\.1\.6\n {2}- fast-uri@3\.1\.6/);
+  });
+
+  test("override mode creates pnpm-workspace.yaml holding only an override that orphan-pruning then empties out: the scaffold file is removed", () => {
+    // Regression test: previously the newly created file survived as an
+    // empty (0-byte) pnpm-workspace.yaml, and changed=true was reported for
+    // a file that ended up doing nothing.
+    const before = [
+      "lockfileVersion: '9.0'",
+      "",
+      "importers:",
+      "  .:",
+      "    dependencies:",
+      "      live-pkg:",
+      "        specifier: ^1.0.0",
+      "",
+      "packages:",
+      "",
+      "  live-pkg@1.0.1:",
+      "    resolution: {integrity: sha512-x}",
+      "",
+    ].join("\n");
+    writeFileSync(join(repoDir, "pnpm-lock.yaml"), before);
+    writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
+    writeFileSync(join(stateDir, "audit-count"), "0");
+    writeFileSync(join(stateDir, "install-count"), "0");
+    writeFileSync(join(stateDir, "dedupe-count"), "0");
+    // A prior test in this shared repoDir may have left a pnpm-workspace.yaml
+    // behind; remove it so this run's own snapshot sees it as not existing,
+    // matching the scenario being tested (this run is the one that creates it).
+    rmSync(join(repoDir, "pnpm-workspace.yaml"), { force: true });
+
+    const outputs = runMain({
+      FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}',
+      FAKE_PNPM_FIX_OVERRIDE_WORKSPACE: "overrides:\n  ghost-pkg@<2: 2.0.0\n",
+    });
+
+    assert.equal(outputs.changed, "false");
+    assert.equal(
+      existsSync(join(repoDir, "pnpm-workspace.yaml")),
+      false,
+      "a workspace file created solely to hold an override that then got pruned to nothing should be removed entirely",
+    );
   });
 });

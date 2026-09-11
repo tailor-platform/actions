@@ -18,13 +18,13 @@
  * but pnpm resolves the override into an installable lockfile only once
  * `pnpm install` actually runs afterward — and depending on whether the
  * repo already has a pnpm-workspace.yaml, that install can rewrite
- * pnpm-lock.yaml, pnpm-workspace.yaml (creating it if it didn't exist), and
- * package.json's `pnpm.overrides`. So: try update, verify it installs
- * cleanly and snapshot *all three* files as a known-good fallback (or the
- * pristine originals, if even that fails), then try override on top and
- * roll back to the fallback snapshot — deleting pnpm-workspace.yaml
- * entirely if the fallback didn't have one — if override leaves the result
- * uninstallable.
+ * workspace project lockfiles, pnpm-workspace.yaml (creating it if it
+ * didn't exist), and package.json's `pnpm.overrides`. So: try update,
+ * verify it installs cleanly and snapshot all of those files as a known-good
+ * fallback (or the pristine originals, if even that fails), then try
+ * override on top and roll back to the fallback snapshot — deleting
+ * pnpm-workspace.yaml entirely if the fallback didn't have one — if
+ * override leaves the result uninstallable.
  *
  * This action does not commit or open a pull request — pair it with a
  * caller-provided commit/PR step (e.g. tailor-platform/actions'
@@ -32,12 +32,12 @@
  * caller's control.
  *
  * Outputs (via $GITHUB_OUTPUT):
- *   changed              - "true" if pnpm-lock.yaml, pnpm-workspace.yaml,
- *                           and/or package.json changed
+ *   changed              - "true" if any workspace pnpm-lock.yaml,
+ *                           pnpm-workspace.yaml, and/or package.json changed
  *   runtime-deps-changed - "true" if any non-private package's runtime
  *                           (non-dev) dependencies changed, per
- *                           pnpm-lock.yaml; devDependencies-only changes and
- *                           pnpm-workspace.yaml/package.json-overrides-only
+ *                           workspace lockfiles; devDependencies-only changes
+ *                           and pnpm-workspace.yaml/package.json-overrides-only
  *                           changes don't affect consumers
  *   changed-names        - newline-separated names of packages whose
  *                           runtime dependencies changed
@@ -47,7 +47,7 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, unlinkSync, appendFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
@@ -339,25 +339,54 @@ function parseOverrideLine(line) {
 }
 
 /**
- * Finds the line range of pnpm-workspace.yaml's top-level `overrides:`
- * block: the line index of `overrides:` itself, and the exclusive end
- * index where a line returns to column 0 (the next top-level key). Blank
- * lines inside the block don't end it.
+ * Finds the line range of a pnpm-workspace.yaml top-level `<key>:` block:
+ * the line index of `<key>:` itself, and the exclusive end index where a
+ * line returns to column 0 (the next top-level key). Blank lines inside the
+ * block don't end it. `key` is always a fixed literal supplied by call
+ * sites in this file, never external input, so building a RegExp from it is
+ * safe.
  * @param {string[]} lines
+ * @param {string} key
  * @returns {{headerIdx: number, endIdx: number} | null}
  */
-function findOverridesBlock(lines) {
-  const headerIdx = lines.findIndex((l) => /^overrides:\s*$/.test(l));
+function findTopLevelBlock(lines, key) {
+  // A trailing `# ...` inline comment on the header line itself is valid
+  // YAML and doesn't change the block's meaning, so it's tolerated the same
+  // way renovate-policy-check.mjs's own header check does (a plain prefix
+  // test, no end-of-line anchor at all).
+  const headerRe = new RegExp(`^${key}\\s*:\\s*(#.*)?$`);
+  const headerIdx = lines.findIndex((l) => headerRe.test(l));
   if (headerIdx === -1) return null;
   let endIdx = lines.length;
   for (let i = headerIdx + 1; i < lines.length; i++) {
     if (lines[i].trim() === "") continue;
+    // A column-0 `# ...` comment is valid YAML even between items of an
+    // indented block (comments don't participate in the indentation
+    // structure), so it doesn't end the block either — only a genuine
+    // next top-level key does.
+    if (/^#/.test(lines[i])) continue;
+    // YAML also allows a block sequence's `-` items to sit at the same
+    // column as their own key (unlike a mapping's key: value children,
+    // which always need deeper indentation) — e.g.
+    // `minimumReleaseAgeExclude:\n- foo@1.0.0`. The indicator must be
+    // followed by whitespace (or end the line); `-feature: enabled` is a
+    // valid plain mapping key and must still end the preceding block.
+    if (/^-(?:\s|$)/.test(lines[i])) continue;
     if (!/^\s/.test(lines[i])) {
       endIdx = i;
       break;
     }
   }
   return { headerIdx, endIdx };
+}
+
+/**
+ * pnpm-workspace.yaml's `overrides:` block, specifically. See findTopLevelBlock.
+ * @param {string[]} lines
+ * @returns {{headerIdx: number, endIdx: number} | null}
+ */
+function findOverridesBlock(lines) {
+  return findTopLevelBlock(lines, "overrides");
 }
 
 /**
@@ -390,10 +419,24 @@ function dedupeWorkspaceOverrides(workspacePath) {
   const { removedKeys } = dedupeOverrideEntries(entries);
   if (removedKeys.length === 0) return false;
 
+  // A removed entry's directly preceding comment lines (a plain note, or a
+  // `# keep-override:` marker) describe that entry specifically — nothing
+  // else can sit between a comment and the entry line it precedes, since a
+  // blank line or another entry line would already have ended the run. Left
+  // behind, such a comment would attach itself (in every other reader of
+  // this file, including pruneOrphanedWorkspaceOverrides right after this
+  // function runs) to whatever entry happens to follow it instead — a
+  // `# keep-override:` marker orphaned this way would wrongly exempt an
+  // unrelated, later entry from orphan-pruning.
   const removedKeySet = new Set(removedKeys);
-  const removedIndexes = new Set(
-    parsedLines.filter(({ key }) => removedKeySet.has(key)).map(({ lineIndex }) => lineIndex),
-  );
+  const removedIndexes = new Set();
+  for (const { key, lineIndex } of parsedLines) {
+    if (!removedKeySet.has(key)) continue;
+    removedIndexes.add(lineIndex);
+    for (let i = lineIndex - 1; i > block.headerIdx && /^\s*#/.test(lines[i]); i--) {
+      removedIndexes.add(i);
+    }
+  }
   writeFileSync(workspacePath, lines.filter((_, i) => !removedIndexes.has(i)).join("\n"));
   return true;
 }
@@ -413,6 +456,479 @@ function dedupePackageJsonOverrides(packageJsonPath) {
 
   pkg.pnpm.overrides = Object.fromEntries(survivors);
   writeFileSync(packageJsonPath, `${JSON.stringify(pkg, null, 2)}\n`);
+  return true;
+}
+
+/**
+ * pnpm's dep-path syntax (`parent>child`) and range operators (`>=3.0.0`)
+ * share the `>` character, so only the leading name segment is read here.
+ * For a nested `parent>child` selector this resolves to `parent`, not
+ * `child` — deliberately: this is a verbatim port of
+ * tailor-platform/sdk's own `OVERRIDE_TARGET`/`overrideTargetName`, and its
+ * own test (mirrored at pruneOrphanedOverrideEntries's "keeps an entry
+ * reachable through a parent>child dep-path selector" below) keeps a
+ * `parent>child` override whenever `parent` is present, even when `child`
+ * itself doesn't appear in the lockfile at all. Determining whether `child`
+ * is *actually* still a dependency of `parent` specifically would need real
+ * dependency-graph traversal, not a text scan — out of scope for this
+ * line-based, no-YAML-library port — so this errs toward keeping (a
+ * `parent>child` override can go a while after `child` stops mattering to
+ * `parent` without being flagged), the same direction every other check in
+ * this file already errs toward.
+ */
+const OVERRIDE_TARGET = /^(?:@[^/@\s>]+\/)?[^@\s>]+/;
+
+/**
+ * A `# keep-override: <reason>` comment immediately above a
+ * pnpm-workspace.yaml override entry opts it out of orphan-pruning — for a
+ * pin intentionally placed ahead of the package actually landing in the
+ * dependency tree.
+ */
+const KEEP_OVERRIDE_COMMENT = /^#\s*keep-override\s*:/i;
+
+/**
+ * @param {string} key a `pnpm.overrides`/`pnpm-workspace.yaml overrides:` key
+ * @returns {string | null} the bare target package name, or null if unparsable
+ */
+function overrideTargetName(key) {
+  const match = key.match(OVERRIDE_TARGET);
+  return match ? match[0] : null;
+}
+
+/** @param {string[]} removedKeys */
+function logPrunedOverrideKeys(removedKeys) {
+  for (const key of removedKeys) {
+    console.log(`Dropping orphaned override entry "${key}" (not in the dependency tree).`);
+  }
+}
+
+/**
+ * True if `name` appears anywhere in `haystack` (a pnpm-lock.yaml with its
+ * own `overrides:` block excluded — see readLockfileOutsideOverrides) as any
+ * of: a resolved package key/peer-dependency suffix (`name@version`), a bare
+ * importer/workspace-link key (`name:` or `'@scope/name':` — the only form a
+ * workspace link ever takes, since it gets no `packages:` entry to carry a
+ * version), a pre-v6 (`lockfileVersion` 5.x and earlier) slash-delimited
+ * package key (`/name/version:`), or a pre-v6 underscore-joined
+ * peer-resolution suffix (`name@version_peer@peerVersion`) — verified
+ * against real `pnpm@7` output, since this action doesn't require a minimum
+ * pnpm/lockfile version and a caller could still be on one. Any mention
+ * counts as present, so this only ever errs toward keeping an override
+ * rather than dropping a live one. The leading boundary check is what keeps
+ * a `uri` override from matching `fast-uri@3.1.4`; `_` and `/` are
+ * deliberately not in its excluded set (unlike letters/digits/`@`/`.`/`-`),
+ * since both legitimately precede a package name in those pre-v6 shapes and
+ * loosening the boundary there only ever adds more matches, never causes a
+ * live override to look orphaned.
+ * @param {string} haystack
+ * @param {string} name
+ */
+function isMentioned(haystack, name) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^a-zA-Z0-9@.-])${escaped}(@|\\/|["']?\\s*:)`, "m").test(haystack);
+}
+
+/**
+ * Reads pnpm-lock.yaml with its own top-level `overrides:` block (a mirror
+ * of pnpm-workspace.yaml's `overrides:`) excluded first — scanning the file
+ * whole would make every override look "mentioned" off the back of its own
+ * entry. Returns null when the file is missing or doesn't look like a real
+ * lockfile, so callers abstain from pruning rather than act on a bad read.
+ * `lockfileVersion:` (not `packages:`) is the sanity check: a workspace
+ * whose external dependencies have all been removed (verified against a
+ * real `pnpm install`) has pnpm omit the `packages:` key entirely, and
+ * that's exactly the case this feature most needs to catch — the last
+ * override's target left the tree along with everything else. This
+ * deliberately diverges from tailor-platform/sdk's own
+ * lockfile-audit-fix-normalize.mjs, which checks for `packages:` instead
+ * and has a test asserting the opposite (abstain when it's absent); an
+ * override can only exist in the first place because a package it once
+ * targeted was in the tree, so "the tree emptied out entirely" is a real
+ * (if narrow) path to an orphaned override, not just a lockfile that
+ * doesn't look real.
+ * @param {string} lockfilePath
+ * @returns {string | null}
+ */
+function readLockfileOutsideOverrides(lockfilePath) {
+  if (!existsSync(lockfilePath)) return null;
+  const lines = readFileSync(lockfilePath, "utf8").split("\n");
+  if (!lines.some((l) => /^lockfileVersion\s*:/.test(l))) return null;
+  const block = findOverridesBlock(lines);
+  if (!block) return lines.join("\n");
+  return [...lines.slice(0, block.headerIdx), ...lines.slice(block.endIdx)].join("\n");
+}
+
+/**
+ * Finds the expected pnpm lockfile path for every project in the current
+ * workspace. With `sharedWorkspaceLockfile: false`, each workspace project
+ * has its own lockfile, so the root lockfile alone is not enough to decide
+ * whether an override target is still in use. Asking pnpm for the project
+ * list avoids treating lockfiles in unrelated nested fixtures as part of
+ * the workspace.
+ * @param {string} rootPath
+ * @returns {string[]}
+ */
+function findPnpmLockfilePaths(rootPath) {
+  const rootLockfilePath = join(rootPath, "pnpm-lock.yaml");
+  const workspacePath = join(rootPath, "pnpm-workspace.yaml");
+  if (!existsSync(workspacePath)) return [rootLockfilePath];
+
+  const output = execFileSync("pnpm", ["list", "--recursive", "--depth", "-1", "--json"], {
+    cwd: rootPath,
+    encoding: "utf8",
+    maxBuffer: 1024 * 1024 * 64,
+  });
+  const projects = JSON.parse(output);
+  if (!Array.isArray(projects)) throw new Error("pnpm list did not return a project array");
+
+  const projectPaths = [
+    rootPath,
+    ...projects.map((project) => project?.path).filter((path) => typeof path === "string"),
+  ];
+  return [...new Set(projectPaths.map((path) => join(path, "pnpm-lock.yaml")))].sort();
+}
+
+/**
+ * @param {string} rootPath
+ * @returns {string[]}
+ */
+function findPnpmLockfiles(rootPath) {
+  return findPnpmLockfilePaths(rootPath).filter(existsSync);
+}
+
+/**
+ * @param {string} lockfilePath
+ * @param {string[]} additionalLockfilePaths
+ * @returns {string | null}
+ */
+function readAllLockfilesOutsideOverrides(lockfilePath, additionalLockfilePaths = []) {
+  const texts = [];
+  for (const path of new Set([lockfilePath, ...additionalLockfilePaths])) {
+    const text = readLockfileOutsideOverrides(path);
+    if (text === null) return null;
+    texts.push(text);
+  }
+  return texts.join("\n");
+}
+
+/**
+ * Drops `pnpm.overrides`/`pnpm-workspace.yaml overrides:` entries whose
+ * target package is no longer mentioned anywhere in the dependency tree
+ * (`lockfileText`, see readLockfileOutsideOverrides) — an override like that
+ * protects nothing, since pnpm never resolves it into anything, yet nothing
+ * else ever removes it, so the list only grows over time otherwise. Any
+ * entry whose target name can't be parsed is left untouched rather than
+ * guessed at.
+ * @param {[string, string][]} entries
+ * @param {string} lockfileText
+ * @returns {{survivors: [string, string][], removedKeys: string[]}}
+ */
+function pruneOrphanedOverrideEntries(entries, lockfileText) {
+  const survivors = [];
+  const removedKeys = [];
+  for (const [key, value] of entries) {
+    const name = overrideTargetName(key);
+    if (name && !isMentioned(lockfileText, name)) {
+      removedKeys.push(key);
+      continue;
+    }
+    survivors.push([key, value]);
+  }
+  return { survivors, removedKeys };
+}
+
+/**
+ * Prunes pnpm-workspace.yaml's `overrides:` block of entries whose target
+ * package is no longer mentioned anywhere in the workspace lockfiles'
+ * dependency tree — same line-deletion approach as dedupeWorkspaceOverrides, for the
+ * same reason (no YAML library available). Unlike dedupeWorkspaceOverrides,
+ * a dropped entry also takes any plain comment immediately above it with it
+ * (that comment only ever explained the now-dead entry), except a
+ * `# keep-override: <reason>` comment, which opts the entry out of pruning
+ * entirely instead.
+ * @param {string} workspacePath
+ * @param {string} lockfilePath
+ * @param {string[]} additionalLockfilePaths
+ * @returns {boolean} true if the file was rewritten
+ */
+function pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath, additionalLockfilePaths = []) {
+  if (!existsSync(workspacePath)) return false;
+  const lines = readFileSync(workspacePath, "utf8").split("\n");
+  const block = findOverridesBlock(lines);
+  if (!block) return false;
+
+  const lockfileText = readAllLockfilesOutsideOverrides(lockfilePath, additionalLockfilePaths);
+  if (lockfileText === null) return false;
+
+  const { headerIdx, endIdx } = block;
+  const body = lines.slice(headerIdx + 1, endIdx);
+
+  const kept = [];
+  const removedKeys = [];
+  let comments = [];
+  for (const raw of body) {
+    const trimmed = raw.trim();
+    if (trimmed === "") {
+      kept.push(...comments, raw);
+      comments = [];
+      continue;
+    }
+    if (trimmed.startsWith("#")) {
+      comments.push(raw);
+      continue;
+    }
+    const parsed = parseOverrideLine(raw);
+    if (!parsed) {
+      kept.push(...comments, raw);
+      comments = [];
+      continue;
+    }
+    const name = overrideTargetName(parsed.key);
+    // Deliberately checks every comment directly above this entry, not just
+    // the nearest one (unlike RENOVATE_SECURITY_COMMENT's hasMarker check
+    // in annotateMinimumReleaseAgeExclude below): there's no external
+    // checker whose "only the last pendingComment counts" parsing this has
+    // to match, `# keep-override:` is this action's own convention, and
+    // dedupeWorkspaceOverrides above already sweeps a removed entry's whole
+    // comment block away with it, so a marker reaching this point always
+    // precedes only the entry it was written for. Requiring it to be the
+    // nearest line would make it easier to lose an intentional opt-out to
+    // an added note, the opposite of this file's "err toward keeping"
+    // stance elsewhere.
+    const optedOut = comments.some((c) => KEEP_OVERRIDE_COMMENT.test(c.trim()));
+    if (name && !optedOut && !isMentioned(lockfileText, name)) {
+      removedKeys.push(parsed.key);
+      comments = [];
+      continue;
+    }
+    kept.push(...comments, raw);
+    comments = [];
+  }
+  kept.push(...comments);
+
+  if (removedKeys.length === 0) return false;
+  logPrunedOverrideKeys(removedKeys);
+
+  // A childless `overrides:` parses as null rather than an empty map. pnpm
+  // tolerates that, but the whole key is dropped along with its last entry
+  // instead of relying on it. `kept` at this point is never comments that
+  // belonged to a removed entry (those were dropped alongside it above) —
+  // it's only ever a surviving entry's own lines, or a comment/blank that
+  // reached the end of the block (or a blank line) with nothing following
+  // it to attach to — so it's spliced back in either way, dropping only the
+  // now-pointless `overrides:` header itself when no entry survived.
+  const hasEntries = kept.some((l) => l.trim() !== "" && !l.trim().startsWith("#"));
+  const newLines = hasEntries
+    ? [...lines.slice(0, headerIdx + 1), ...kept, ...lines.slice(endIdx)]
+    : [...lines.slice(0, headerIdx), ...kept, ...lines.slice(endIdx)];
+  writeFileSync(workspacePath, newLines.join("\n"));
+  return true;
+}
+
+/**
+ * @param {string} packageJsonPath
+ * @param {string} lockfilePath
+ * @param {string[]} additionalLockfilePaths
+ * @returns {boolean} true if the file was rewritten
+ */
+function pruneOrphanedPackageJsonOverrides(packageJsonPath, lockfilePath, additionalLockfilePaths = []) {
+  const pkg = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+  const overrides = pkg.pnpm?.overrides;
+  if (!overrides || typeof overrides !== "object") return false;
+
+  const lockfileText = readAllLockfilesOutsideOverrides(lockfilePath, additionalLockfilePaths);
+  if (lockfileText === null) return false;
+
+  const entries = Object.entries(overrides);
+  const { survivors, removedKeys } = pruneOrphanedOverrideEntries(entries, lockfileText);
+  if (removedKeys.length === 0) return false;
+  logPrunedOverrideKeys(removedKeys);
+
+  // An orphaned-only overrides object (unlike a deduped one, which always
+  // keeps at least one survivor per package) can genuinely empty out
+  // entirely — drop the now-pointless `pnpm.overrides` key (and a now-empty
+  // `pnpm` object too) instead of leaving `pnpm.overrides: {}` behind.
+  if (survivors.length === 0) {
+    delete pkg.pnpm.overrides;
+    if (Object.keys(pkg.pnpm).length === 0) delete pkg.pnpm;
+  } else {
+    pkg.pnpm.overrides = Object.fromEntries(survivors);
+  }
+  writeFileSync(packageJsonPath, `${JSON.stringify(pkg, null, 2)}\n`);
+  return true;
+}
+
+/**
+ * A `# Renovate security update: <entry>` comment (case-insensitive, either
+ * side of `:` may have extra whitespace) marks a `minimumReleaseAgeExclude`
+ * entry as added through the normal automated flow, per
+ * tailor-platform/sdk's `renovate-policy-check.mjs`.
+ */
+const RENOVATE_SECURITY_COMMENT = /^#\s*Renovate security update\s*:/i;
+
+/**
+ * Parses a `-` list item under pnpm-workspace.yaml's
+ * `minimumReleaseAgeExclude:` block into its raw entry text, unquoting a
+ * single- or double-quoted value if present (a scoped package name, `@`-led,
+ * has to be quoted one way or the other in YAML) and dropping a trailing
+ * inline `# ...` comment — for a quoted value, everything after the closing
+ * quote is discarded outright (not just anything that happens to look like
+ * a comment), matching YAML's own rule that nothing meaningful follows a
+ * quoted scalar but whitespace and a comment. Returns null for anything
+ * that isn't a `- <value>` line (a comment, a blank line, ...) or whose
+ * quote never closes.
+ * @param {string} line
+ * @returns {string | null}
+ */
+function parseExcludeListItem(line) {
+  const m = line.match(/^\s*-\s*(.*)$/);
+  if (!m) return null;
+  const rest = m[1];
+
+  if (rest.startsWith('"') || rest.startsWith("'")) {
+    const quote = rest[0];
+    const closeIdx = rest.indexOf(quote, 1);
+    return closeIdx === -1 ? null : rest.slice(1, closeIdx);
+  }
+
+  const commentIdx = rest.search(/\s#/);
+  const value = (commentIdx === -1 ? rest : rest.slice(0, commentIdx)).trim();
+  return value === "" ? null : value;
+}
+
+/**
+ * Splits a `minimumReleaseAgeExclude` entry into its bare package name and
+ * version, the same `name@version` shape `pnpm.overrides` keys use.
+ * @param {string} entry
+ * @returns {{name: string, version: string | null}} a null version means a
+ *   bare name with no version pin
+ */
+function splitExcludeEntry(entry) {
+  const atIndex = entry.startsWith("@") ? entry.indexOf("@", 1) : entry.indexOf("@");
+  if (atIndex === -1) return { name: entry, version: null };
+  return { name: entry.slice(0, atIndex), version: entry.slice(atIndex + 1) };
+}
+
+/**
+ * Inserts a `# Renovate security update: <entry>` comment directly above
+ * every version-pinned (`name@version`, where `version` starts with a
+ * digit) pnpm-workspace.yaml `minimumReleaseAgeExclude` entry that doesn't
+ * already have one. `pnpm audit --fix`/`pnpm install` write these bypass
+ * entries with no comment at all, but tailor-platform/sdk's
+ * `renovate-policy-check.mjs` (a separate, always-on CI check this action
+ * doesn't run) requires this marker on every version-pinned entry as a sign
+ * that the bypass was added through the normal automated flow rather than
+ * by hand. A bare name entry (no version) is left untouched, since the
+ * marker only makes sense for a version-specific bypass — and so is
+ * `name@latest`/`name@^1.2.3` (a tag or range, not a version starting with
+ * a digit): renovate-policy-check.mjs's own `versionPinned` check is
+ * `/@\d/`, so a tag/range exclude was never subject to the marker
+ * requirement in the first place, and marking one anyway would mislabel it
+ * as an automated security update it isn't. Whether a marker is already present is decided
+ * from only the nearest preceding comment line, matching
+ * `renovate-policy-check.mjs`'s own check (it tracks a single
+ * `pendingComment`, overwritten by each comment line in turn, so only the
+ * one immediately above the entry counts) — a marker sitting behind some
+ * other, more recent comment wouldn't satisfy that check either, so a new
+ * marker is inserted as the new nearest comment in that case too, even
+ * though an existing marker technically exists further up. Any existing
+ * comment immediately above an entry is kept as-is — a plain, unrelated
+ * comment is kept alongside the inserted marker rather than replaced.
+ * @param {string} workspacePath
+ * @returns {boolean} true if the file was rewritten
+ */
+function annotateMinimumReleaseAgeExclude(workspacePath) {
+  if (!existsSync(workspacePath)) return false;
+  const lines = readFileSync(workspacePath, "utf8").split("\n");
+  const block = findTopLevelBlock(lines, "minimumReleaseAgeExclude");
+  if (!block) return false;
+
+  const { headerIdx, endIdx } = block;
+  const body = lines.slice(headerIdx + 1, endIdx);
+
+  const newBody = [];
+  let comments = [];
+  let changed = false;
+  for (const raw of body) {
+    const trimmed = raw.trim();
+    if (trimmed === "") {
+      newBody.push(...comments, raw);
+      comments = [];
+      continue;
+    }
+    if (trimmed.startsWith("#")) {
+      comments.push(raw);
+      continue;
+    }
+    const entry = parseExcludeListItem(raw);
+    if (!entry) {
+      newBody.push(...comments, raw);
+      comments = [];
+      continue;
+    }
+    const { version } = splitExcludeEntry(entry);
+    // renovate-policy-check.mjs's own `versionPinned` check is `/@\d/` — it
+    // only requires a marker when a digit immediately follows `@`, not
+    // merely that some `@` is present. `foo@latest`/`foo@^1.2.3` aren't
+    // "version-pinned" by that definition (a tag or range isn't a specific
+    // just-published version to justify a minimumReleaseAge bypass for), so
+    // matching it here avoids mislabeling one as an automated security
+    // update the policy check never actually required a marker for.
+    const isNumericVersion = version != null && /^\d/.test(version);
+    const hasMarker = comments.length > 0 && RENOVATE_SECURITY_COMMENT.test(comments[comments.length - 1].trim());
+    if (isNumericVersion && !hasMarker) {
+      // Matches this entry's own leading whitespace (which may be empty,
+      // for an indentationless `- foo@1.0.0` sequence item) rather than
+      // hard-coding an indent, so the inserted comment lines up with it.
+      const indent = raw.match(/^\s*/)[0];
+      newBody.push(...comments, `${indent}# Renovate security update: ${entry}`, raw);
+      changed = true;
+    } else {
+      newBody.push(...comments, raw);
+    }
+    comments = [];
+  }
+  newBody.push(...comments);
+
+  if (!changed) return false;
+  writeFileSync(workspacePath, [...lines.slice(0, headerIdx + 1), ...newBody, ...lines.slice(endIdx)].join("\n"));
+  return true;
+}
+
+/**
+ * A comment-only or blank line carries nothing an orphaned-empty workspace
+ * scaffold check should count as "meaningful content" — the same standard
+ * `pruneOrphanedWorkspaceOverrides` uses for its own "did the block empty
+ * out" check.
+ * @param {string} text
+ */
+function isYamlContentEmpty(text) {
+  return !text.split("\n").some((l) => l.trim() !== "" && !l.trim().startsWith("#"));
+}
+
+/**
+ * Deletes pnpm-workspace.yaml if this action invocation is the one that
+ * created it (`originalWorkspaceText` — a snapshot taken before any fix
+ * ran — is null) and it has since collapsed to nothing meaningful (no
+ * actual YAML content — comment/blank lines don't count either), e.g.
+ * override mode wrote the file solely to hold an override that
+ * orphan-pruning then removed, potentially leaving a comment that survived
+ * the removal (unattached to anything, per pruneOrphanedWorkspaceOverrides's
+ * own trailing-comment handling) as the file's only remaining line. An
+ * existing file is left alone even if it becomes blank, since a workspace
+ * file's mere presence can matter to pnpm independently of its content (it
+ * marks the workspace root) — only a file this run itself brought into
+ * existence is safe to remove entirely, restoring the state from before
+ * this run.
+ * @param {string} workspacePath
+ * @param {string | null} originalWorkspaceText
+ * @returns {boolean} true if the file was deleted
+ */
+function pruneEmptyWorkspaceScaffold(workspacePath, originalWorkspaceText) {
+  if (originalWorkspaceText !== null) return false;
+  if (!existsSync(workspacePath)) return false;
+  if (!isYamlContentEmpty(readFileSync(workspacePath, "utf8"))) return false;
+  unlinkSync(workspacePath);
   return true;
 }
 
@@ -620,6 +1136,11 @@ function main() {
   const lockfilePath = join(cwd, "pnpm-lock.yaml");
   const workspacePath = join(cwd, "pnpm-workspace.yaml");
   const packageJsonPath = join(cwd, "package.json");
+  // Capture every workspace project's expected lockfile path before any
+  // pnpm command can create or rewrite one. This fixed list lets rollback
+  // restore existing files and delete files created during the run without
+  // depending on another discovery command after a failure.
+  const trackedLockfilePaths = findPnpmLockfilePaths(cwd);
 
   const outputFile = process.env.GITHUB_OUTPUT;
   const setOutput = (name, value) => {
@@ -639,15 +1160,30 @@ function main() {
   // pnpm writes an override it can't express as a lockfile-only version
   // bump to pnpm-workspace.yaml if one exists, or to package.json's
   // `pnpm.overrides` otherwise — and can create pnpm-workspace.yaml from
-  // scratch to do it. So all three are part of the state a rollback must
-  // restore, not just the lockfile.
-  const snapshot = () => ({
-    lockfile: readFileSync(lockfilePath, "utf8"),
-    workspace: existsSync(workspacePath) ? readFileSync(workspacePath, "utf8") : null,
-    packageJson: readFileSync(packageJsonPath, "utf8"),
-  });
+  // scratch to do it. So all workspace lockfiles plus both configuration
+  // files are part of the state a rollback must restore.
+  const snapshot = () => {
+    const lockfiles = Object.fromEntries(
+      trackedLockfilePaths.map((path) => [path, existsSync(path) ? readFileSync(path, "utf8") : null]),
+    );
+    return {
+      // Preserve the original required-root-lockfile behavior: a missing
+      // root lockfile is an action configuration error, not a nullable
+      // snapshot entry to continue past.
+      lockfile: readFileSync(lockfilePath, "utf8"),
+      lockfiles,
+      workspace: existsSync(workspacePath) ? readFileSync(workspacePath, "utf8") : null,
+      packageJson: readFileSync(packageJsonPath, "utf8"),
+    };
+  };
   const restore = (snap) => {
-    writeFileSync(lockfilePath, snap.lockfile);
+    for (const [path, text] of Object.entries(snap.lockfiles)) {
+      if (text === null) {
+        if (existsSync(path)) unlinkSync(path);
+      } else {
+        writeFileSync(path, text);
+      }
+    }
     writeFileSync(packageJsonPath, snap.packageJson);
     if (snap.workspace !== null) {
       writeFileSync(workspacePath, snap.workspace);
@@ -666,15 +1202,20 @@ function main() {
     fallback = snapshot();
   } catch (e) {
     console.log(
-      `::warning::pnpm verification failed after the update-mode fix; reverting pnpm-lock.yaml, pnpm-workspace.yaml, and package.json to their original state. ${e.message}`,
+      `::warning::pnpm verification failed after the update-mode fix; reverting workspace lockfiles, pnpm-workspace.yaml, and package.json to their original state. ${e.message}`,
     );
     restore(original);
   }
 
   runFix("override", cwd);
-  dedupeWorkspaceOverrides(workspacePath);
-  dedupePackageJsonOverrides(packageJsonPath);
   try {
+    dedupeWorkspaceOverrides(workspacePath);
+    dedupePackageJsonOverrides(packageJsonPath);
+    const lockfilePaths = trackedLockfilePaths.filter(existsSync);
+    pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath, lockfilePaths);
+    pruneOrphanedPackageJsonOverrides(packageJsonPath, lockfilePath, lockfilePaths);
+    annotateMinimumReleaseAgeExclude(workspacePath);
+    pruneEmptyWorkspaceScaffold(workspacePath, original.workspace);
     verifyInstallable(cwd);
   } catch (e) {
     // fallback is still `original` here when the update-mode install above
@@ -682,14 +1223,14 @@ function main() {
     // result that may never have existed.
     const revertTarget = fallback === original ? "their original state" : "the update-mode-only result";
     console.log(
-      `::warning::pnpm verification failed after the override fallback; reverting pnpm-lock.yaml, pnpm-workspace.yaml, and package.json to ${revertTarget}. ${e.message}`,
+      `::warning::Override-mode cleanup or verification failed; reverting workspace lockfiles, pnpm-workspace.yaml, and package.json to ${revertTarget}. ${e.message}`,
     );
     restore(fallback);
   }
 
   const after = snapshot();
   const changed =
-    after.lockfile !== original.lockfile ||
+    trackedLockfilePaths.some((path) => after.lockfiles[path] !== original.lockfiles[path]) ||
     after.workspace !== original.workspace ||
     after.packageJson !== original.packageJson;
   setOutput("changed", changed);
@@ -702,7 +1243,20 @@ function main() {
     return;
   }
 
-  const changedNames = diffRuntimeDeps({ beforeText: original.lockfile, afterText: after.lockfile, cwd });
+  const normalize = loadFixedGroupNormalizer(cwd);
+  const changedNames = [
+    ...new Set(
+      trackedLockfilePaths
+        .flatMap((path) =>
+          diffRuntimeDeps({
+            beforeText: original.lockfiles[path] ?? "",
+            afterText: after.lockfiles[path] ?? "",
+            cwd: dirname(path),
+          }),
+        )
+        .map(normalize),
+    ),
+  ].sort();
   setOutput("runtime-deps-changed", changedNames.length > 0);
   setMultilineOutput("changed-names", changedNames.join("\n"));
   console.log(
@@ -740,4 +1294,19 @@ export {
   findOverridesBlock,
   dedupeWorkspaceOverrides,
   dedupePackageJsonOverrides,
+  overrideTargetName,
+  isMentioned,
+  readLockfileOutsideOverrides,
+  findPnpmLockfilePaths,
+  findPnpmLockfiles,
+  readAllLockfilesOutsideOverrides,
+  pruneOrphanedOverrideEntries,
+  pruneOrphanedWorkspaceOverrides,
+  pruneOrphanedPackageJsonOverrides,
+  findTopLevelBlock,
+  parseExcludeListItem,
+  splitExcludeEntry,
+  annotateMinimumReleaseAgeExclude,
+  isYamlContentEmpty,
+  pruneEmptyWorkspaceScaffold,
 };

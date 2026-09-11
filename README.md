@@ -480,7 +480,11 @@ jobs:
 
 Runs `pnpm audit --fix` against `pnpm-lock.yaml` (update mode, falling back to override mode when update alone can't clear an advisory), verifying the result still installs before keeping it. Meant for a standalone scheduled/dispatched workflow that clears pre-existing advisories independent of any specific PR — pair with `lockfile-audit`'s regression-only gate, which only blocks *new* advisories.
 
-This action does not commit or open a pull request; it only fixes the lockfile in the working tree and reports what changed. Pair it with a commit/PR step of your own so you control where a changeset gets inserted (if `runtime-deps-changed` calls for one).
+This action does not commit or open a pull request; it only fixes workspace lockfiles in the working tree and reports what changed. Pair it with a commit/PR step of your own so you control where a changeset gets inserted (if `runtime-deps-changed` calls for one).
+
+It also cleans up after override mode's own accumulation: when repeated runs leave multiple `pnpm.overrides`/`pnpm-workspace.yaml overrides:` selectors for the same package as GHSA advisory ranges and patched versions get revised over time, an entry is dropped only when another surviving entry for the same package covers a superset version range and pins to the same or a newer version (so no fix coverage is lost) — and separately, an entry whose target package no longer appears anywhere in the dependency tree is dropped outright, since it protects nothing. To pin a package ahead of it actually landing in the tree (so it isn't pruned as orphaned), add a `# keep-override: <reason>` comment directly above the entry in `pnpm-workspace.yaml` — there's no equivalent for `package.json`'s `pnpm.overrides`, since JSON has no comments.
+
+It also inserts a `# Renovate security update: <entry>` comment directly above every version-pinned `pnpm-workspace.yaml` `minimumReleaseAgeExclude` entry that doesn't already have one — `pnpm audit --fix`/`pnpm install` add these `minimumReleaseAge`-bypass entries with no comment at all, but some callers run a separate, always-on policy check that requires this marker on every version-pinned entry as a sign that the bypass was added through this automated flow rather than by hand.
 
 **Prerequisites:** The caller is responsible for checkout and pnpm setup.
 
@@ -500,7 +504,7 @@ jobs:
           run_install: false
       - uses: tailor-platform/actions/lockfile-audit-fix@v2
         id: fix
-      # commit pnpm-lock.yaml / pnpm-workspace.yaml / package.json and open
+      # commit workspace pnpm-lock.yaml files / pnpm-workspace.yaml / package.json and open
       # a PR yourself when steps.fix.outputs.changed == 'true'
 ```
 
@@ -515,8 +519,8 @@ jobs:
 
 | Name | Description |
 |------|-------------|
-| `changed` | `'true'` if `pnpm-lock.yaml`, `pnpm-workspace.yaml`, and/or `package.json` changed — pnpm writes an override it can't express as a plain version bump to `pnpm-workspace.yaml` (creating it if it doesn't exist) or to `package.json`'s `pnpm.overrides`, depending on pnpm version and whether the repo already has a `pnpm-workspace.yaml` |
-| `runtime-deps-changed` | `'true'` if any non-private package's runtime (non-dev) dependencies changed, per `pnpm-lock.yaml` — devDependencies-only and `pnpm-workspace.yaml`/`package.json`-overrides-only changes don't affect consumers |
+| `changed` | `'true'` if any workspace project's `pnpm-lock.yaml`, `pnpm-workspace.yaml`, and/or `package.json` changed — pnpm writes an override it can't express as a plain version bump to `pnpm-workspace.yaml` (creating it if it doesn't exist) or to `package.json`'s `pnpm.overrides`, depending on pnpm version and whether the repo already has a `pnpm-workspace.yaml` |
+| `runtime-deps-changed` | `'true'` if any non-private package's runtime (non-dev) dependencies changed, per the workspace project lockfiles — devDependencies-only and `pnpm-workspace.yaml`/`package.json`-overrides-only changes don't affect consumers |
 | `changed-names` | Newline-separated names of packages whose runtime dependencies changed |
 | `summary` | Markdown summary of fixed and remaining advisories, for use as a PR body |
 
