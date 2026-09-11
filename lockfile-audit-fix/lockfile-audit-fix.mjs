@@ -442,6 +442,13 @@ function overrideTargetName(key) {
   return match ? match[0] : null;
 }
 
+/** @param {string[]} removedKeys */
+function logPrunedOverrideKeys(removedKeys) {
+  for (const key of removedKeys) {
+    console.log(`Dropping orphaned override entry "${key}" (not in the dependency tree).`);
+  }
+}
+
 /**
  * True if `name` appears anywhere in `haystack` (a pnpm-lock.yaml with its
  * own `overrides:` block excluded — see readLockfileOutsideOverrides) either
@@ -563,9 +570,7 @@ function pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath) {
   kept.push(...comments);
 
   if (removedKeys.length === 0) return false;
-  for (const key of removedKeys) {
-    console.log(`Dropping orphaned override entry "${key}" (not in the dependency tree).`);
-  }
+  logPrunedOverrideKeys(removedKeys);
 
   // A childless `overrides:` parses as null rather than an empty map. pnpm
   // tolerates that, but the whole key is dropped along with its last entry
@@ -594,9 +599,7 @@ function pruneOrphanedPackageJsonOverrides(packageJsonPath, lockfilePath) {
   const entries = Object.entries(overrides);
   const { survivors, removedKeys } = pruneOrphanedOverrideEntries(entries, lockfileText);
   if (removedKeys.length === 0) return false;
-  for (const key of removedKeys) {
-    console.log(`Dropping orphaned override entry "${key}" (not in the dependency tree).`);
-  }
+  logPrunedOverrideKeys(removedKeys);
 
   pkg.pnpm.overrides = Object.fromEntries(survivors);
   writeFileSync(packageJsonPath, `${JSON.stringify(pkg, null, 2)}\n`);
