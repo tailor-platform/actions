@@ -650,11 +650,16 @@ function pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath) {
 
   // A childless `overrides:` parses as null rather than an empty map. pnpm
   // tolerates that, but the whole key is dropped along with its last entry
-  // instead of relying on it.
+  // instead of relying on it. `kept` at this point is never comments that
+  // belonged to a removed entry (those were dropped alongside it above) —
+  // it's only ever a surviving entry's own lines, or a comment/blank that
+  // reached the end of the block (or a blank line) with nothing following
+  // it to attach to — so it's spliced back in either way, dropping only the
+  // now-pointless `overrides:` header itself when no entry survived.
   const hasEntries = kept.some((l) => l.trim() !== "" && !l.trim().startsWith("#"));
   const newLines = hasEntries
     ? [...lines.slice(0, headerIdx + 1), ...kept, ...lines.slice(endIdx)]
-    : [...lines.slice(0, headerIdx), ...lines.slice(endIdx)];
+    : [...lines.slice(0, headerIdx), ...kept, ...lines.slice(endIdx)];
   writeFileSync(workspacePath, newLines.join("\n"));
   return true;
 }
@@ -735,15 +740,20 @@ function splitExcludeEntry(entry) {
 
 /**
  * Inserts a `# Renovate security update: <entry>` comment directly above
- * every version-pinned (`name@version`) pnpm-workspace.yaml
- * `minimumReleaseAgeExclude` entry that doesn't already have one. `pnpm
- * audit --fix`/`pnpm install` write these bypass entries with no comment at
- * all, but tailor-platform/sdk's `renovate-policy-check.mjs` (a separate,
- * always-on CI check this action doesn't run) requires this marker on every
- * version-pinned entry as a sign that the bypass was added through the
- * normal automated flow rather than by hand. A bare name entry (no version)
- * is left untouched, since the marker only makes sense for a
- * version-specific bypass. Whether a marker is already present is decided
+ * every version-pinned (`name@version`, where `version` starts with a
+ * digit) pnpm-workspace.yaml `minimumReleaseAgeExclude` entry that doesn't
+ * already have one. `pnpm audit --fix`/`pnpm install` write these bypass
+ * entries with no comment at all, but tailor-platform/sdk's
+ * `renovate-policy-check.mjs` (a separate, always-on CI check this action
+ * doesn't run) requires this marker on every version-pinned entry as a sign
+ * that the bypass was added through the normal automated flow rather than
+ * by hand. A bare name entry (no version) is left untouched, since the
+ * marker only makes sense for a version-specific bypass — and so is
+ * `name@latest`/`name@^1.2.3` (a tag or range, not a version starting with
+ * a digit): renovate-policy-check.mjs's own `versionPinned` check is
+ * `/@\d/`, so a tag/range exclude was never subject to the marker
+ * requirement in the first place, and marking one anyway would mislabel it
+ * as an automated security update it isn't. Whether a marker is already present is decided
  * from only the nearest preceding comment line, matching
  * `renovate-policy-check.mjs`'s own check (it tracks a single
  * `pendingComment`, overwritten by each comment line in turn, so only the
@@ -786,8 +796,16 @@ function annotateMinimumReleaseAgeExclude(workspacePath) {
       continue;
     }
     const { version } = splitExcludeEntry(entry);
+    // renovate-policy-check.mjs's own `versionPinned` check is `/@\d/` — it
+    // only requires a marker when a digit immediately follows `@`, not
+    // merely that some `@` is present. `foo@latest`/`foo@^1.2.3` aren't
+    // "version-pinned" by that definition (a tag or range isn't a specific
+    // just-published version to justify a minimumReleaseAge bypass for), so
+    // matching it here avoids mislabeling one as an automated security
+    // update the policy check never actually required a marker for.
+    const isNumericVersion = version != null && /^\d/.test(version);
     const hasMarker = comments.length > 0 && RENOVATE_SECURITY_COMMENT.test(comments[comments.length - 1].trim());
-    if (version && !hasMarker) {
+    if (isNumericVersion && !hasMarker) {
       newBody.push(...comments, `  # Renovate security update: ${entry}`, raw);
       changed = true;
     } else {

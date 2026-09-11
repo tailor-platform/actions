@@ -975,6 +975,38 @@ describe("pruneOrphanedWorkspaceOverrides", () => {
     assert.match(result, /packages\/\*/);
   });
 
+  test("preserves a trailing column-0 comment when removing the now-empty overrides: key", () => {
+    // Regression test: when the block collapses to empty, the header-removal
+    // branch used to discard the whole `kept` array (which, in this
+    // situation, only ever holds comments/blanks not attached to the
+    // removed entry — anything genuinely attached to it was already dropped
+    // alongside it), silently deleting an unrelated trailing comment along
+    // with the pointless `overrides:` key.
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(
+      workspacePath,
+      [
+        "packages:",
+        "  - packages/*",
+        "",
+        "overrides:",
+        "  ghost-pkg@1: 2.0.0",
+        "# a note for the section below, not for ghost-pkg",
+        "other:",
+        "  x: 1",
+        "",
+      ].join("\n"),
+    );
+
+    const changed = pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath);
+    assert.equal(changed, true);
+
+    const result = readFileSync(workspacePath, "utf8");
+    assert.doesNotMatch(result, /overrides:/);
+    assert.match(result, /# a note for the section below, not for ghost-pkg/);
+    assert.match(result, /other:/);
+  });
+
   test("keeps a quoted scoped entry reachable through a resolved packages: key", () => {
     const workspacePath = join(cwd, "pnpm-workspace.yaml");
     const original = ["overrides:", '  "@scope/live@<1": 1.0.0', ""].join("\n");
@@ -1251,6 +1283,30 @@ describe("annotateMinimumReleaseAgeExclude", () => {
   test("leaves a bare (unversioned) entry untouched", () => {
     const workspacePath = join(cwd, "pnpm-workspace.yaml");
     const original = ["minimumReleaseAgeExclude:", "  - is-odd", ""].join("\n");
+    writeFileSync(workspacePath, original);
+
+    const changed = annotateMinimumReleaseAgeExclude(workspacePath);
+    assert.equal(changed, false);
+    assert.equal(readFileSync(workspacePath, "utf8"), original);
+  });
+
+  test("leaves a tag-pinned entry (not a numeric version) untouched", () => {
+    // renovate-policy-check.mjs's own versionPinned check is /@\d/, so
+    // "foo@latest" was never subject to the marker requirement — marking it
+    // anyway would mislabel a tag/range exclude as an automated security
+    // update.
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    const original = ["minimumReleaseAgeExclude:", "  - is-odd@latest", ""].join("\n");
+    writeFileSync(workspacePath, original);
+
+    const changed = annotateMinimumReleaseAgeExclude(workspacePath);
+    assert.equal(changed, false);
+    assert.equal(readFileSync(workspacePath, "utf8"), original);
+  });
+
+  test("leaves a range-pinned entry (not a numeric version) untouched", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    const original = ["minimumReleaseAgeExclude:", "  - is-odd@^1.2.3", ""].join("\n");
     writeFileSync(workspacePath, original);
 
     const changed = annotateMinimumReleaseAgeExclude(workspacePath);
