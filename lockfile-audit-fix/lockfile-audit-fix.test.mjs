@@ -36,6 +36,7 @@ import {
   parseExcludeListItem,
   splitExcludeEntry,
   annotateMinimumReleaseAgeExclude,
+  pruneEmptyWorkspaceScaffold,
 } from "./lockfile-audit-fix.mjs";
 
 describe("extractAdvisoryIds", () => {
@@ -481,6 +482,17 @@ describe("findOverridesBlock", () => {
       "  x: 1",
     ];
     assert.deepEqual(findOverridesBlock(lines), { headerIdx: 0, endIdx: 4 });
+  });
+
+  test("treats an indentationless block-sequence item (- at column 0) as part of the block", () => {
+    // Regression test: YAML allows a sequence's `-` items to sit at the
+    // same column as their own key (unlike a mapping's key: value
+    // children, which always need deeper indentation) — e.g.
+    // `minimumReleaseAgeExclude:\n- foo@1.0.0`. An earlier version treated
+    // the first `-` line as ending the block, so the whole sequence was
+    // invisible to annotate/prune.
+    const lines = ["minimumReleaseAgeExclude:", "- foo@1.0.0", "- bar@2.0.0", "other:", "  x: 1"];
+    assert.deepEqual(findTopLevelBlock(lines, "minimumReleaseAgeExclude"), { headerIdx: 0, endIdx: 3 });
   });
 });
 
@@ -1118,6 +1130,44 @@ describe("pruneOrphanedPackageJsonOverrides", () => {
     assert.equal(pkg.name, "root-pkg");
   });
 
+  test("drops the pnpm.overrides key entirely (and pnpm too) once every entry is orphaned", () => {
+    // Regression test: unlike dedupe (which always keeps at least one
+    // survivor per package), orphan-pruning can empty the overrides object
+    // out completely — leaving `pnpm.overrides: {}` (or `pnpm: {}`) behind
+    // is pointless clutter.
+    const packageJsonPath = join(cwd, "package.json");
+    writeFileSync(
+      packageJsonPath,
+      JSON.stringify({ name: "root-pkg", pnpm: { overrides: { "ghost-pkg@1": "2.0.0" } } }, null, 2),
+    );
+
+    const changed = pruneOrphanedPackageJsonOverrides(packageJsonPath, lockfilePath);
+    assert.equal(changed, true);
+
+    const pkg = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+    assert.equal(pkg.pnpm, undefined);
+    assert.equal(pkg.name, "root-pkg");
+  });
+
+  test("drops only the overrides key, keeping other pnpm settings, once every entry is orphaned", () => {
+    const packageJsonPath = join(cwd, "package.json");
+    writeFileSync(
+      packageJsonPath,
+      JSON.stringify(
+        { name: "root-pkg", pnpm: { overrides: { "ghost-pkg@1": "2.0.0" }, autoInstallPeers: false } },
+        null,
+        2,
+      ),
+    );
+
+    const changed = pruneOrphanedPackageJsonOverrides(packageJsonPath, lockfilePath);
+    assert.equal(changed, true);
+
+    const pkg = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+    assert.equal(pkg.pnpm.overrides, undefined);
+    assert.equal(pkg.pnpm.autoInstallPeers, false);
+  });
+
   test("returns false when there is no pnpm.overrides object", () => {
     const packageJsonPath = join(cwd, "plain.json");
     writeFileSync(packageJsonPath, JSON.stringify({ name: "plain-pkg" }));
@@ -1132,6 +1182,49 @@ describe("pruneOrphanedPackageJsonOverrides", () => {
     const changed = pruneOrphanedPackageJsonOverrides(packageJsonPath, join(cwd, "missing-lockfile.yaml"));
     assert.equal(changed, false);
     assert.deepEqual(JSON.parse(readFileSync(packageJsonPath, "utf8")), original);
+  });
+});
+
+describe("pruneEmptyWorkspaceScaffold", () => {
+  let cwd;
+
+  before(() => {
+    cwd = mkdtempSync(join(tmpdir(), "lockfile-audit-fix-prune-scaffold-test-"));
+  });
+
+  after(() => {
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  test("deletes a blank file this run created (originalWorkspaceText is null)", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(workspacePath, "\n");
+
+    const deleted = pruneEmptyWorkspaceScaffold(workspacePath, null);
+    assert.equal(deleted, true);
+    assert.equal(existsSync(workspacePath), false);
+  });
+
+  test("leaves a blank file alone if it already existed before this run", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(workspacePath, "\n");
+
+    const deleted = pruneEmptyWorkspaceScaffold(workspacePath, "packages:\n  - packages/*\n");
+    assert.equal(deleted, false);
+    assert.equal(existsSync(workspacePath), true);
+  });
+
+  test("leaves a newly created file alone if it still has meaningful content", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(workspacePath, "overrides:\n  foo@<1: 1.0.0\n");
+
+    const deleted = pruneEmptyWorkspaceScaffold(workspacePath, null);
+    assert.equal(deleted, false);
+    assert.equal(existsSync(workspacePath), true);
+  });
+
+  test("returns false when the file doesn't exist", () => {
+    assert.equal(pruneEmptyWorkspaceScaffold(join(cwd, "missing.yaml"), null), false);
   });
 });
 
@@ -1361,6 +1454,17 @@ describe("annotateMinimumReleaseAgeExclude", () => {
     const result = readFileSync(workspacePath, "utf8");
     assert.match(result, /# Renovate security update: fast-uri@3\.1\.6/);
     assert.match(result, /# Renovate security update: esbuild@0\.28\.1/);
+  });
+
+  test("annotates an indentationless block-sequence item, matching its own (lack of) indent", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(workspacePath, ["minimumReleaseAgeExclude:", "- fast-uri@3.1.6", ""].join("\n"));
+
+    const changed = annotateMinimumReleaseAgeExclude(workspacePath);
+    assert.equal(changed, true);
+
+    const result = readFileSync(workspacePath, "utf8");
+    assert.match(result, /^# Renovate security update: fast-uri@3\.1\.6\n- fast-uri@3\.1\.6/m);
   });
 
   test("returns false when the file doesn't exist", () => {
@@ -1953,5 +2057,47 @@ describe("main() end-to-end via a fake pnpm binary", () => {
     assert.equal(outputs.changed, "true");
     const workspace = readFileSync(join(repoDir, "pnpm-workspace.yaml"), "utf8");
     assert.match(workspace, /# Renovate security update: fast-uri@3\.1\.6\n {2}- fast-uri@3\.1\.6/);
+  });
+
+  test("override mode creates pnpm-workspace.yaml holding only an override that orphan-pruning then empties out: the scaffold file is removed", () => {
+    // Regression test: previously the newly created file survived as an
+    // empty (0-byte) pnpm-workspace.yaml, and changed=true was reported for
+    // a file that ended up doing nothing.
+    const before = [
+      "lockfileVersion: '9.0'",
+      "",
+      "importers:",
+      "  .:",
+      "    dependencies:",
+      "      live-pkg:",
+      "        specifier: ^1.0.0",
+      "",
+      "packages:",
+      "",
+      "  live-pkg@1.0.1:",
+      "    resolution: {integrity: sha512-x}",
+      "",
+    ].join("\n");
+    writeFileSync(join(repoDir, "pnpm-lock.yaml"), before);
+    writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
+    writeFileSync(join(stateDir, "audit-count"), "0");
+    writeFileSync(join(stateDir, "install-count"), "0");
+    writeFileSync(join(stateDir, "dedupe-count"), "0");
+    // A prior test in this shared repoDir may have left a pnpm-workspace.yaml
+    // behind; remove it so this run's own snapshot sees it as not existing,
+    // matching the scenario being tested (this run is the one that creates it).
+    rmSync(join(repoDir, "pnpm-workspace.yaml"), { force: true });
+
+    const outputs = runMain({
+      FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}',
+      FAKE_PNPM_FIX_OVERRIDE_WORKSPACE: "overrides:\n  ghost-pkg@<2: 2.0.0\n",
+    });
+
+    assert.equal(outputs.changed, "false");
+    assert.equal(
+      existsSync(join(repoDir, "pnpm-workspace.yaml")),
+      false,
+      "a workspace file created solely to hold an override that then got pruned to nothing should be removed entirely",
+    );
   });
 });

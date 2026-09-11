@@ -365,6 +365,13 @@ function findTopLevelBlock(lines, key) {
     // structure), so it doesn't end the block either — only a genuine
     // next top-level key does.
     if (/^#/.test(lines[i])) continue;
+    // YAML also allows a block sequence's `-` items to sit at the same
+    // column as their own key (unlike a mapping's key: value children,
+    // which always need deeper indentation) — e.g.
+    // `minimumReleaseAgeExclude:\n- foo@1.0.0`. A real top-level key can
+    // never itself start with an unquoted `-` (that's only valid as a
+    // sequence-entry marker), so this is unambiguous.
+    if (/^-/.test(lines[i])) continue;
     if (!/^\s/.test(lines[i])) {
       endIdx = i;
       break;
@@ -682,7 +689,16 @@ function pruneOrphanedPackageJsonOverrides(packageJsonPath, lockfilePath) {
   if (removedKeys.length === 0) return false;
   logPrunedOverrideKeys(removedKeys);
 
-  pkg.pnpm.overrides = Object.fromEntries(survivors);
+  // An orphaned-only overrides object (unlike a deduped one, which always
+  // keeps at least one survivor per package) can genuinely empty out
+  // entirely — drop the now-pointless `pnpm.overrides` key (and a now-empty
+  // `pnpm` object too) instead of leaving `pnpm.overrides: {}` behind.
+  if (survivors.length === 0) {
+    delete pkg.pnpm.overrides;
+    if (Object.keys(pkg.pnpm).length === 0) delete pkg.pnpm;
+  } else {
+    pkg.pnpm.overrides = Object.fromEntries(survivors);
+  }
   writeFileSync(packageJsonPath, `${JSON.stringify(pkg, null, 2)}\n`);
   return true;
 }
@@ -806,7 +822,11 @@ function annotateMinimumReleaseAgeExclude(workspacePath) {
     const isNumericVersion = version != null && /^\d/.test(version);
     const hasMarker = comments.length > 0 && RENOVATE_SECURITY_COMMENT.test(comments[comments.length - 1].trim());
     if (isNumericVersion && !hasMarker) {
-      newBody.push(...comments, `  # Renovate security update: ${entry}`, raw);
+      // Matches this entry's own leading whitespace (which may be empty,
+      // for an indentationless `- foo@1.0.0` sequence item) rather than
+      // hard-coding an indent, so the inserted comment lines up with it.
+      const indent = raw.match(/^\s*/)[0];
+      newBody.push(...comments, `${indent}# Renovate security update: ${entry}`, raw);
       changed = true;
     } else {
       newBody.push(...comments, raw);
@@ -817,6 +837,28 @@ function annotateMinimumReleaseAgeExclude(workspacePath) {
 
   if (!changed) return false;
   writeFileSync(workspacePath, [...lines.slice(0, headerIdx + 1), ...newBody, ...lines.slice(endIdx)].join("\n"));
+  return true;
+}
+
+/**
+ * Deletes pnpm-workspace.yaml if this action invocation is the one that
+ * created it (`originalWorkspaceText` — a snapshot taken before any fix
+ * ran — is null) and it has since collapsed to nothing meaningful, e.g.
+ * override mode wrote the file solely to hold an override that
+ * orphan-pruning then removed as its only content. An existing file is
+ * left alone even if it becomes blank, since a workspace file's mere
+ * presence can matter to pnpm independently of its content (it marks the
+ * workspace root) — only a file this run itself brought into existence is
+ * safe to remove entirely, restoring the state from before this run.
+ * @param {string} workspacePath
+ * @param {string | null} originalWorkspaceText
+ * @returns {boolean} true if the file was deleted
+ */
+function pruneEmptyWorkspaceScaffold(workspacePath, originalWorkspaceText) {
+  if (originalWorkspaceText !== null) return false;
+  if (!existsSync(workspacePath)) return false;
+  if (readFileSync(workspacePath, "utf8").trim() !== "") return false;
+  unlinkSync(workspacePath);
   return true;
 }
 
@@ -1081,6 +1123,7 @@ function main() {
   pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath);
   pruneOrphanedPackageJsonOverrides(packageJsonPath, lockfilePath);
   annotateMinimumReleaseAgeExclude(workspacePath);
+  pruneEmptyWorkspaceScaffold(workspacePath, original.workspace);
   try {
     verifyInstallable(cwd);
   } catch (e) {
@@ -1157,4 +1200,5 @@ export {
   parseExcludeListItem,
   splitExcludeEntry,
   annotateMinimumReleaseAgeExclude,
+  pruneEmptyWorkspaceScaffold,
 };
