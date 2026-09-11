@@ -32,6 +32,10 @@ import {
   pruneOrphanedOverrideEntries,
   pruneOrphanedWorkspaceOverrides,
   pruneOrphanedPackageJsonOverrides,
+  findTopLevelBlock,
+  parseExcludeListItem,
+  splitExcludeEntry,
+  annotateMinimumReleaseAgeExclude,
 } from "./lockfile-audit-fix.mjs";
 
 describe("extractAdvisoryIds", () => {
@@ -449,6 +453,24 @@ describe("findOverridesBlock", () => {
 
   test("returns null when there's no overrides key", () => {
     assert.equal(findOverridesBlock(["packages:", "  - packages/*"]), null);
+  });
+});
+
+describe("findTopLevelBlock", () => {
+  test("finds a block for an arbitrary top-level key, not just overrides", () => {
+    const lines = [
+      "minimumReleaseAge: 4320",
+      "minimumReleaseAgeExclude:",
+      "  - foo@1.0.0",
+      "  - bar@2.0.0",
+      "overrides:",
+      "  baz: 1.0.0",
+    ];
+    assert.deepEqual(findTopLevelBlock(lines, "minimumReleaseAgeExclude"), { headerIdx: 1, endIdx: 4 });
+  });
+
+  test("returns null when the key isn't present", () => {
+    assert.equal(findTopLevelBlock(["packages:", "  - packages/*"], "minimumReleaseAgeExclude"), null);
   });
 });
 
@@ -877,6 +899,157 @@ describe("pruneOrphanedPackageJsonOverrides", () => {
   });
 });
 
+describe("parseExcludeListItem", () => {
+  test("parses an unquoted list item", () => {
+    assert.equal(parseExcludeListItem("  - fast-uri@3.1.6"), "fast-uri@3.1.6");
+  });
+
+  test("unquotes a quoted list item", () => {
+    assert.equal(parseExcludeListItem('  - "fast-uri@3.1.6"'), "fast-uri@3.1.6");
+  });
+
+  test("returns null for a comment line", () => {
+    assert.equal(parseExcludeListItem("  # a comment"), null);
+  });
+
+  test("returns null for a blank line", () => {
+    assert.equal(parseExcludeListItem("   "), null);
+  });
+});
+
+describe("splitExcludeEntry", () => {
+  test("splits a versioned entry", () => {
+    assert.deepEqual(splitExcludeEntry("fast-uri@3.1.6"), { name: "fast-uri", version: "3.1.6" });
+  });
+
+  test("splits a scoped versioned entry on the second @", () => {
+    assert.deepEqual(splitExcludeEntry("@faker-js/faker@10.5.0"), { name: "@faker-js/faker", version: "10.5.0" });
+  });
+
+  test("treats a bare name (no version) as having a null version", () => {
+    assert.deepEqual(splitExcludeEntry("is-odd"), { name: "is-odd", version: null });
+  });
+});
+
+describe("annotateMinimumReleaseAgeExclude", () => {
+  let cwd;
+
+  before(() => {
+    cwd = mkdtempSync(join(tmpdir(), "lockfile-audit-fix-annotate-exclude-test-"));
+  });
+
+  after(() => {
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  test("inserts a marker comment above a versioned entry with none", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(
+      workspacePath,
+      ["minimumReleaseAge: 4320", "minimumReleaseAgeExclude:", "  - fast-uri@3.1.6", ""].join("\n"),
+    );
+
+    const changed = annotateMinimumReleaseAgeExclude(workspacePath);
+    assert.equal(changed, true);
+
+    const result = readFileSync(workspacePath, "utf8");
+    assert.match(result, /# Renovate security update: fast-uri@3\.1\.6\n {2}- fast-uri@3\.1\.6/);
+  });
+
+  test("does not duplicate an already-present marker comment", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    const original = [
+      "minimumReleaseAgeExclude:",
+      "  # Renovate security update: fast-uri@3.1.6",
+      "  - fast-uri@3.1.6",
+      "",
+    ].join("\n");
+    writeFileSync(workspacePath, original);
+
+    const changed = annotateMinimumReleaseAgeExclude(workspacePath);
+    assert.equal(changed, false);
+    assert.equal(readFileSync(workspacePath, "utf8"), original);
+  });
+
+  test("recognizes an existing marker case-insensitively and with extra whitespace", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    const original = [
+      "minimumReleaseAgeExclude:",
+      "  #   renovate security update  :   fast-uri@3.1.6",
+      "  - fast-uri@3.1.6",
+      "",
+    ].join("\n");
+    writeFileSync(workspacePath, original);
+
+    const changed = annotateMinimumReleaseAgeExclude(workspacePath);
+    assert.equal(changed, false);
+    assert.equal(readFileSync(workspacePath, "utf8"), original);
+  });
+
+  test("keeps an unrelated existing comment and adds the marker alongside it", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(
+      workspacePath,
+      ["minimumReleaseAgeExclude:", "  # pinned intentionally", "  - fast-uri@3.1.6", ""].join("\n"),
+    );
+
+    const changed = annotateMinimumReleaseAgeExclude(workspacePath);
+    assert.equal(changed, true);
+
+    const result = readFileSync(workspacePath, "utf8");
+    assert.match(result, /# pinned intentionally\n {2}# Renovate security update: fast-uri@3\.1\.6\n {2}- fast-uri@3\.1\.6/);
+  });
+
+  test("leaves a bare (unversioned) entry untouched", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    const original = ["minimumReleaseAgeExclude:", "  - is-odd", ""].join("\n");
+    writeFileSync(workspacePath, original);
+
+    const changed = annotateMinimumReleaseAgeExclude(workspacePath);
+    assert.equal(changed, false);
+    assert.equal(readFileSync(workspacePath, "utf8"), original);
+  });
+
+  test("preserves the original quoting of the list item itself", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(
+      workspacePath,
+      ["minimumReleaseAgeExclude:", '  - "fast-uri@3.1.6"', ""].join("\n"),
+    );
+
+    const changed = annotateMinimumReleaseAgeExclude(workspacePath);
+    assert.equal(changed, true);
+
+    const result = readFileSync(workspacePath, "utf8");
+    assert.match(result, /# Renovate security update: fast-uri@3\.1\.6\n {2}- "fast-uri@3\.1\.6"/);
+  });
+
+  test("annotates multiple independent versioned entries", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(
+      workspacePath,
+      ["minimumReleaseAgeExclude:", "  - fast-uri@3.1.6", "  - esbuild@0.28.1", ""].join("\n"),
+    );
+
+    const changed = annotateMinimumReleaseAgeExclude(workspacePath);
+    assert.equal(changed, true);
+
+    const result = readFileSync(workspacePath, "utf8");
+    assert.match(result, /# Renovate security update: fast-uri@3\.1\.6/);
+    assert.match(result, /# Renovate security update: esbuild@0\.28\.1/);
+  });
+
+  test("returns false when the file doesn't exist", () => {
+    assert.equal(annotateMinimumReleaseAgeExclude(join(cwd, "missing.yaml")), false);
+  });
+
+  test("returns false when there's no minimumReleaseAgeExclude section", () => {
+    const workspacePath = join(cwd, "no-exclude.yaml");
+    writeFileSync(workspacePath, "packages:\n  - packages/*\n");
+    assert.equal(annotateMinimumReleaseAgeExclude(workspacePath), false);
+  });
+});
+
 describe("buildSummary", () => {
   const before = {
     advisories: {
@@ -1141,12 +1314,51 @@ describe("main() end-to-end via a fake pnpm binary", () => {
     }
   });
 
-  test("install succeeds but dedupe fails: rolls back and reports dedupe (not install) as the failed step", () => {
+  test("no advisories, but pnpm-workspace.yaml has a pre-existing unannotated minimumReleaseAgeExclude entry: it gets backfilled, reporting changed=true", () => {
+    // annotateMinimumReleaseAgeExclude runs unconditionally (like the
+    // override dedupe/prune calls it sits next to), so a legacy entry from
+    // before this feature existed gets its marker comment backfilled even
+    // on a run that finds no advisories to fix and makes no override
+    // changes of its own.
     writeFileSync(join(repoDir, "pnpm-lock.yaml"), "clean\n");
     writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
     writeFileSync(
       join(repoDir, "pnpm-workspace.yaml"),
       ["minimumReleaseAge: 4320", "minimumReleaseAgeExclude:", "  - foo@1.0.0", ""].join("\n"),
+    );
+    writeFileSync(join(stateDir, "audit-count"), "0");
+    writeFileSync(join(stateDir, "install-count"), "0");
+    writeFileSync(join(stateDir, "dedupe-count"), "0");
+
+    try {
+      const outputs = runMain({ FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}' });
+
+      assert.equal(outputs.changed, "true");
+      assert.match(
+        readFileSync(join(repoDir, "pnpm-workspace.yaml"), "utf8"),
+        /# Renovate security update: foo@1\.0\.0\n {2}- foo@1\.0\.0/,
+      );
+    } finally {
+      rmSync(join(repoDir, "pnpm-workspace.yaml"), { force: true });
+    }
+  });
+
+  test("install succeeds but dedupe fails: rolls back and reports dedupe (not install) as the failed step", () => {
+    // The exclude entry here is pre-annotated so annotateMinimumReleaseAgeExclude
+    // is a no-op and this test stays about the install/dedupe rollback path
+    // only; the backfill-on-a-legacy-entry behavior itself has its own test
+    // above ("...it gets backfilled, reporting changed=true").
+    writeFileSync(join(repoDir, "pnpm-lock.yaml"), "clean\n");
+    writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
+    writeFileSync(
+      join(repoDir, "pnpm-workspace.yaml"),
+      [
+        "minimumReleaseAge: 4320",
+        "minimumReleaseAgeExclude:",
+        "  # Renovate security update: foo@1.0.0",
+        "  - foo@1.0.0",
+        "",
+      ].join("\n"),
     );
     writeFileSync(join(stateDir, "audit-count"), "0");
     writeFileSync(join(stateDir, "install-count"), "0");
@@ -1384,5 +1596,25 @@ describe("main() end-to-end via a fake pnpm binary", () => {
 
     const stdout = readFileSync(join(stateDir, "last-stdout.txt"), "utf8");
     assert.match(stdout, /Dropping orphaned override entry "ghost-pkg@<2"/);
+  });
+
+  test("override mode writes an unannotated minimumReleaseAgeExclude entry: a marker comment is inserted before install", () => {
+    const before = ["importers:", "  .:", "    dependencies:", "      vulnerable-pkg:", "        specifier: ^1.0.0"].join(
+      "\n",
+    );
+    writeFileSync(join(repoDir, "pnpm-lock.yaml"), before);
+    writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
+    writeFileSync(join(stateDir, "audit-count"), "0");
+    writeFileSync(join(stateDir, "install-count"), "0");
+    writeFileSync(join(stateDir, "dedupe-count"), "0");
+
+    const outputs = runMain({
+      FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}',
+      FAKE_PNPM_FIX_OVERRIDE_WORKSPACE: "minimumReleaseAgeExclude:\n  - fast-uri@3.1.6\n",
+    });
+
+    assert.equal(outputs.changed, "true");
+    const workspace = readFileSync(join(repoDir, "pnpm-workspace.yaml"), "utf8");
+    assert.match(workspace, /# Renovate security update: fast-uri@3\.1\.6\n {2}- fast-uri@3\.1\.6/);
   });
 });

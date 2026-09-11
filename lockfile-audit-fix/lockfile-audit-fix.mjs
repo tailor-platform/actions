@@ -339,15 +339,19 @@ function parseOverrideLine(line) {
 }
 
 /**
- * Finds the line range of pnpm-workspace.yaml's top-level `overrides:`
- * block: the line index of `overrides:` itself, and the exclusive end
- * index where a line returns to column 0 (the next top-level key). Blank
- * lines inside the block don't end it.
+ * Finds the line range of a pnpm-workspace.yaml top-level `<key>:` block:
+ * the line index of `<key>:` itself, and the exclusive end index where a
+ * line returns to column 0 (the next top-level key). Blank lines inside the
+ * block don't end it. `key` is always a fixed literal supplied by call
+ * sites in this file, never external input, so building a RegExp from it is
+ * safe.
  * @param {string[]} lines
+ * @param {string} key
  * @returns {{headerIdx: number, endIdx: number} | null}
  */
-function findOverridesBlock(lines) {
-  const headerIdx = lines.findIndex((l) => /^overrides:\s*$/.test(l));
+function findTopLevelBlock(lines, key) {
+  const headerRe = new RegExp(`^${key}:\\s*$`);
+  const headerIdx = lines.findIndex((l) => headerRe.test(l));
   if (headerIdx === -1) return null;
   let endIdx = lines.length;
   for (let i = headerIdx + 1; i < lines.length; i++) {
@@ -358,6 +362,15 @@ function findOverridesBlock(lines) {
     }
   }
   return { headerIdx, endIdx };
+}
+
+/**
+ * pnpm-workspace.yaml's `overrides:` block, specifically. See findTopLevelBlock.
+ * @param {string[]} lines
+ * @returns {{headerIdx: number, endIdx: number} | null}
+ */
+function findOverridesBlock(lines) {
+  return findTopLevelBlock(lines, "overrides");
 }
 
 /**
@@ -603,6 +616,103 @@ function pruneOrphanedPackageJsonOverrides(packageJsonPath, lockfilePath) {
 
   pkg.pnpm.overrides = Object.fromEntries(survivors);
   writeFileSync(packageJsonPath, `${JSON.stringify(pkg, null, 2)}\n`);
+  return true;
+}
+
+/**
+ * A `# Renovate security update: <entry>` comment (case-insensitive, either
+ * side of `:` may have extra whitespace) marks a `minimumReleaseAgeExclude`
+ * entry as added through the normal automated flow, per
+ * tailor-platform/sdk's `renovate-policy-check.mjs`.
+ */
+const RENOVATE_SECURITY_COMMENT = /^#\s*Renovate security update\s*:/i;
+
+/**
+ * Parses a `-` list item under pnpm-workspace.yaml's
+ * `minimumReleaseAgeExclude:` block into its raw entry text, unquoting a
+ * double-quoted value if present. Returns null for anything that isn't a
+ * `- <value>` line (a comment, a blank line, ...).
+ * @param {string} line
+ * @returns {string | null}
+ */
+function parseExcludeListItem(line) {
+  const m = line.match(/^\s*-\s*"?([^"]+?)"?\s*$/);
+  return m ? m[1].trim() : null;
+}
+
+/**
+ * Splits a `minimumReleaseAgeExclude` entry into its bare package name and
+ * version, the same `name@version` shape `pnpm.overrides` keys use.
+ * @param {string} entry
+ * @returns {{name: string, version: string | null}} a null version means a
+ *   bare name with no version pin
+ */
+function splitExcludeEntry(entry) {
+  const atIndex = entry.startsWith("@") ? entry.indexOf("@", 1) : entry.indexOf("@");
+  if (atIndex === -1) return { name: entry, version: null };
+  return { name: entry.slice(0, atIndex), version: entry.slice(atIndex + 1) };
+}
+
+/**
+ * Inserts a `# Renovate security update: <entry>` comment directly above
+ * every version-pinned (`name@version`) pnpm-workspace.yaml
+ * `minimumReleaseAgeExclude` entry that doesn't already have one. `pnpm
+ * audit --fix`/`pnpm install` write these bypass entries with no comment at
+ * all, but tailor-platform/sdk's `renovate-policy-check.mjs` (a separate,
+ * always-on CI check this action doesn't run) requires this marker on every
+ * version-pinned entry as a sign that the bypass was added through the
+ * normal automated flow rather than by hand. A bare name entry (no version)
+ * is left untouched, since the marker only makes sense for a
+ * version-specific bypass. Any existing comment immediately above an entry
+ * is kept as-is — a comment already matching the marker is not duplicated,
+ * and a plain, unrelated comment is kept alongside the inserted marker
+ * rather than replaced.
+ * @param {string} workspacePath
+ * @returns {boolean} true if the file was rewritten
+ */
+function annotateMinimumReleaseAgeExclude(workspacePath) {
+  if (!existsSync(workspacePath)) return false;
+  const lines = readFileSync(workspacePath, "utf8").split("\n");
+  const block = findTopLevelBlock(lines, "minimumReleaseAgeExclude");
+  if (!block) return false;
+
+  const { headerIdx, endIdx } = block;
+  const body = lines.slice(headerIdx + 1, endIdx);
+
+  const newBody = [];
+  let comments = [];
+  let changed = false;
+  for (const raw of body) {
+    const trimmed = raw.trim();
+    if (trimmed === "") {
+      newBody.push(...comments, raw);
+      comments = [];
+      continue;
+    }
+    if (trimmed.startsWith("#")) {
+      comments.push(raw);
+      continue;
+    }
+    const entry = parseExcludeListItem(raw);
+    if (!entry) {
+      newBody.push(...comments, raw);
+      comments = [];
+      continue;
+    }
+    const { version } = splitExcludeEntry(entry);
+    const hasMarker = comments.some((c) => RENOVATE_SECURITY_COMMENT.test(c.trim()));
+    if (version && !hasMarker) {
+      newBody.push(...comments, `  # Renovate security update: ${entry}`, raw);
+      changed = true;
+    } else {
+      newBody.push(...comments, raw);
+    }
+    comments = [];
+  }
+  newBody.push(...comments);
+
+  if (!changed) return false;
+  writeFileSync(workspacePath, [...lines.slice(0, headerIdx + 1), ...newBody, ...lines.slice(endIdx)].join("\n"));
   return true;
 }
 
@@ -866,6 +976,7 @@ function main() {
   dedupePackageJsonOverrides(packageJsonPath);
   pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath);
   pruneOrphanedPackageJsonOverrides(packageJsonPath, lockfilePath);
+  annotateMinimumReleaseAgeExclude(workspacePath);
   try {
     verifyInstallable(cwd);
   } catch (e) {
@@ -938,4 +1049,8 @@ export {
   pruneOrphanedOverrideEntries,
   pruneOrphanedWorkspaceOverrides,
   pruneOrphanedPackageJsonOverrides,
+  findTopLevelBlock,
+  parseExcludeListItem,
+  splitExcludeEntry,
+  annotateMinimumReleaseAgeExclude,
 };
