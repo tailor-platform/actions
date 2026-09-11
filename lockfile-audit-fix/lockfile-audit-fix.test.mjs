@@ -1604,6 +1604,9 @@ describe("buildSummary", () => {
  *   FAKE_PNPM_INSTALL_FAIL_<n>     - "1" makes the n-th `pnpm install` call
  *                                    (1-indexed: 1 = after update,
  *                                    2 = after override) fail
+ *   FAKE_PNPM_INSTALL_<n>_EXTRA_LOCKFILE - if set, writes this content to
+ *                                    FAKE_PNPM_EXTRA_LOCKFILE_PATH during
+ *                                    the n-th install
  *   FAKE_PNPM_DEDUPE_FAIL_<n>      - same, for the n-th `pnpm dedupe` call
  *                                    (only made when pnpm-workspace.yaml
  *                                    mentions minimumReleaseAgeExclude)
@@ -1646,6 +1649,8 @@ function writeFakePnpm(fakeBinDir) {
     'if (args[0] === "install") {',
     '  const n = nextCount("install");',
     '  writeFileSync(`${process.env.FAKE_PNPM_STATE}/install-${n}-args`, JSON.stringify(args));',
+    '  const extraLockfile = process.env[`FAKE_PNPM_INSTALL_${n}_EXTRA_LOCKFILE`];',
+    '  if (extraLockfile !== undefined) writeFileSync(process.env.FAKE_PNPM_EXTRA_LOCKFILE_PATH, extraLockfile);',
     '  if (process.env[`FAKE_PNPM_INSTALL_FAIL_${n}`] === "1") {',
     '    process.stderr.write("install failed\\n");',
     "    process.exit(1);",
@@ -1996,19 +2001,20 @@ describe("main() end-to-end via a fake pnpm binary", () => {
     );
   });
 
-  test("workspace lockfile discovery failure rolls back the override result", () => {
+  test("workspace lockfile discovery failure happens before any fix mutates files", () => {
     const before = "lockfileVersion: '9.0'\n\nimporters:\n  .:\n    dependencies:\n      vulnerable-pkg:\n        specifier: ^1.0.0\n";
     const updateOnly = before.replace("^1.0.0", "^1.0.1");
     const overrideBroken = before.replace("^1.0.0", "^2.0.0");
+    const workspaceBefore = "packages:\n  - packages/*\n";
     writeFileSync(join(repoDir, "pnpm-lock.yaml"), before);
     writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
+    writeFileSync(join(repoDir, "pnpm-workspace.yaml"), workspaceBefore);
     writeFileSync(join(stateDir, "audit-count"), "0");
     writeFileSync(join(stateDir, "install-count"), "0");
     writeFileSync(join(stateDir, "dedupe-count"), "0");
 
-    let outputs;
-    assert.doesNotThrow(() => {
-      outputs = runMain({
+    assert.throws(() => {
+      runMain({
         FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}',
         FAKE_PNPM_FIX_UPDATE_LOCKFILE: updateOnly,
         FAKE_PNPM_FIX_OVERRIDE_LOCKFILE: overrideBroken,
@@ -2017,9 +2023,80 @@ describe("main() end-to-end via a fake pnpm binary", () => {
       });
     });
 
-    assert.equal(outputs.changed, "true");
-    assert.equal(readFileSync(join(repoDir, "pnpm-lock.yaml"), "utf8"), updateOnly);
-    assert.equal(existsSync(join(repoDir, "pnpm-workspace.yaml")), false);
+    assert.equal(readFileSync(join(repoDir, "pnpm-lock.yaml"), "utf8"), before);
+    assert.equal(readFileSync(join(repoDir, "pnpm-workspace.yaml"), "utf8"), workspaceBefore);
+  });
+
+  test("failed override verification restores a sibling project lockfile", () => {
+    const siblingDir = join(repoDir, "packages", "app");
+    const siblingLockfilePath = join(siblingDir, "pnpm-lock.yaml");
+    const siblingBefore = "lockfileVersion: '9.0'\n\nimporters:\n  .: {}\n";
+    mkdirSync(siblingDir, { recursive: true });
+    writeFileSync(join(repoDir, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n\nimporters:\n  .: {}\n");
+    writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "root-pkg" }));
+    writeFileSync(join(repoDir, "pnpm-workspace.yaml"), "packages:\n  - packages/*\n");
+    writeFileSync(join(siblingDir, "package.json"), JSON.stringify({ name: "app-pkg" }));
+    writeFileSync(siblingLockfilePath, siblingBefore);
+    writeFileSync(join(stateDir, "audit-count"), "0");
+    writeFileSync(join(stateDir, "install-count"), "0");
+    writeFileSync(join(stateDir, "dedupe-count"), "0");
+
+    try {
+      runMain({
+        FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}',
+        FAKE_PNPM_LIST_JSON: JSON.stringify([{ path: repoDir }, { path: siblingDir }]),
+        FAKE_PNPM_EXTRA_LOCKFILE_PATH: siblingLockfilePath,
+        FAKE_PNPM_INSTALL_2_EXTRA_LOCKFILE: siblingBefore.replace(".:", ".:\n    dependencies:\n      new-pkg: {}"),
+        FAKE_PNPM_INSTALL_FAIL_2: "1",
+      });
+
+      assert.equal(readFileSync(siblingLockfilePath, "utf8"), siblingBefore);
+    } finally {
+      rmSync(join(repoDir, "packages"), { recursive: true, force: true });
+      rmSync(join(repoDir, "pnpm-workspace.yaml"), { force: true });
+    }
+  });
+
+  test("reports runtime dependency changes from a sibling project lockfile", () => {
+    const siblingDir = join(repoDir, "packages", "app");
+    const siblingLockfilePath = join(siblingDir, "pnpm-lock.yaml");
+    const siblingBefore = "lockfileVersion: '9.0'\n\nimporters:\n  .: {}\n";
+    const siblingAfter = [
+      "lockfileVersion: '9.0'",
+      "",
+      "importers:",
+      "  .:",
+      "    dependencies:",
+      "      new-pkg:",
+      "        specifier: ^1.0.0",
+      "",
+    ].join("\n");
+    mkdirSync(siblingDir, { recursive: true });
+    writeFileSync(join(repoDir, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n\nimporters:\n  .: {}\n");
+    writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "root-pkg" }));
+    writeFileSync(join(repoDir, "pnpm-workspace.yaml"), "packages:\n  - packages/*\n");
+    writeFileSync(join(siblingDir, "package.json"), JSON.stringify({ name: "app-pkg" }));
+    writeFileSync(siblingLockfilePath, siblingBefore);
+    writeFileSync(join(stateDir, "audit-count"), "0");
+    writeFileSync(join(stateDir, "install-count"), "0");
+    writeFileSync(join(stateDir, "dedupe-count"), "0");
+
+    try {
+      const outputs = runMain({
+        FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}',
+        FAKE_PNPM_LIST_JSON: JSON.stringify([{ path: repoDir }, { path: siblingDir }]),
+        FAKE_PNPM_EXTRA_LOCKFILE_PATH: siblingLockfilePath,
+        FAKE_PNPM_INSTALL_2_EXTRA_LOCKFILE: siblingAfter,
+      });
+
+      assert.equal(outputs.changed, "true");
+      assert.equal(outputs["runtime-deps-changed"], "true");
+      assert.equal(outputs["changed-names"], "app-pkg");
+      assert.equal(readFileSync(siblingLockfilePath, "utf8"), siblingAfter);
+    } finally {
+      rmSync(join(repoDir, "packages"), { recursive: true, force: true });
+      rmSync(join(repoDir, "pnpm-workspace.yaml"), { force: true });
+    }
   });
 
   test("override mode creates pnpm-workspace.yaml from scratch, then its install fails: rollback deletes the file entirely", () => {

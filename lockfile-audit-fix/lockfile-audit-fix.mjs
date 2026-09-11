@@ -18,13 +18,13 @@
  * but pnpm resolves the override into an installable lockfile only once
  * `pnpm install` actually runs afterward — and depending on whether the
  * repo already has a pnpm-workspace.yaml, that install can rewrite
- * pnpm-lock.yaml, pnpm-workspace.yaml (creating it if it didn't exist), and
- * package.json's `pnpm.overrides`. So: try update, verify it installs
- * cleanly and snapshot *all three* files as a known-good fallback (or the
- * pristine originals, if even that fails), then try override on top and
- * roll back to the fallback snapshot — deleting pnpm-workspace.yaml
- * entirely if the fallback didn't have one — if override leaves the result
- * uninstallable.
+ * workspace project lockfiles, pnpm-workspace.yaml (creating it if it
+ * didn't exist), and package.json's `pnpm.overrides`. So: try update,
+ * verify it installs cleanly and snapshot all of those files as a known-good
+ * fallback (or the pristine originals, if even that fails), then try
+ * override on top and roll back to the fallback snapshot — deleting
+ * pnpm-workspace.yaml entirely if the fallback didn't have one — if
+ * override leaves the result uninstallable.
  *
  * This action does not commit or open a pull request — pair it with a
  * caller-provided commit/PR step (e.g. tailor-platform/actions'
@@ -32,12 +32,12 @@
  * caller's control.
  *
  * Outputs (via $GITHUB_OUTPUT):
- *   changed              - "true" if pnpm-lock.yaml, pnpm-workspace.yaml,
- *                           and/or package.json changed
+ *   changed              - "true" if any workspace pnpm-lock.yaml,
+ *                           pnpm-workspace.yaml, and/or package.json changed
  *   runtime-deps-changed - "true" if any non-private package's runtime
  *                           (non-dev) dependencies changed, per
- *                           pnpm-lock.yaml; devDependencies-only changes and
- *                           pnpm-workspace.yaml/package.json-overrides-only
+ *                           workspace lockfiles; devDependencies-only changes
+ *                           and pnpm-workspace.yaml/package.json-overrides-only
  *                           changes don't affect consumers
  *   changed-names        - newline-separated names of packages whose
  *                           runtime dependencies changed
@@ -47,7 +47,7 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, unlinkSync, appendFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
@@ -559,18 +559,19 @@ function readLockfileOutsideOverrides(lockfilePath) {
 }
 
 /**
- * Finds every pnpm lockfile owned by a project in the current workspace. With
- * `sharedWorkspaceLockfile: false`, each workspace project has its own
- * lockfile, so the root lockfile alone is not enough to decide whether an
- * override target is still in use. Asking pnpm for the project list avoids
- * treating lockfiles in unrelated nested fixtures as part of the workspace.
+ * Finds the expected pnpm lockfile path for every project in the current
+ * workspace. With `sharedWorkspaceLockfile: false`, each workspace project
+ * has its own lockfile, so the root lockfile alone is not enough to decide
+ * whether an override target is still in use. Asking pnpm for the project
+ * list avoids treating lockfiles in unrelated nested fixtures as part of
+ * the workspace.
  * @param {string} rootPath
  * @returns {string[]}
  */
-function findPnpmLockfiles(rootPath) {
+function findPnpmLockfilePaths(rootPath) {
   const rootLockfilePath = join(rootPath, "pnpm-lock.yaml");
   const workspacePath = join(rootPath, "pnpm-workspace.yaml");
-  if (!existsSync(workspacePath)) return existsSync(rootLockfilePath) ? [rootLockfilePath] : [];
+  if (!existsSync(workspacePath)) return [rootLockfilePath];
 
   const output = execFileSync("pnpm", ["list", "--recursive", "--depth", "-1", "--json"], {
     cwd: rootPath,
@@ -584,7 +585,15 @@ function findPnpmLockfiles(rootPath) {
     rootPath,
     ...projects.map((project) => project?.path).filter((path) => typeof path === "string"),
   ];
-  return [...new Set(projectPaths.map((path) => join(path, "pnpm-lock.yaml")).filter(existsSync))].sort();
+  return [...new Set(projectPaths.map((path) => join(path, "pnpm-lock.yaml")))].sort();
+}
+
+/**
+ * @param {string} rootPath
+ * @returns {string[]}
+ */
+function findPnpmLockfiles(rootPath) {
+  return findPnpmLockfilePaths(rootPath).filter(existsSync);
 }
 
 /**
@@ -1127,6 +1136,11 @@ function main() {
   const lockfilePath = join(cwd, "pnpm-lock.yaml");
   const workspacePath = join(cwd, "pnpm-workspace.yaml");
   const packageJsonPath = join(cwd, "package.json");
+  // Capture every workspace project's expected lockfile path before any
+  // pnpm command can create or rewrite one. This fixed list lets rollback
+  // restore existing files and delete files created during the run without
+  // depending on another discovery command after a failure.
+  const trackedLockfilePaths = findPnpmLockfilePaths(cwd);
 
   const outputFile = process.env.GITHUB_OUTPUT;
   const setOutput = (name, value) => {
@@ -1146,15 +1160,30 @@ function main() {
   // pnpm writes an override it can't express as a lockfile-only version
   // bump to pnpm-workspace.yaml if one exists, or to package.json's
   // `pnpm.overrides` otherwise — and can create pnpm-workspace.yaml from
-  // scratch to do it. So all three are part of the state a rollback must
-  // restore, not just the lockfile.
-  const snapshot = () => ({
-    lockfile: readFileSync(lockfilePath, "utf8"),
-    workspace: existsSync(workspacePath) ? readFileSync(workspacePath, "utf8") : null,
-    packageJson: readFileSync(packageJsonPath, "utf8"),
-  });
+  // scratch to do it. So all workspace lockfiles plus both configuration
+  // files are part of the state a rollback must restore.
+  const snapshot = () => {
+    const lockfiles = Object.fromEntries(
+      trackedLockfilePaths.map((path) => [path, existsSync(path) ? readFileSync(path, "utf8") : null]),
+    );
+    return {
+      // Preserve the original required-root-lockfile behavior: a missing
+      // root lockfile is an action configuration error, not a nullable
+      // snapshot entry to continue past.
+      lockfile: readFileSync(lockfilePath, "utf8"),
+      lockfiles,
+      workspace: existsSync(workspacePath) ? readFileSync(workspacePath, "utf8") : null,
+      packageJson: readFileSync(packageJsonPath, "utf8"),
+    };
+  };
   const restore = (snap) => {
-    writeFileSync(lockfilePath, snap.lockfile);
+    for (const [path, text] of Object.entries(snap.lockfiles)) {
+      if (text === null) {
+        if (existsSync(path)) unlinkSync(path);
+      } else {
+        writeFileSync(path, text);
+      }
+    }
     writeFileSync(packageJsonPath, snap.packageJson);
     if (snap.workspace !== null) {
       writeFileSync(workspacePath, snap.workspace);
@@ -1173,7 +1202,7 @@ function main() {
     fallback = snapshot();
   } catch (e) {
     console.log(
-      `::warning::pnpm verification failed after the update-mode fix; reverting pnpm-lock.yaml, pnpm-workspace.yaml, and package.json to their original state. ${e.message}`,
+      `::warning::pnpm verification failed after the update-mode fix; reverting workspace lockfiles, pnpm-workspace.yaml, and package.json to their original state. ${e.message}`,
     );
     restore(original);
   }
@@ -1182,7 +1211,7 @@ function main() {
   try {
     dedupeWorkspaceOverrides(workspacePath);
     dedupePackageJsonOverrides(packageJsonPath);
-    const lockfilePaths = findPnpmLockfiles(cwd);
+    const lockfilePaths = trackedLockfilePaths.filter(existsSync);
     pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath, lockfilePaths);
     pruneOrphanedPackageJsonOverrides(packageJsonPath, lockfilePath, lockfilePaths);
     annotateMinimumReleaseAgeExclude(workspacePath);
@@ -1194,14 +1223,14 @@ function main() {
     // result that may never have existed.
     const revertTarget = fallback === original ? "their original state" : "the update-mode-only result";
     console.log(
-      `::warning::Override-mode cleanup or verification failed; reverting pnpm-lock.yaml, pnpm-workspace.yaml, and package.json to ${revertTarget}. ${e.message}`,
+      `::warning::Override-mode cleanup or verification failed; reverting workspace lockfiles, pnpm-workspace.yaml, and package.json to ${revertTarget}. ${e.message}`,
     );
     restore(fallback);
   }
 
   const after = snapshot();
   const changed =
-    after.lockfile !== original.lockfile ||
+    trackedLockfilePaths.some((path) => after.lockfiles[path] !== original.lockfiles[path]) ||
     after.workspace !== original.workspace ||
     after.packageJson !== original.packageJson;
   setOutput("changed", changed);
@@ -1214,7 +1243,20 @@ function main() {
     return;
   }
 
-  const changedNames = diffRuntimeDeps({ beforeText: original.lockfile, afterText: after.lockfile, cwd });
+  const normalize = loadFixedGroupNormalizer(cwd);
+  const changedNames = [
+    ...new Set(
+      trackedLockfilePaths
+        .flatMap((path) =>
+          diffRuntimeDeps({
+            beforeText: original.lockfiles[path] ?? "",
+            afterText: after.lockfiles[path] ?? "",
+            cwd: dirname(path),
+          }),
+        )
+        .map(normalize),
+    ),
+  ].sort();
   setOutput("runtime-deps-changed", changedNames.length > 0);
   setMultilineOutput("changed-names", changedNames.join("\n"));
   console.log(
@@ -1255,6 +1297,7 @@ export {
   overrideTargetName,
   isMentioned,
   readLockfileOutsideOverrides,
+  findPnpmLockfilePaths,
   findPnpmLockfiles,
   readAllLockfilesOutsideOverrides,
   pruneOrphanedOverrideEntries,
