@@ -454,6 +454,11 @@ describe("findOverridesBlock", () => {
   test("returns null when there's no overrides key", () => {
     assert.equal(findOverridesBlock(["packages:", "  - packages/*"]), null);
   });
+
+  test("tolerates whitespace before the colon (valid YAML pnpm never emits, but a hand-edited file might)", () => {
+    const lines = ["overrides :", "  foo: 1.0.0"];
+    assert.deepEqual(findOverridesBlock(lines), { headerIdx: 0, endIdx: 2 });
+  });
 });
 
 describe("findTopLevelBlock", () => {
@@ -509,6 +514,61 @@ describe("dedupeWorkspaceOverrides", () => {
     assert.match(result, /brace-expansion@<1\.1\.18: 1\.1\.18/);
     assert.match(result, /nanoid@<3\.3\.18: 3\.3\.18/);
     assert.match(result, /packages\/\*/); // untouched sections survive round-trip
+  });
+
+  test("removes a dominated entry's preceding comment along with it", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(
+      workspacePath,
+      [
+        "overrides:",
+        "  # a note about the narrower pin",
+        "  brace-expansion@<1.1.16: 1.1.18",
+        "  brace-expansion@<1.1.18: 1.1.18",
+        "",
+      ].join("\n"),
+    );
+
+    const changed = dedupeWorkspaceOverrides(workspacePath);
+    assert.equal(changed, true);
+
+    const result = readFileSync(workspacePath, "utf8");
+    assert.doesNotMatch(result, /a note about the narrower pin/);
+    assert.match(result, /brace-expansion@<1\.1\.18: 1\.1\.18/);
+  });
+
+  test("removing a dominated entry's keep-override marker doesn't leak it onto the next unrelated entry", () => {
+    // Regression test for a real interaction bug: dedupeWorkspaceOverrides
+    // used to delete only the dominated entry's own line, leaving its
+    // preceding comment (here, a # keep-override: marker) to be read by
+    // pruneOrphanedWorkspaceOverrides right after as belonging to whatever
+    // entry happened to survive next instead.
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(
+      workspacePath,
+      [
+        "overrides:",
+        "  # keep-override: pinned ahead of the dependency landing",
+        "  brace-expansion@<1.1.16: 1.1.18",
+        "  brace-expansion@<1.1.18: 1.1.18",
+        "  ghost-pkg@1: 2.0.0",
+        "",
+      ].join("\n"),
+    );
+    const lockfilePath = join(cwd, "pnpm-lock.yaml");
+    writeFileSync(lockfilePath, ORPHAN_TEST_LOCKFILE);
+
+    dedupeWorkspaceOverrides(workspacePath);
+    const afterDedupe = readFileSync(workspacePath, "utf8");
+    assert.doesNotMatch(afterDedupe, /keep-override/);
+
+    const pruned = pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath);
+    assert.equal(pruned, true);
+    assert.doesNotMatch(
+      readFileSync(workspacePath, "utf8"),
+      /ghost-pkg/,
+      "ghost-pkg should still be pruned as orphaned — the orphaned keep-override marker must not have attached to it",
+    );
   });
 
   test("is a no-op when there is nothing to dedupe", () => {
@@ -682,6 +742,20 @@ describe("readLockfileOutsideOverrides", () => {
 
   test("returns null when the file doesn't exist", () => {
     assert.equal(readLockfileOutsideOverrides(join(cwd, "missing.yaml")), null);
+  });
+
+  test("accepts a real lockfile with no packages: key at all (a workspace with zero external dependencies)", () => {
+    // Verified against a real `pnpm install`: a workspace where every
+    // importer only depends on other workspace packages gets no `packages:`
+    // key in pnpm-lock.yaml whatsoever, not even an empty `packages: {}`.
+    const lockfilePath = join(cwd, "workspace-only-lock.yaml");
+    writeFileSync(
+      lockfilePath,
+      ["lockfileVersion: '9.0'", "", "importers:", "", "  .: {}", "", "  packages/a: {}", ""].join("\n"),
+    );
+    const text = readLockfileOutsideOverrides(lockfilePath);
+    assert.notEqual(text, null);
+    assert.match(text, /packages\/a/);
   });
 
   test("returns null when the file doesn't look like a real lockfile", () => {
@@ -998,6 +1072,29 @@ describe("annotateMinimumReleaseAgeExclude", () => {
 
     const result = readFileSync(workspacePath, "utf8");
     assert.match(result, /# pinned intentionally\n {2}# Renovate security update: fast-uri@3\.1\.6\n {2}- fast-uri@3\.1\.6/);
+  });
+
+  test("inserts a new marker when an existing one isn't the nearest comment (matches renovate-policy-check.mjs, which only reads the nearest one)", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(
+      workspacePath,
+      [
+        "minimumReleaseAgeExclude:",
+        "  # Renovate security update: fast-uri@3.1.6",
+        "  # a later, unrelated note",
+        "  - fast-uri@3.1.6",
+        "",
+      ].join("\n"),
+    );
+
+    const changed = annotateMinimumReleaseAgeExclude(workspacePath);
+    assert.equal(changed, true);
+
+    const result = readFileSync(workspacePath, "utf8");
+    assert.match(
+      result,
+      /# Renovate security update: fast-uri@3\.1\.6\n {2}# a later, unrelated note\n {2}# Renovate security update: fast-uri@3\.1\.6\n {2}- fast-uri@3\.1\.6/,
+    );
   });
 
   test("leaves a bare (unversioned) entry untouched", () => {

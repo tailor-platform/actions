@@ -350,7 +350,7 @@ function parseOverrideLine(line) {
  * @returns {{headerIdx: number, endIdx: number} | null}
  */
 function findTopLevelBlock(lines, key) {
-  const headerRe = new RegExp(`^${key}:\\s*$`);
+  const headerRe = new RegExp(`^${key}\\s*:\\s*$`);
   const headerIdx = lines.findIndex((l) => headerRe.test(l));
   if (headerIdx === -1) return null;
   let endIdx = lines.length;
@@ -403,10 +403,24 @@ function dedupeWorkspaceOverrides(workspacePath) {
   const { removedKeys } = dedupeOverrideEntries(entries);
   if (removedKeys.length === 0) return false;
 
+  // A removed entry's directly preceding comment lines (a plain note, or a
+  // `# keep-override:` marker) describe that entry specifically — nothing
+  // else can sit between a comment and the entry line it precedes, since a
+  // blank line or another entry line would already have ended the run. Left
+  // behind, such a comment would attach itself (in every other reader of
+  // this file, including pruneOrphanedWorkspaceOverrides right after this
+  // function runs) to whatever entry happens to follow it instead — a
+  // `# keep-override:` marker orphaned this way would wrongly exempt an
+  // unrelated, later entry from orphan-pruning.
   const removedKeySet = new Set(removedKeys);
-  const removedIndexes = new Set(
-    parsedLines.filter(({ key }) => removedKeySet.has(key)).map(({ lineIndex }) => lineIndex),
-  );
+  const removedIndexes = new Set();
+  for (const { key, lineIndex } of parsedLines) {
+    if (!removedKeySet.has(key)) continue;
+    removedIndexes.add(lineIndex);
+    for (let i = lineIndex - 1; i > block.headerIdx && /^\s*#/.test(lines[i]); i--) {
+      removedIndexes.add(i);
+    }
+  }
   writeFileSync(workspacePath, lines.filter((_, i) => !removedIndexes.has(i)).join("\n"));
   return true;
 }
@@ -485,15 +499,20 @@ function isMentioned(haystack, name) {
  * of pnpm-workspace.yaml's `overrides:`) excluded first — scanning the file
  * whole would make every override look "mentioned" off the back of its own
  * entry. Returns null when the file is missing or doesn't look like a real
- * lockfile (no top-level `packages:` key), so callers abstain from pruning
- * rather than act on a bad read.
+ * lockfile, so callers abstain from pruning rather than act on a bad read.
+ * `lockfileVersion:` (not `packages:`) is the sanity check: a workspace
+ * with no external dependencies at all (every importer only depends on
+ * other workspace packages) has pnpm omit the `packages:` key entirely,
+ * while `lockfileVersion:` is always the first line of any real
+ * pnpm-lock.yaml, verified against a real `pnpm install` on such a
+ * workspace.
  * @param {string} lockfilePath
  * @returns {string | null}
  */
 function readLockfileOutsideOverrides(lockfilePath) {
   if (!existsSync(lockfilePath)) return null;
   const lines = readFileSync(lockfilePath, "utf8").split("\n");
-  if (!lines.some((l) => /^packages:\s*$/.test(l))) return null;
+  if (!lines.some((l) => /^lockfileVersion\s*:/.test(l))) return null;
   const block = findOverridesBlock(lines);
   if (!block) return lines.join("\n");
   return [...lines.slice(0, block.headerIdx), ...lines.slice(block.endIdx)].join("\n");
@@ -663,10 +682,16 @@ function splitExcludeEntry(entry) {
  * version-pinned entry as a sign that the bypass was added through the
  * normal automated flow rather than by hand. A bare name entry (no version)
  * is left untouched, since the marker only makes sense for a
- * version-specific bypass. Any existing comment immediately above an entry
- * is kept as-is — a comment already matching the marker is not duplicated,
- * and a plain, unrelated comment is kept alongside the inserted marker
- * rather than replaced.
+ * version-specific bypass. Whether a marker is already present is decided
+ * from only the nearest preceding comment line, matching
+ * `renovate-policy-check.mjs`'s own check (it tracks a single
+ * `pendingComment`, overwritten by each comment line in turn, so only the
+ * one immediately above the entry counts) — a marker sitting behind some
+ * other, more recent comment wouldn't satisfy that check either, so a new
+ * marker is inserted as the new nearest comment in that case too, even
+ * though an existing marker technically exists further up. Any existing
+ * comment immediately above an entry is kept as-is — a plain, unrelated
+ * comment is kept alongside the inserted marker rather than replaced.
  * @param {string} workspacePath
  * @returns {boolean} true if the file was rewritten
  */
@@ -700,7 +725,7 @@ function annotateMinimumReleaseAgeExclude(workspacePath) {
       continue;
     }
     const { version } = splitExcludeEntry(entry);
-    const hasMarker = comments.some((c) => RENOVATE_SECURITY_COMMENT.test(c.trim()));
+    const hasMarker = comments.length > 0 && RENOVATE_SECURITY_COMMENT.test(comments[comments.length - 1].trim());
     if (version && !hasMarker) {
       newBody.push(...comments, `  # Renovate security update: ${entry}`, raw);
       changed = true;
