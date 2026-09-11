@@ -934,6 +934,23 @@ describe("pruneOrphanedWorkspaceOverrides", () => {
     assert.match(result, /packages\/\*/); // untouched sections survive round-trip
   });
 
+  test("keeps an override used by a sibling project lockfile", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    const siblingDir = join(cwd, "packages", "app");
+    const siblingLockfilePath = join(siblingDir, "pnpm-lock.yaml");
+    mkdirSync(siblingDir, { recursive: true });
+    writeFileSync(workspacePath, ["overrides:", "  is-odd: 3.0.1", ""].join("\n"));
+    writeFileSync(
+      siblingLockfilePath,
+      ["lockfileVersion: '9.0'", "", "packages:", "", "  is-odd@3.0.1:", "    resolution: {}", ""].join("\n"),
+    );
+
+    const changed = pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath, [siblingLockfilePath]);
+
+    assert.equal(changed, false);
+    assert.match(readFileSync(workspacePath, "utf8"), /is-odd: 3\.0\.1/);
+  });
+
   test("honours a keep-override opt-out comment", () => {
     const workspacePath = join(cwd, "pnpm-workspace.yaml");
     writeFileSync(
@@ -1129,6 +1146,18 @@ describe("pruneOrphanedPackageJsonOverrides", () => {
     const pkg = JSON.parse(readFileSync(packageJsonPath, "utf8"));
     assert.deepEqual(pkg.pnpm.overrides, { "esbuild@<0.28.1": "0.28.1" });
     assert.equal(pkg.name, "root-pkg");
+  });
+
+  test("keeps an override used by an additional project lockfile", () => {
+    const packageJsonPath = join(cwd, "package-with-sibling-lockfile.json");
+    const siblingLockfilePath = join(cwd, "sibling-pnpm-lock.yaml");
+    writeFileSync(packageJsonPath, JSON.stringify({ name: "root-pkg", pnpm: { overrides: { "is-odd": "3.0.1" } } }));
+    writeFileSync(siblingLockfilePath, "lockfileVersion: '9.0'\n\npackages:\n\n  is-odd@3.0.1:\n    resolution: {}\n");
+
+    const changed = pruneOrphanedPackageJsonOverrides(packageJsonPath, lockfilePath, [siblingLockfilePath]);
+
+    assert.equal(changed, false);
+    assert.deepEqual(JSON.parse(readFileSync(packageJsonPath, "utf8")).pnpm.overrides, { "is-odd": "3.0.1" });
   });
 
   test("drops the pnpm.overrides key entirely (and pnpm too) once every entry is orphaned", () => {
@@ -1578,6 +1607,7 @@ describe("buildSummary", () => {
  *   FAKE_PNPM_DEDUPE_FAIL_<n>      - same, for the n-th `pnpm dedupe` call
  *                                    (only made when pnpm-workspace.yaml
  *                                    mentions minimumReleaseAgeExclude)
+ *   FAKE_PNPM_LIST_JSON             - stdout for `pnpm list --recursive`
  *   FAKE_PNPM_STATE                - directory for the call counters
  */
 function writeFakePnpm(fakeBinDir) {
@@ -1630,6 +1660,11 @@ function writeFakePnpm(fakeBinDir) {
     '    process.stderr.write("dedupe failed\\n");',
     "    process.exit(1);",
     "  }",
+    "  process.exit(0);",
+    "}",
+    "",
+    'if (args[0] === "list") {',
+    '  process.stdout.write(process.env.FAKE_PNPM_LIST_JSON ?? JSON.stringify([{ path: process.cwd() }]));',
     "  process.exit(0);",
     "}",
     "",
@@ -2061,6 +2096,34 @@ describe("main() end-to-end via a fake pnpm binary", () => {
 
     const stdout = readFileSync(join(stateDir, "last-stdout.txt"), "utf8");
     assert.match(stdout, /Dropping orphaned override entry "ghost-pkg@<2"/);
+  });
+
+  test("keeps a root override used only by a sibling project lockfile", () => {
+    const siblingDir = join(repoDir, "packages", "app");
+    mkdirSync(siblingDir, { recursive: true });
+    writeFileSync(join(repoDir, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n\nimporters:\n  .: {}\n");
+    writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
+    writeFileSync(join(repoDir, "pnpm-workspace.yaml"), "packages:\n  - packages/*\noverrides:\n  is-odd: 3.0.1\n");
+    writeFileSync(
+      join(siblingDir, "pnpm-lock.yaml"),
+      "lockfileVersion: '9.0'\n\npackages:\n\n  is-odd@3.0.1:\n    resolution: {}\n",
+    );
+    writeFileSync(join(stateDir, "audit-count"), "0");
+    writeFileSync(join(stateDir, "install-count"), "0");
+    writeFileSync(join(stateDir, "dedupe-count"), "0");
+
+    try {
+      const outputs = runMain({
+        FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}',
+        FAKE_PNPM_LIST_JSON: JSON.stringify([{ path: repoDir }, { path: siblingDir }]),
+      });
+
+      assert.equal(outputs.changed, "false");
+      assert.match(readFileSync(join(repoDir, "pnpm-workspace.yaml"), "utf8"), /is-odd: 3\.0\.1/);
+    } finally {
+      rmSync(join(repoDir, "packages"), { recursive: true, force: true });
+      rmSync(join(repoDir, "pnpm-workspace.yaml"), { force: true });
+    }
   });
 
   test("override mode writes an unannotated minimumReleaseAgeExclude entry: a marker comment is inserted before install", () => {

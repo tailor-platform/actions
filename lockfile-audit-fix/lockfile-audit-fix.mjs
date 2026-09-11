@@ -559,6 +559,50 @@ function readLockfileOutsideOverrides(lockfilePath) {
 }
 
 /**
+ * Finds every pnpm lockfile owned by a project in the current workspace. With
+ * `sharedWorkspaceLockfile: false`, each workspace project has its own
+ * lockfile, so the root lockfile alone is not enough to decide whether an
+ * override target is still in use. Asking pnpm for the project list avoids
+ * treating lockfiles in unrelated nested fixtures as part of the workspace.
+ * @param {string} rootPath
+ * @returns {string[]}
+ */
+function findPnpmLockfiles(rootPath) {
+  const rootLockfilePath = join(rootPath, "pnpm-lock.yaml");
+  const workspacePath = join(rootPath, "pnpm-workspace.yaml");
+  if (!existsSync(workspacePath)) return existsSync(rootLockfilePath) ? [rootLockfilePath] : [];
+
+  const output = execFileSync("pnpm", ["list", "--recursive", "--depth", "-1", "--json"], {
+    cwd: rootPath,
+    encoding: "utf8",
+    maxBuffer: 1024 * 1024 * 64,
+  });
+  const projects = JSON.parse(output);
+  if (!Array.isArray(projects)) throw new Error("pnpm list did not return a project array");
+
+  const projectPaths = [
+    rootPath,
+    ...projects.map((project) => project?.path).filter((path) => typeof path === "string"),
+  ];
+  return [...new Set(projectPaths.map((path) => join(path, "pnpm-lock.yaml")).filter(existsSync))].sort();
+}
+
+/**
+ * @param {string} lockfilePath
+ * @param {string[]} additionalLockfilePaths
+ * @returns {string | null}
+ */
+function readAllLockfilesOutsideOverrides(lockfilePath, additionalLockfilePaths = []) {
+  const texts = [];
+  for (const path of new Set([lockfilePath, ...additionalLockfilePaths])) {
+    const text = readLockfileOutsideOverrides(path);
+    if (text === null) return null;
+    texts.push(text);
+  }
+  return texts.join("\n");
+}
+
+/**
  * Drops `pnpm.overrides`/`pnpm-workspace.yaml overrides:` entries whose
  * target package is no longer mentioned anywhere in the dependency tree
  * (`lockfileText`, see readLockfileOutsideOverrides) — an override like that
@@ -586,8 +630,8 @@ function pruneOrphanedOverrideEntries(entries, lockfileText) {
 
 /**
  * Prunes pnpm-workspace.yaml's `overrides:` block of entries whose target
- * package is no longer mentioned anywhere in pnpm-lock.yaml's dependency
- * tree — same line-deletion approach as dedupeWorkspaceOverrides, for the
+ * package is no longer mentioned anywhere in the workspace lockfiles'
+ * dependency tree — same line-deletion approach as dedupeWorkspaceOverrides, for the
  * same reason (no YAML library available). Unlike dedupeWorkspaceOverrides,
  * a dropped entry also takes any plain comment immediately above it with it
  * (that comment only ever explained the now-dead entry), except a
@@ -595,15 +639,16 @@ function pruneOrphanedOverrideEntries(entries, lockfileText) {
  * entirely instead.
  * @param {string} workspacePath
  * @param {string} lockfilePath
+ * @param {string[]} additionalLockfilePaths
  * @returns {boolean} true if the file was rewritten
  */
-function pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath) {
+function pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath, additionalLockfilePaths = []) {
   if (!existsSync(workspacePath)) return false;
   const lines = readFileSync(workspacePath, "utf8").split("\n");
   const block = findOverridesBlock(lines);
   if (!block) return false;
 
-  const lockfileText = readLockfileOutsideOverrides(lockfilePath);
+  const lockfileText = readAllLockfilesOutsideOverrides(lockfilePath, additionalLockfilePaths);
   if (lockfileText === null) return false;
 
   const { headerIdx, endIdx } = block;
@@ -674,14 +719,15 @@ function pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath) {
 /**
  * @param {string} packageJsonPath
  * @param {string} lockfilePath
+ * @param {string[]} additionalLockfilePaths
  * @returns {boolean} true if the file was rewritten
  */
-function pruneOrphanedPackageJsonOverrides(packageJsonPath, lockfilePath) {
+function pruneOrphanedPackageJsonOverrides(packageJsonPath, lockfilePath, additionalLockfilePaths = []) {
   const pkg = JSON.parse(readFileSync(packageJsonPath, "utf8"));
   const overrides = pkg.pnpm?.overrides;
   if (!overrides || typeof overrides !== "object") return false;
 
-  const lockfileText = readLockfileOutsideOverrides(lockfilePath);
+  const lockfileText = readAllLockfilesOutsideOverrides(lockfilePath, additionalLockfilePaths);
   if (lockfileText === null) return false;
 
   const entries = Object.entries(overrides);
@@ -1135,8 +1181,9 @@ function main() {
   runFix("override", cwd);
   dedupeWorkspaceOverrides(workspacePath);
   dedupePackageJsonOverrides(packageJsonPath);
-  pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath);
-  pruneOrphanedPackageJsonOverrides(packageJsonPath, lockfilePath);
+  const lockfilePaths = findPnpmLockfiles(cwd);
+  pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath, lockfilePaths);
+  pruneOrphanedPackageJsonOverrides(packageJsonPath, lockfilePath, lockfilePaths);
   annotateMinimumReleaseAgeExclude(workspacePath);
   pruneEmptyWorkspaceScaffold(workspacePath, original.workspace);
   try {
@@ -1208,6 +1255,8 @@ export {
   overrideTargetName,
   isMentioned,
   readLockfileOutsideOverrides,
+  findPnpmLockfiles,
+  readAllLockfilesOutsideOverrides,
   pruneOrphanedOverrideEntries,
   pruneOrphanedWorkspaceOverrides,
   pruneOrphanedPackageJsonOverrides,
