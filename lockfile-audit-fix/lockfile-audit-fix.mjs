@@ -841,15 +841,30 @@ function annotateMinimumReleaseAgeExclude(workspacePath) {
 }
 
 /**
+ * A comment-only or blank line carries nothing an orphaned-empty workspace
+ * scaffold check should count as "meaningful content" — the same standard
+ * `pruneOrphanedWorkspaceOverrides` uses for its own "did the block empty
+ * out" check.
+ * @param {string} text
+ */
+function isYamlContentEmpty(text) {
+  return !text.split("\n").some((l) => l.trim() !== "" && !l.trim().startsWith("#"));
+}
+
+/**
  * Deletes pnpm-workspace.yaml if this action invocation is the one that
  * created it (`originalWorkspaceText` — a snapshot taken before any fix
- * ran — is null) and it has since collapsed to nothing meaningful, e.g.
+ * ran — is null) and it has since collapsed to nothing meaningful (no
+ * actual YAML content — comment/blank lines don't count either), e.g.
  * override mode wrote the file solely to hold an override that
- * orphan-pruning then removed as its only content. An existing file is
- * left alone even if it becomes blank, since a workspace file's mere
- * presence can matter to pnpm independently of its content (it marks the
- * workspace root) — only a file this run itself brought into existence is
- * safe to remove entirely, restoring the state from before this run.
+ * orphan-pruning then removed, potentially leaving a comment that survived
+ * the removal (unattached to anything, per pruneOrphanedWorkspaceOverrides's
+ * own trailing-comment handling) as the file's only remaining line. An
+ * existing file is left alone even if it becomes blank, since a workspace
+ * file's mere presence can matter to pnpm independently of its content (it
+ * marks the workspace root) — only a file this run itself brought into
+ * existence is safe to remove entirely, restoring the state from before
+ * this run.
  * @param {string} workspacePath
  * @param {string | null} originalWorkspaceText
  * @returns {boolean} true if the file was deleted
@@ -857,7 +872,7 @@ function annotateMinimumReleaseAgeExclude(workspacePath) {
 function pruneEmptyWorkspaceScaffold(workspacePath, originalWorkspaceText) {
   if (originalWorkspaceText !== null) return false;
   if (!existsSync(workspacePath)) return false;
-  if (readFileSync(workspacePath, "utf8").trim() !== "") return false;
+  if (!isYamlContentEmpty(readFileSync(workspacePath, "utf8"))) return false;
   unlinkSync(workspacePath);
   return true;
 }
@@ -1200,5 +1215,6 @@ export {
   parseExcludeListItem,
   splitExcludeEntry,
   annotateMinimumReleaseAgeExclude,
+  isYamlContentEmpty,
   pruneEmptyWorkspaceScaffold,
 };

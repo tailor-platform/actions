@@ -36,6 +36,7 @@ import {
   parseExcludeListItem,
   splitExcludeEntry,
   annotateMinimumReleaseAgeExclude,
+  isYamlContentEmpty,
   pruneEmptyWorkspaceScaffold,
 } from "./lockfile-audit-fix.mjs";
 
@@ -1185,6 +1186,20 @@ describe("pruneOrphanedPackageJsonOverrides", () => {
   });
 });
 
+describe("isYamlContentEmpty", () => {
+  test("treats a blank string as empty", () => {
+    assert.equal(isYamlContentEmpty("\n"), true);
+  });
+
+  test("treats comment-only content as empty", () => {
+    assert.equal(isYamlContentEmpty("# just a note\n\n# another\n"), true);
+  });
+
+  test("treats any real content as non-empty", () => {
+    assert.equal(isYamlContentEmpty("packages:\n  - packages/*\n"), false);
+  });
+});
+
 describe("pruneEmptyWorkspaceScaffold", () => {
   let cwd;
 
@@ -1199,6 +1214,15 @@ describe("pruneEmptyWorkspaceScaffold", () => {
   test("deletes a blank file this run created (originalWorkspaceText is null)", () => {
     const workspacePath = join(cwd, "pnpm-workspace.yaml");
     writeFileSync(workspacePath, "\n");
+
+    const deleted = pruneEmptyWorkspaceScaffold(workspacePath, null);
+    assert.equal(deleted, true);
+    assert.equal(existsSync(workspacePath), false);
+  });
+
+  test("deletes a comment-only file this run created (a stray trailing comment isn't meaningful content)", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(workspacePath, "# a note for the section below, not for ghost-pkg\n");
 
     const deleted = pruneEmptyWorkspaceScaffold(workspacePath, null);
     assert.equal(deleted, true);
