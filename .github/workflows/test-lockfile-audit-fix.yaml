@@ -197,7 +197,7 @@ jobs:
         with:
           working-directory: ${{ steps.fixture.outputs.fixture-dir }}
 
-      - name: "Verify: the unresolved disjunction member is pruned, the resolved one is kept, changed=true"
+      - name: "Verify: the unresolved disjunction member is pruned, the resolved one is kept and annotated, changed=true"
         env:
           CHANGED: ${{ steps.fix.outputs.changed }}
           FIXTURE_DIR: ${{ steps.fixture.outputs.fixture-dir }}
@@ -213,6 +213,22 @@ jobs:
           fi
           if ! grep -q "is-odd@3.0.1" "$FIXTURE_DIR/pnpm-workspace.yaml"; then
             echo "::error::Expected the still-resolved 'is-odd@3.0.1' entry to remain"
+            cat "$FIXTURE_DIR/pnpm-workspace.yaml"
+            exit 1
+          fi
+          # annotateMinimumReleaseAgeExclude runs (in override mode, alongside
+          # the other cleanup calls) before the second verifyInstallable's
+          # `pnpm dedupe --config.minimum-release-age-exclude-prune=true`
+          # actually resolves the disjunction down to the plain 3.0.1 entry
+          # asserted above. This checks that pnpm's own rewrite of the list
+          # during that resolution doesn't silently drop the marker comment
+          # this action inserted, and that it still sits immediately above
+          # the (now-pruned) entry it names — both load-bearing for
+          # tailor-platform/sdk's separate renovate-policy-check.mjs, which
+          # only reads the single comment line immediately preceding an
+          # entry.
+          if ! grep -A1 "# Renovate security update: is-odd@3.0.1" "$FIXTURE_DIR/pnpm-workspace.yaml" | grep -q -- "- is-odd@3.0.1"; then
+            echo "::error::Expected a '# Renovate security update: is-odd@3.0.1' comment directly above the '- is-odd@3.0.1' entry"
             cat "$FIXTURE_DIR/pnpm-workspace.yaml"
             exit 1
           fi

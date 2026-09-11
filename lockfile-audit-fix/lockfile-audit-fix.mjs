@@ -450,9 +450,19 @@ function dedupePackageJsonOverrides(packageJsonPath) {
 /**
  * pnpm's dep-path syntax (`parent>child`) and range operators (`>=3.0.0`)
  * share the `>` character, so only the leading name segment is read here.
- * For a nested `parent>child` selector this resolves to `parent` — which is
- * the right target anyway: an override keyed on a parent that has left the
- * tree is dead too.
+ * For a nested `parent>child` selector this resolves to `parent`, not
+ * `child` — deliberately: this is a verbatim port of
+ * tailor-platform/sdk's own `OVERRIDE_TARGET`/`overrideTargetName`, and its
+ * own test (mirrored at pruneOrphanedOverrideEntries's "keeps an entry
+ * reachable through a parent>child dep-path selector" below) keeps a
+ * `parent>child` override whenever `parent` is present, even when `child`
+ * itself doesn't appear in the lockfile at all. Determining whether `child`
+ * is *actually* still a dependency of `parent` specifically would need real
+ * dependency-graph traversal, not a text scan — out of scope for this
+ * line-based, no-YAML-library port — so this errs toward keeping (a
+ * `parent>child` override can go a while after `child` stops mattering to
+ * `parent` without being flagged), the same direction every other check in
+ * this file already errs toward.
  */
 const OVERRIDE_TARGET = /^(?:@[^/@\s>]+\/)?[^@\s>]+/;
 
@@ -671,19 +681,30 @@ const RENOVATE_SECURITY_COMMENT = /^#\s*Renovate security update\s*:/i;
  * Parses a `-` list item under pnpm-workspace.yaml's
  * `minimumReleaseAgeExclude:` block into its raw entry text, unquoting a
  * single- or double-quoted value if present (a scoped package name, `@`-led,
- * has to be quoted one way or the other in YAML). Returns null for anything
- * that isn't a `- <value>` line (a comment, a blank line, ...).
+ * has to be quoted one way or the other in YAML) and dropping a trailing
+ * inline `# ...` comment — for a quoted value, everything after the closing
+ * quote is discarded outright (not just anything that happens to look like
+ * a comment), matching YAML's own rule that nothing meaningful follows a
+ * quoted scalar but whitespace and a comment. Returns null for anything
+ * that isn't a `- <value>` line (a comment, a blank line, ...) or whose
+ * quote never closes.
  * @param {string} line
  * @returns {string | null}
  */
 function parseExcludeListItem(line) {
-  const m = line.match(/^\s*-\s*(.+?)\s*$/);
+  const m = line.match(/^\s*-\s*(.*)$/);
   if (!m) return null;
-  let value = m[1];
-  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-    value = value.slice(1, -1);
+  const rest = m[1];
+
+  if (rest.startsWith('"') || rest.startsWith("'")) {
+    const quote = rest[0];
+    const closeIdx = rest.indexOf(quote, 1);
+    return closeIdx === -1 ? null : rest.slice(1, closeIdx);
   }
-  return value;
+
+  const commentIdx = rest.search(/\s#/);
+  const value = (commentIdx === -1 ? rest : rest.slice(0, commentIdx)).trim();
+  return value === "" ? null : value;
 }
 
 /**

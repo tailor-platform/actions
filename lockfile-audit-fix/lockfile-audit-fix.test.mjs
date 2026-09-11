@@ -1060,6 +1060,18 @@ describe("parseExcludeListItem", () => {
     assert.equal(parseExcludeListItem("  - '@scope/pkg'"), "@scope/pkg");
   });
 
+  test("unquotes a single-quoted scoped bare name with a trailing inline comment", () => {
+    // Regression test: matching to the closing quote (not to end of line)
+    // means a trailing "# ..." comment is simply never included, rather
+    // than defeating the value.endsWith(quote) check an earlier version
+    // relied on and leaking the comment text into a later marker comment.
+    assert.equal(parseExcludeListItem("  - '@scope/pkg' # kept for backward compat"), "@scope/pkg");
+  });
+
+  test("drops a trailing inline comment on an unquoted entry", () => {
+    assert.equal(parseExcludeListItem("  - fast-uri@3.1.6 # kept for backward compat"), "fast-uri@3.1.6");
+  });
+
   test("returns null for a comment line", () => {
     assert.equal(parseExcludeListItem("  # a comment"), null);
   });
@@ -1188,6 +1200,16 @@ describe("annotateMinimumReleaseAgeExclude", () => {
   test("leaves a bare single-quoted scoped name untouched (no false version from the leading @)", () => {
     const workspacePath = join(cwd, "pnpm-workspace.yaml");
     const original = ["minimumReleaseAgeExclude:", "  - '@scope/pkg'", ""].join("\n");
+    writeFileSync(workspacePath, original);
+
+    const changed = annotateMinimumReleaseAgeExclude(workspacePath);
+    assert.equal(changed, false);
+    assert.equal(readFileSync(workspacePath, "utf8"), original);
+  });
+
+  test("leaves a bare single-quoted scoped name with a trailing inline comment untouched", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    const original = ["minimumReleaseAgeExclude:", "  - '@scope/pkg' # kept for backward compat", ""].join("\n");
     writeFileSync(workspacePath, original);
 
     const changed = annotateMinimumReleaseAgeExclude(workspacePath);
