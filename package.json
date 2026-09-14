@@ -1,6 +1,6 @@
 {
   "name": "tailor-platform-actions",
-  "version": "2.3.2",
+  "version": "2.3.3",
   "private": true,
   "scripts": {
     "test": "actrun workflow run .github/workflows/test-deploy.yaml --dry-run",
