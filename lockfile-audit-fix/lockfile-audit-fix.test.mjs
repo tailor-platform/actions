@@ -970,6 +970,16 @@ describe("pruneOrphanedWorkspaceOverrides", () => {
     assert.match(readFileSync(workspacePath, "utf8"), /future-pkg@<9: 9\.0\.0/);
   });
 
+  test("keeps a removal override with a trailing inline comment", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(workspacePath, ["overrides:", "  is-number: '-' # intentional removal", ""].join("\n"));
+
+    const changed = pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath);
+
+    assert.equal(changed, false);
+    assert.match(readFileSync(workspacePath, "utf8"), /is-number: '-' # intentional removal/);
+  });
+
   test("keeps a plain comment attached to a live entry untouched", () => {
     const workspacePath = join(cwd, "pnpm-workspace.yaml");
     writeFileSync(

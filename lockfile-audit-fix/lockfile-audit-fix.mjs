@@ -503,7 +503,7 @@ function overrideTargetName(key) {
 function isRemovalOverride(value) {
   if (typeof value !== "string") return false;
   const trimmed = value.trim();
-  return trimmed === "-" || trimmed === "'-'" || trimmed === '"-"';
+  return /^(?:-|'-'|"-")(?:\s+#.*)?$/.test(trimmed);
 }
 
 /** @param {string[]} removedKeys */
