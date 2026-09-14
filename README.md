@@ -534,6 +534,8 @@ Commits created this way are automatically shown as "Verified" on GitHub when us
 
 This is deliberately **not** a general-purpose alternative to [`peter-evans/create-pull-request`](https://github.com/peter-evans/create-pull-request): `paths` must be a known, caller-supplied list of files that already exist in the checkout (e.g. files a prior step just modified), not an arbitrary repo-wide diff — this action never inspects the working tree's git status, doesn't support deletions, and reads each listed path directly.
 
+When pairing it with `lockfile-audit-fix` in a workspace that sets `sharedWorkspaceLockfile: false`, include every project's `pnpm-lock.yaml` explicitly in `paths`; `create-signed-pr` does not discover workspace lockfiles or expand globs.
+
 Each run re-parents the new commit on the base branch's *current* head and force-moves the target branch to it, so the branch always holds a single commit rebased on the latest base. A consequence: any commit a human pushed to that branch directly is discarded on the next run — same behavior as `peter-evans/create-pull-request`'s default mode.
 
 **A pull request created with the default `GITHUB_TOKEN` does not trigger `pull_request`-triggered workflows** (GitHub suppresses recursive workflow runs from its own token) — the created PR gets no CI. Use a GitHub App installation token instead if the PR needs to run your normal CI.

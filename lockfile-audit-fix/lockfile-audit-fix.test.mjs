@@ -762,6 +762,10 @@ describe("isMentioned", () => {
     assert.equal(isMentioned("  '@scope/foo@1.0.0': {}", "foo"), false);
   });
 
+  test("does not match a suffix inside a package name containing an underscore", () => {
+    assert.equal(isMentioned("  foo_bar@1.0.0: {}", "bar"), false);
+  });
+
   test("returns false when there is no mention at all", () => {
     assert.equal(isMentioned("some-other-pkg@1.0.0", "ghost-pkg"), false);
   });
@@ -1418,6 +1422,27 @@ describe("annotateMinimumReleaseAgeExclude", () => {
     const changed = annotateMinimumReleaseAgeExclude(workspacePath);
     assert.equal(changed, false);
     assert.equal(readFileSync(workspacePath, "utf8"), original);
+  });
+
+  test("adds the matching marker when the nearest marker names another entry", () => {
+    const workspacePath = join(cwd, "pnpm-workspace.yaml");
+    writeFileSync(
+      workspacePath,
+      [
+        "minimumReleaseAgeExclude:",
+        "  # Renovate security update: foo@1.0.0",
+        "  - bar@2.0.0",
+        "",
+      ].join("\n"),
+    );
+
+    const changed = annotateMinimumReleaseAgeExclude(workspacePath);
+
+    assert.equal(changed, true);
+    assert.match(
+      readFileSync(workspacePath, "utf8"),
+      /# Renovate security update: foo@1\.0\.0\n {2}# Renovate security update: bar@2\.0\.0\n {2}- bar@2\.0\.0/,
+    );
   });
 
   test("keeps an unrelated existing comment and adds the marker alongside it", () => {

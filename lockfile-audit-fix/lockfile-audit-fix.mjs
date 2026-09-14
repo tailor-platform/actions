@@ -526,18 +526,21 @@ function logPrunedOverrideKeys(removedKeys) {
  * pnpm/lockfile version and a caller could still be on one. Any mention
  * counts as present, so this only ever errs toward keeping an override
  * rather than dropping a live one. The leading boundary check is what keeps
- * a `uri` override from matching `fast-uri@3.1.4`; `_` is deliberately not
- * in its excluded set because it precedes package names in pre-v6 peer
- * suffixes. Pre-v6 slash-delimited keys are matched separately from their
- * leading slash, so an unscoped `foo` can't match the suffix of `@scope/foo`.
+ * a `uri` override from matching `fast-uri@3.1.4`. Pre-v6 slash-delimited
+ * keys and underscore-joined peer suffixes are matched separately, so an
+ * unscoped `foo` can't match the suffix of `@scope/foo` or `some_foo`.
  * @param {string} haystack
  * @param {string} name
  */
 function isMentioned(haystack, name) {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const currentOrBare = new RegExp(`(^|[^a-zA-Z0-9@./-])${escaped}(@|["']?\\s*:)`, "m");
+  const currentOrBare = new RegExp(`(^|[^a-zA-Z0-9@._/-])${escaped}(@|["']?\\s*:)`, "m");
   const legacyPackageKey = new RegExp(`(^|\\s|["'])\\/${escaped}\\/`, "m");
-  return currentOrBare.test(haystack) || legacyPackageKey.test(haystack);
+  const legacyPeerSuffix = new RegExp(
+    `(?:@|\\/|:\\s*)\\d+(?:\\.\\d+)+(?:[-+][0-9A-Za-z.-]+)?_${escaped}@`,
+    "m",
+  );
+  return currentOrBare.test(haystack) || legacyPackageKey.test(haystack) || legacyPeerSuffix.test(haystack);
 }
 
 /**
@@ -777,7 +780,7 @@ function pruneOrphanedPackageJsonOverrides(packageJsonPath, lockfilePath, additi
  * entry as added through the normal automated flow, per
  * tailor-platform/sdk's `renovate-policy-check.mjs`.
  */
-const RENOVATE_SECURITY_COMMENT = /^#\s*Renovate security update\s*:/i;
+const RENOVATE_SECURITY_COMMENT = /^#\s*Renovate security update\s*:\s*(.+?)\s*$/i;
 
 /**
  * Parses a `-` list item under pnpm-workspace.yaml's
@@ -888,7 +891,8 @@ function annotateMinimumReleaseAgeExclude(workspacePath) {
     // matching it here avoids mislabeling one as an automated security
     // update the policy check never actually required a marker for.
     const isNumericVersion = version != null && /^\d/.test(version);
-    const hasMarker = comments.length > 0 && RENOVATE_SECURITY_COMMENT.test(comments[comments.length - 1].trim());
+    const marker = comments[comments.length - 1]?.trim().match(RENOVATE_SECURITY_COMMENT);
+    const hasMarker = marker?.[1] === entry;
     if (isNumericVersion && !hasMarker) {
       // Matches this entry's own leading whitespace (which may be empty,
       // for an indentationless `- foo@1.0.0` sequence item) rather than
