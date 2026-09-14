@@ -758,6 +758,10 @@ describe("isMentioned", () => {
     assert.equal(isMentioned("esbuild@0.28.1", "build"), false);
   });
 
+  test("does not match an unscoped name inside a scoped package key", () => {
+    assert.equal(isMentioned("  '@scope/foo@1.0.0': {}", "foo"), false);
+  });
+
   test("returns false when there is no mention at all", () => {
     assert.equal(isMentioned("some-other-pkg@1.0.0", "ghost-pkg"), false);
   });

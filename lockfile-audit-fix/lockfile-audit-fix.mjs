@@ -526,17 +526,18 @@ function logPrunedOverrideKeys(removedKeys) {
  * pnpm/lockfile version and a caller could still be on one. Any mention
  * counts as present, so this only ever errs toward keeping an override
  * rather than dropping a live one. The leading boundary check is what keeps
- * a `uri` override from matching `fast-uri@3.1.4`; `_` and `/` are
- * deliberately not in its excluded set (unlike letters/digits/`@`/`.`/`-`),
- * since both legitimately precede a package name in those pre-v6 shapes and
- * loosening the boundary there only ever adds more matches, never causes a
- * live override to look orphaned.
+ * a `uri` override from matching `fast-uri@3.1.4`; `_` is deliberately not
+ * in its excluded set because it precedes package names in pre-v6 peer
+ * suffixes. Pre-v6 slash-delimited keys are matched separately from their
+ * leading slash, so an unscoped `foo` can't match the suffix of `@scope/foo`.
  * @param {string} haystack
  * @param {string} name
  */
 function isMentioned(haystack, name) {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(^|[^a-zA-Z0-9@.-])${escaped}(@|\\/|["']?\\s*:)`, "m").test(haystack);
+  const currentOrBare = new RegExp(`(^|[^a-zA-Z0-9@./-])${escaped}(@|["']?\\s*:)`, "m");
+  const legacyPackageKey = new RegExp(`(^|\\s|["'])\\/${escaped}\\/`, "m");
+  return currentOrBare.test(haystack) || legacyPackageKey.test(haystack);
 }
 
 /**
