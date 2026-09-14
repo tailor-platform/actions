@@ -2,8 +2,8 @@ name: Audit and auto-fix pnpm lockfile vulnerabilities
 description: >-
   Run `pnpm audit --fix` (update mode, falling back to override mode when
   update alone can't clear an advisory) against pnpm-lock.yaml, verifying the
-  result still installs before keeping it. Reports whether the lockfile
-  changed, whether the change touched a published package's runtime
+  result still installs before keeping it. Reports whether any workspace
+  project lockfile changed, whether the change touched a published package's runtime
   dependencies (as opposed to devDependencies-only or pnpm-workspace.yaml-only
   changes), and a markdown summary of fixed/remaining advisories. Requires
   pnpm and Node.js to be set up by the caller. Does not commit or open a pull
@@ -26,15 +26,16 @@ inputs:
 outputs:
   changed:
     description: >-
-      'true' if pnpm-lock.yaml, pnpm-workspace.yaml, and/or package.json
-      changed (pnpm may write an override it can't express as a plain
-      version bump to either pnpm-workspace.yaml or package.json's
-      `pnpm.overrides`, depending on pnpm version)
+      'true' if any workspace project's pnpm-lock.yaml,
+      pnpm-workspace.yaml, and/or package.json changed (pnpm may write an
+      override it can't express as a plain version bump to either
+      pnpm-workspace.yaml or package.json's `pnpm.overrides`, depending on
+      pnpm version)
     value: ${{ steps.fix.outputs.changed }}
   runtime-deps-changed:
     description: >-
       'true' if any non-private package's runtime (non-dev) dependencies
-      changed
+      changed across the workspace project lockfiles
     value: ${{ steps.fix.outputs.runtime-deps-changed }}
   changed-names:
     description: Newline-separated names of packages whose runtime dependencies changed
