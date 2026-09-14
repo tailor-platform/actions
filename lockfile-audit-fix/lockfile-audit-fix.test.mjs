@@ -1218,6 +1218,18 @@ describe("pruneOrphanedPackageJsonOverrides", () => {
     assert.equal(changed, false);
     assert.deepEqual(JSON.parse(readFileSync(packageJsonPath, "utf8")), original);
   });
+
+  test("keeps removal overrides whose targets are intentionally absent from the tree", () => {
+    const packageJsonPath = join(cwd, "package-with-removal-override.json");
+    const workspacePath = join(cwd, "pnpm-workspace-with-removal-override.yaml");
+    writeFileSync(packageJsonPath, JSON.stringify({ pnpm: { overrides: { "is-number": "-" } } }, null, 2));
+    writeFileSync(workspacePath, ["overrides:", "  is-number: '-'", ""].join("\n"));
+
+    assert.equal(pruneOrphanedPackageJsonOverrides(packageJsonPath, lockfilePath), false);
+    assert.equal(pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath), false);
+    assert.deepEqual(JSON.parse(readFileSync(packageJsonPath, "utf8")).pnpm.overrides, { "is-number": "-" });
+    assert.match(readFileSync(workspacePath, "utf8"), /is-number: '-'/);
+  });
 });
 
 describe("isYamlContentEmpty", () => {

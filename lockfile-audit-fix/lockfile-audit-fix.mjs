@@ -495,6 +495,17 @@ function overrideTargetName(key) {
   return match ? match[0] : null;
 }
 
+/**
+ * A `-` override intentionally keeps its target out of the dependency tree,
+ * so target absence cannot be used as evidence that the override is orphaned.
+ * @param {unknown} value
+ */
+function isRemovalOverride(value) {
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  return trimmed === "-" || trimmed === "'-'" || trimmed === '"-"';
+}
+
 /** @param {string[]} removedKeys */
 function logPrunedOverrideKeys(removedKeys) {
   for (const key of removedKeys) {
@@ -617,8 +628,9 @@ function readAllLockfilesOutsideOverrides(lockfilePath, additionalLockfilePaths 
  * (`lockfileText`, see readLockfileOutsideOverrides) — an override like that
  * protects nothing, since pnpm never resolves it into anything, yet nothing
  * else ever removes it, so the list only grows over time otherwise. Any
- * entry whose target name can't be parsed is left untouched rather than
- * guessed at.
+ * Removal overrides are also kept because the target's absence is their
+ * intended effect. Any entry whose target name can't be parsed is left
+ * untouched rather than guessed at.
  * @param {[string, string][]} entries
  * @param {string} lockfileText
  * @returns {{survivors: [string, string][], removedKeys: string[]}}
@@ -628,7 +640,7 @@ function pruneOrphanedOverrideEntries(entries, lockfileText) {
   const removedKeys = [];
   for (const [key, value] of entries) {
     const name = overrideTargetName(key);
-    if (name && !isMentioned(lockfileText, name)) {
+    if (name && !isRemovalOverride(value) && !isMentioned(lockfileText, name)) {
       removedKeys.push(key);
       continue;
     }
@@ -696,7 +708,7 @@ function pruneOrphanedWorkspaceOverrides(workspacePath, lockfilePath, additional
     // an added note, the opposite of this file's "err toward keeping"
     // stance elsewhere.
     const optedOut = comments.some((c) => KEEP_OVERRIDE_COMMENT.test(c.trim()));
-    if (name && !optedOut && !isMentioned(lockfileText, name)) {
+    if (name && !optedOut && !isRemovalOverride(parsed.value) && !isMentioned(lockfileText, name)) {
       removedKeys.push(parsed.key);
       comments = [];
       continue;
