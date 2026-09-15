@@ -27,7 +27,22 @@ async function runAction(t, mode, options = {}) {
   await fs.writeFile(
     fakePnpm,
     `#!/bin/sh
-if [ "$1" != "exec" ] || [ "$2" != "tailor" ] || [ "$3" != "setup" ] || [ "$4" != "check" ] || [ "$5" != "--ci" ]; then
+if [ "$1" = "exec" ] && [ "$2" = "tailor" ] && [ "$3" = "setup" ] && [ "$4" = "check" ] && [ "$5" = "--help" ] && [ -z "$6" ]; then
+  if [ "$FAKE_SUPPORTS_CI" = "1" ]; then
+    echo "  --ci    Run in CI mode (default: false)"
+  else
+    echo "  -h, --help    Show help"
+  fi
+  exit 0
+fi
+
+if [ "$FAKE_SUPPORTS_CI" = "1" ]; then
+  EXPECTED_CI="--ci"
+else
+  EXPECTED_CI=""
+fi
+
+if [ "$1" != "exec" ] || [ "$2" != "tailor" ] || [ "$3" != "setup" ] || [ "$4" != "check" ] || [ "$5" != "$EXPECTED_CI" ]; then
   echo "unexpected fake pnpm arguments: $*" >&2
   exit 97
 fi
@@ -101,6 +116,7 @@ esac
     FAIL_ON_DRIFT:
       options.failOnDrift ?? action.inputs?.["fail-on-drift"]?.default ?? "",
     FAKE_CHECK_MODE: mode,
+    FAKE_SUPPORTS_CI: options.supportsCi ? "1" : "",
     GITHUB_STEP_SUMMARY: summary,
     IGNORE_RULES: options.ignore ?? "",
     PACKAGE_MANAGER: options.packageManager ?? "pnpm",
@@ -142,6 +158,20 @@ test("keeps fail-on-drift disabled by default", () => {
 
 test("succeeds when the Tailor check succeeds", async (t) => {
   const result = await runAction(t, "clean");
+
+  assert.equal(result.exitCode, 0);
+  assert.match(result.stdout, new RegExp(result.marker));
+});
+
+test("adds --ci when the installed SDK's check --help still advertises it", async (t) => {
+  const result = await runAction(t, "clean", { supportsCi: true });
+
+  assert.equal(result.exitCode, 0);
+  assert.match(result.stdout, new RegExp(result.marker));
+});
+
+test("omits --ci when the installed SDK's check --help no longer advertises it", async (t) => {
+  const result = await runAction(t, "clean", { supportsCi: false });
 
   assert.equal(result.exitCode, 0);
   assert.match(result.stdout, new RegExp(result.marker));
