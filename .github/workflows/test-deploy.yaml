@@ -40,9 +40,12 @@ jobs:
           cache: pnpm
           cache-dependency-path: tests/deploy/pnpm-lock.yaml
 
+      # --ignore-scripts: this runs on fork PRs with no credentials, so it
+      # must not execute install/postinstall scripts from a fork-controlled
+      # lockfile. Script execution is left to the credentialed `test` job.
       - name: Install dependencies
         working-directory: tests/deploy
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
   test:
     runs-on: ubuntu-latest

@@ -10,10 +10,13 @@ name: Lockfile Audit Auto-fix
 # lockfile-audit-fix action already verifies the fix installs before this PR
 # is opened, but re-request checks (or push an empty commit) before merging
 # to get the rest of the repo's normal validation.
+# No workflow_dispatch: GitHub evaluates a dispatched run's own branch's copy
+# of this file, so an in-file `if:` guard can't stop a branch that already
+# removed it — schedule is the only trigger, and GitHub always runs a
+# scheduled workflow from the default branch.
 on:
   schedule:
     - cron: "0 3 * * *" # daily, 03:00 UTC
-  workflow_dispatch: {}
 
 concurrency:
   group: ${{ github.workflow }}
@@ -24,11 +27,6 @@ permissions: {}
 jobs:
   audit-fix:
     name: Audit and fix lockfile (${{ matrix.working-directory }})
-    # workflow_dispatch can run this workflow (and the local $/lockfile-audit-fix,
-    # $/create-signed-pr actions it loads) from any branch; restricting to the
-    # default branch keeps a write-permissioned run from ever executing
-    # branch-modified action code.
-    if: github.event_name != 'workflow_dispatch' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
