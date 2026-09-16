@@ -71,8 +71,8 @@ jobs:
         run: |
           {
             echo "list<<EOF"
-            for f in pnpm-lock.yaml pnpm-workspace.yaml package.json; do
-              [ -f "$f" ] && echo "${PREFIX}${f}"
+            git diff --name-only -- pnpm-lock.yaml pnpm-workspace.yaml package.json | while read -r f; do
+              echo "${PREFIX}${f}"
             done
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
