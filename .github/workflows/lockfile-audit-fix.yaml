@@ -65,15 +65,12 @@ jobs:
       - name: Determine which files to commit
         id: paths
         if: steps.audit_fix.outputs.changed == 'true'
-        working-directory: ${{ matrix.working-directory }}
         env:
           PREFIX: ${{ matrix.prefix }}
         run: |
           {
             echo "list<<EOF"
-            git diff --name-only -- pnpm-lock.yaml pnpm-workspace.yaml package.json | while read -r f; do
-              echo "${PREFIX}${f}"
-            done
+            git status --porcelain -- "${PREFIX}pnpm-lock.yaml" "${PREFIX}pnpm-workspace.yaml" "${PREFIX}package.json" | cut -c4-
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
