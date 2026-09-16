@@ -1,18 +1,10 @@
 name: Lockfile Audit
 
-# Guards against reintroducing known-vulnerable dependency versions via
-# pnpm-lock.yaml changes. Dogfoods this repo's own lockfile-audit action
-# against its two real lockfiles: the root tooling deps and the deploy
-# action's live test fixture (tests/deploy). The
-# tests/lockfile-audit*/tests/lockfile-audit-fix/* fixtures under tests/ are
-# deliberately pinned to known-vulnerable versions for those actions' own
-# test suites (see their package.json `description` fields) and must not be
-# audited here.
-#
-# Regression-only: fails only when a PR/push introduces an advisory that
-# wasn't already present at the base commit, so pre-existing advisories
-# elsewhere in a lockfile don't block unrelated changes — those are instead
-# picked up by the scheduled lockfile-audit-fix workflow.
+# Regression-only gate on the root and tests/deploy lockfiles: fails only
+# when a PR/push introduces an advisory not already present at the base
+# commit. Excludes tests/lockfile-audit*/tests/lockfile-audit-fix/*, which
+# are deliberately pinned to known-vulnerable versions for those actions'
+# own tests. Pre-existing advisories are cleared by lockfile-audit-fix.yaml.
 on:
   push:
     branches: [main]

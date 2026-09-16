@@ -1,26 +1,12 @@
 name: Lockfile Audit Auto-fix
 
-# Runs the full lockfile audit daily for both real (non-fixture) lockfiles
-# in this repo — root tooling deps and the deploy action's test fixture —
-# independent of any specific PR, and opens (or updates) a pull request per
-# lockfile with whatever pnpm can automatically resolve. This complements
-# lockfile-audit.yaml's regression-only gate: pre-existing advisories that
-# predate a given PR are cleared here on a schedule instead of blocking
-# unrelated reviews.
+# Daily pnpm audit --fix for the root and tests/deploy lockfiles, opened as a
+# PR via create-signed-pr. Complements lockfile-audit.yaml's PR/push gate by
+# clearing pre-existing advisories on a schedule instead of blocking reviews.
 #
-# The audit, fix, verification, and pnpm-workspace.yaml policy pruning are
-# all delegated to the lockfile-audit-fix action; this workflow only turns
-# its outputs into a pull request. Uses the default GITHUB_TOKEN (no GitHub
-# App) — the tradeoff is that a PR opened this way does not trigger its own
-# pull_request-triggered CI (e.g. test-deploy.yaml), since GitHub suppresses
-# recursive runs from its own token. Reviewers should re-request checks (or
-# push an empty commit) before merging a tests/deploy PR from this workflow;
-# the push-to-main trigger on the affected workflow is the actual safety net
-# once merged.
-#
-# No changeset is added: this repo's Renovate lock-file-maintenance PRs for
-# the root lockfile also ship without one, and tests/deploy is a test
-# fixture with no effect on any published package version.
+# Uses GITHUB_TOKEN, so a PR opened here won't trigger test-deploy.yaml's
+# pull_request CI (GitHub suppresses recursive runs from its own token) —
+# re-request checks or push an empty commit before merging.
 on:
   schedule:
     - cron: "0 3 * * *" # daily, 03:00 UTC
