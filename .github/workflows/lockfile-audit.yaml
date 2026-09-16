@@ -2,9 +2,10 @@ name: Lockfile Audit
 
 # Regression-only gate on the root and tests/deploy lockfiles: fails only
 # when a PR/push introduces an advisory not already present at the base
-# commit. Excludes tests/lockfile-audit*/tests/lockfile-audit-fix/*, which
-# are deliberately pinned to known-vulnerable versions for those actions'
-# own tests. Pre-existing advisories are cleared by lockfile-audit-fix.yaml.
+# commit. Excludes the fixtures under tests/lockfile-audit/ and
+# tests/lockfile-audit-fix/, which are deliberately pinned to known-vulnerable
+# versions for those actions' own tests. Pre-existing advisories are cleared
+# by lockfile-audit-fix.yaml.
 on:
   push:
     branches: [main]
