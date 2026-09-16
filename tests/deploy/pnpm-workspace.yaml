@@ -1,3 +1,7 @@
+# Own package: no supply-chain reason to wait out the default 24h window.
+minimumReleaseAgeExclude:
+  - '@tailor-platform/*'
+
 allowBuilds:
   '@prisma/engines': true
   '@swc/core': true

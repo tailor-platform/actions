@@ -3,6 +3,6 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@tailor-platform/sdk": "2.16.0"
+    "@tailor-platform/sdk": "2.17.0"
   }
 }
