@@ -4,9 +4,12 @@ name: Lockfile Audit Auto-fix
 # PR via create-signed-pr. Complements lockfile-audit.yaml's PR/push gate by
 # clearing pre-existing advisories on a schedule instead of blocking reviews.
 #
-# Uses GITHUB_TOKEN, so a PR opened here won't trigger test-deploy.yaml's
-# pull_request CI (GitHub suppresses recursive runs from its own token) —
-# re-request checks or push an empty commit before merging.
+# Uses GITHUB_TOKEN, so a PR opened here suppresses every pull_request-triggered
+# workflow, not just test-deploy.yaml — ci.yaml and lockfile-audit.yaml itself
+# also won't run (GitHub suppresses recursive runs from its own token). The
+# lockfile-audit-fix action already verifies the fix installs before this PR
+# is opened, but re-request checks (or push an empty commit) before merging
+# to get the rest of the repo's normal validation.
 on:
   schedule:
     - cron: "0 3 * * *" # daily, 03:00 UTC
