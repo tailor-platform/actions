@@ -41,7 +41,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: tests/deploy
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Create test workspace
         id: setup
