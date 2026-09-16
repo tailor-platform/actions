@@ -1,7 +1,7 @@
 name: Check Tailor Platform workflow drift
 description: >-
   Detect drift between the generated GitHub Actions workflows and the current
-  config/repo state by running tailor setup check --ci.
+  config/repo state by running tailor setup check.
   Drift findings are advisory by default, while execution and configuration errors fail the job.
   Use the 'ignore' input to suppress known intentional deviations.
   Requires Node.js and dependencies to be installed by the caller.
@@ -55,8 +55,18 @@ runs:
             ;;
         esac
 
+        # Older @tailor-platform/sdk-plugin-setup versions require --ci to enable
+        # CI mode (skipping the local-only TAILOR_PLATFORM_WORKSPACE_ID check);
+        # newer versions auto-detect CI and reject an explicit --ci as an unknown
+        # flag. Probe --help instead of hardcoding a version boundary.
+        HELP_OUTPUT=$($RUN tailor setup check --help 2>&1) || true
+        CHECK_ARGS=(check)
+        if printf '%s' "$HELP_OUTPUT" | grep -qe '--ci\b'; then
+          CHECK_ARGS+=(--ci)
+        fi
+
         set +e
-        OUTPUT=$($RUN tailor setup check --ci 2>&1)
+        OUTPUT=$($RUN tailor setup "${CHECK_ARGS[@]}" 2>&1)
         CHECK_EXIT=$?
         set -e
 
@@ -115,7 +125,7 @@ runs:
 
         if [ "$FINDING_TOTAL" -eq 0 ] || [ "$VALID_DRIFT" != "true" ]; then
           echo "$OUTPUT"
-          echo "::error::[drift-check] tailor setup check --ci exited $CHECK_EXIT without a valid drift result — check failed unexpectedly (auth/network/config error?)"
+          echo "::error::[drift-check] tailor setup check exited $CHECK_EXIT without a valid drift result — check failed unexpectedly (auth/network/config error?)"
           exit "$CHECK_EXIT"
         fi
 
