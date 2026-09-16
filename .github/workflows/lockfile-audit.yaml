@@ -1,0 +1,63 @@
+name: Lockfile Audit
+
+# Guards against reintroducing known-vulnerable dependency versions via
+# pnpm-lock.yaml changes. Dogfoods this repo's own lockfile-audit action
+# against its two real lockfiles: the root tooling deps and the deploy
+# action's live test fixture (tests/deploy). The
+# tests/lockfile-audit*/tests/lockfile-audit-fix/* fixtures under tests/ are
+# deliberately pinned to known-vulnerable versions for those actions' own
+# test suites (see their package.json `description` fields) and must not be
+# audited here.
+#
+# Regression-only: fails only when a PR/push introduces an advisory that
+# wasn't already present at the base commit, so pre-existing advisories
+# elsewhere in a lockfile don't block unrelated changes — those are instead
+# picked up by the scheduled lockfile-audit-fix workflow.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "pnpm-lock.yaml"
+      - "tests/deploy/pnpm-lock.yaml"
+  pull_request:
+    paths:
+      - "pnpm-lock.yaml"
+      - "tests/deploy/pnpm-lock.yaml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  audit:
+    name: Audit lockfile (${{ matrix.working-directory }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        working-directory: [".", "tests/deploy"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.26.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.21.0
+
+      - name: Audit lockfile for newly introduced vulnerabilities
+        uses: $/lockfile-audit
+        with:
+          working-directory: ${{ matrix.working-directory }}
