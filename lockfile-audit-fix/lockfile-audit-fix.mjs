@@ -1021,16 +1021,30 @@ function verifyInstallable(cwd) {
  * setting is only meaningful for the duration of this action's own
  * install/dedupe calls, not something it should leave behind as an
  * unrequested addition to the caller's declared policy. A no-op (returns
- * null) when the key is already present, explicit `false` included: an
- * explicit opt-out is the caller's call to make, not this action's to
- * override.
+ * null) when the key is already present — quoted or not, explicit `false`
+ * included: an explicit opt-out is the caller's call to make, not this
+ * action's to override.
+ *
+ * Inserted after a leading YAML document-start marker (`---`), and after
+ * any comment/directive lines ahead of it, rather than unconditionally at
+ * byte 0: a workspace file that already opens with `---` would otherwise
+ * gain a second one after the inserted line, splitting it into two YAML
+ * documents that pnpm's single-document parser can reject or silently
+ * only read the first (empty) one of.
  * @param {string} workspacePath
  * @returns {(() => void) | null}
  */
 function enableMinimumReleaseAgeExcludePrune(workspacePath) {
   const original = readFileSync(workspacePath, "utf8");
-  if (/^minimumReleaseAgeExcludePrune\s*:/m.test(original)) return null;
-  writeFileSync(workspacePath, `minimumReleaseAgeExcludePrune: true\n${original}`);
+  if (/^["']?minimumReleaseAgeExcludePrune["']?\s*:/m.test(original)) return null;
+
+  const lines = original.split("\n");
+  let insertAt = lines.findIndex((line) => !(line.trim() === "" || /^[#%]/.test(line.trim())));
+  if (insertAt === -1) insertAt = lines.length;
+  if (lines[insertAt]?.trim() === "---") insertAt += 1;
+
+  lines.splice(insertAt, 0, "minimumReleaseAgeExcludePrune: true");
+  writeFileSync(workspacePath, lines.join("\n"));
   // Strips the inserted line back out of whatever pnpm wrote, rather than
   // restoring the pre-insertion snapshot verbatim — the whole point of
   // inserting it was to let install/dedupe prune minimumReleaseAgeExclude
@@ -1365,4 +1379,5 @@ export {
   annotateMinimumReleaseAgeExclude,
   isYamlContentEmpty,
   pruneEmptyWorkspaceScaffold,
+  enableMinimumReleaseAgeExcludePrune,
 };

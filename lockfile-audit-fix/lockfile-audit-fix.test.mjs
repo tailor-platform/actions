@@ -38,6 +38,7 @@ import {
   annotateMinimumReleaseAgeExclude,
   isYamlContentEmpty,
   pruneEmptyWorkspaceScaffold,
+  enableMinimumReleaseAgeExcludePrune,
 } from "./lockfile-audit-fix.mjs";
 
 describe("extractAdvisoryIds", () => {
@@ -1597,6 +1598,98 @@ describe("annotateMinimumReleaseAgeExclude", () => {
     const afterFirstRun = readFileSync(workspacePath, "utf8");
     assert.equal(annotateMinimumReleaseAgeExclude(workspacePath), false);
     assert.equal(readFileSync(workspacePath, "utf8"), afterFirstRun);
+  });
+});
+
+describe("enableMinimumReleaseAgeExcludePrune", () => {
+  let cwd;
+
+  before(() => {
+    cwd = mkdtempSync(join(tmpdir(), "lockfile-audit-fix-enable-prune-test-"));
+  });
+
+  after(() => {
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  test("inserts the setting at the top of a plain workspace file, and the returned restorer strips only that line", () => {
+    const workspacePath = join(cwd, "plain.yaml");
+    const original = "minimumReleaseAge: 4320\nminimumReleaseAgeExclude:\n  - foo@1.0.0\n";
+    writeFileSync(workspacePath, original);
+
+    const restore = enableMinimumReleaseAgeExcludePrune(workspacePath);
+    assert.equal(typeof restore, "function");
+    assert.equal(readFileSync(workspacePath, "utf8"), `minimumReleaseAgeExcludePrune: true\n${original}`);
+
+    restore();
+    assert.equal(readFileSync(workspacePath, "utf8"), original);
+  });
+
+  test("returns null and leaves the file untouched when the key is already present unquoted", () => {
+    const workspacePath = join(cwd, "already-set.yaml");
+    const original = "minimumReleaseAgeExcludePrune: true\nminimumReleaseAge: 4320\n";
+    writeFileSync(workspacePath, original);
+
+    assert.equal(enableMinimumReleaseAgeExcludePrune(workspacePath), null);
+    assert.equal(readFileSync(workspacePath, "utf8"), original);
+  });
+
+  test("respects an explicit opt-out even when the key is double-quoted", () => {
+    const workspacePath = join(cwd, "quoted-false.yaml");
+    const original = '"minimumReleaseAgeExcludePrune": false\nminimumReleaseAge: 4320\n';
+    writeFileSync(workspacePath, original);
+
+    assert.equal(enableMinimumReleaseAgeExcludePrune(workspacePath), null);
+    assert.equal(readFileSync(workspacePath, "utf8"), original);
+  });
+
+  test("respects an explicit opt-out when the key is single-quoted", () => {
+    const workspacePath = join(cwd, "quoted-single.yaml");
+    const original = "'minimumReleaseAgeExcludePrune': false\nminimumReleaseAge: 4320\n";
+    writeFileSync(workspacePath, original);
+
+    assert.equal(enableMinimumReleaseAgeExcludePrune(workspacePath), null);
+    assert.equal(readFileSync(workspacePath, "utf8"), original);
+  });
+
+  test("inserts after a leading YAML document-start marker instead of splitting the file into two documents", () => {
+    const workspacePath = join(cwd, "doc-marker.yaml");
+    const original = "---\nminimumReleaseAge: 4320\nminimumReleaseAgeExclude:\n  - foo@1.0.0\n";
+    writeFileSync(workspacePath, original);
+
+    const restore = enableMinimumReleaseAgeExcludePrune(workspacePath);
+    assert.equal(
+      readFileSync(workspacePath, "utf8"),
+      "---\nminimumReleaseAgeExcludePrune: true\nminimumReleaseAge: 4320\nminimumReleaseAgeExclude:\n  - foo@1.0.0\n",
+    );
+
+    restore();
+    assert.equal(readFileSync(workspacePath, "utf8"), original);
+  });
+
+  test("inserts after a leading comment followed by a document-start marker", () => {
+    const workspacePath = join(cwd, "comment-then-doc-marker.yaml");
+    const original =
+      "# yaml-language-server: $schema=https://example.com/schema.json\n---\nminimumReleaseAge: 4320\n";
+    writeFileSync(workspacePath, original);
+
+    enableMinimumReleaseAgeExcludePrune(workspacePath);
+    assert.equal(
+      readFileSync(workspacePath, "utf8"),
+      "# yaml-language-server: $schema=https://example.com/schema.json\n---\nminimumReleaseAgeExcludePrune: true\nminimumReleaseAge: 4320\n",
+    );
+  });
+
+  test("inserts before the first substantive line when there's a leading comment but no document-start marker", () => {
+    const workspacePath = join(cwd, "comment-no-doc-marker.yaml");
+    const original = "# a header comment\nminimumReleaseAge: 4320\n";
+    writeFileSync(workspacePath, original);
+
+    enableMinimumReleaseAgeExcludePrune(workspacePath);
+    assert.equal(
+      readFileSync(workspacePath, "utf8"),
+      "# a header comment\nminimumReleaseAgeExcludePrune: true\nminimumReleaseAge: 4320\n",
+    );
   });
 });
 
