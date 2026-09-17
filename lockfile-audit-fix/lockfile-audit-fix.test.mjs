@@ -1741,6 +1741,15 @@ describe("enableMinimumReleaseAgeExcludePrune", () => {
       "﻿---\nminimumReleaseAgeExcludePrune: true\nminimumReleaseAge: 4320\n",
     );
   });
+
+  test("respects an explicit opt-out when the key is preceded by a leading BOM", () => {
+    const workspacePath = join(cwd, "bom-existing-key.yaml");
+    const original = "﻿minimumReleaseAgeExcludePrune: false\nminimumReleaseAge: 4320\n";
+    writeFileSync(workspacePath, original);
+
+    assert.equal(enableMinimumReleaseAgeExcludePrune(workspacePath), null);
+    assert.equal(readFileSync(workspacePath, "utf8"), original);
+  });
 });
 
 describe("buildSummary", () => {

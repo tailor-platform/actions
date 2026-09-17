@@ -1036,15 +1036,17 @@ function verifyInstallable(cwd) {
  */
 function enableMinimumReleaseAgeExcludePrune(workspacePath) {
   const original = readFileSync(workspacePath, "utf8");
-  if (/^["']?minimumReleaseAgeExcludePrune["']?\s*:/m.test(original)) return null;
-
-  // A BOM only counts as one if it's the file's first three bytes; split
-  // pulls it into line 0's content instead, where inserting ahead of that
-  // line would strand it mid-file (no longer recognizable as a BOM, and
-  // liable to fuse onto whatever key follows it) — so it's set aside here
-  // and reattached to byte 0 of the final text below, never to a line.
+  // Set aside a leading BOM before both the existing-key check and the
+  // line-based insertion below: left in place, it sits directly ahead of
+  // "minimumReleaseAgeExcludePrune" with no preceding newline for `^` (even
+  // in multiline mode) to anchor on, so the check below would miss an
+  // existing key and the insertion would strand the BOM mid-file once a
+  // line lands ahead of it.
   const bom = original.startsWith("﻿") ? "﻿" : "";
-  const lines = (bom ? original.slice(bom.length) : original).split("\n");
+  const body = bom ? original.slice(bom.length) : original;
+  if (/^["']?minimumReleaseAgeExcludePrune["']?\s*:/m.test(body)) return null;
+
+  const lines = body.split("\n");
   let insertAt = lines.findIndex((line) => !(line.trim() === "" || /^[#%]/.test(line.trim())));
   if (insertAt === -1) insertAt = lines.length;
   // A YAML document-start marker may carry a trailing comment
