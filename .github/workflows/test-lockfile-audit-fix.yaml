@@ -159,8 +159,12 @@ jobs:
 
   # Runs on pnpm >=11.22.0, unlike the two jobs above: pruning stale
   # minimumReleaseAgeExclude entries is a pnpm feature this action opts
-  # into via --config.minimum-release-age-exclude-prune=true, and only that
-  # pnpm version actually acts on it.
+  # into by temporarily setting minimumReleaseAgeExcludePrune: true in
+  # pnpm-workspace.yaml around its own install/dedupe calls (see
+  # enableMinimumReleaseAgeExcludePrune in lockfile-audit-fix.mjs), not the
+  # --config.minimum-release-age-exclude-prune=true CLI flag — pnpm's Rust
+  # v12 CLI silently drops that flag for install/dedupe (pnpm/pnpm#13930),
+  # so only the workspace-setting form works on both pnpm 11 and 12.
   test-stale-exclude-entry-is-pruned:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -218,8 +222,9 @@ jobs:
           fi
           # annotateMinimumReleaseAgeExclude runs (in override mode, alongside
           # the other cleanup calls) before the second verifyInstallable's
-          # `pnpm dedupe --config.minimum-release-age-exclude-prune=true`
-          # actually resolves the disjunction down to the plain 3.0.1 entry
+          # `pnpm dedupe` — with minimumReleaseAgeExcludePrune temporarily
+          # enabled via pnpm-workspace.yaml, not the CLI flag — actually
+          # resolves the disjunction down to the plain 3.0.1 entry
           # asserted above. This checks that pnpm's own rewrite of the list
           # during that resolution doesn't silently drop the marker comment
           # this action inserted, and that it still sits immediately above

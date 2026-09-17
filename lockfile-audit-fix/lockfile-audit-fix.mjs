@@ -1038,13 +1038,23 @@ function enableMinimumReleaseAgeExcludePrune(workspacePath) {
   const original = readFileSync(workspacePath, "utf8");
   if (/^["']?minimumReleaseAgeExcludePrune["']?\s*:/m.test(original)) return null;
 
-  const lines = original.split("\n");
+  // A BOM only counts as one if it's the file's first three bytes; split
+  // pulls it into line 0's content instead, where inserting ahead of that
+  // line would strand it mid-file (no longer recognizable as a BOM, and
+  // liable to fuse onto whatever key follows it) — so it's set aside here
+  // and reattached to byte 0 of the final text below, never to a line.
+  const bom = original.startsWith("﻿") ? "﻿" : "";
+  const lines = (bom ? original.slice(bom.length) : original).split("\n");
   let insertAt = lines.findIndex((line) => !(line.trim() === "" || /^[#%]/.test(line.trim())));
   if (insertAt === -1) insertAt = lines.length;
-  if (lines[insertAt]?.trim() === "---") insertAt += 1;
+  // A YAML document-start marker may carry a trailing comment
+  // (`--- # config`); only `\s`/`#`/end-of-line after the dashes still
+  // marks the start of the document, so this can't just compare to the
+  // literal string "---".
+  if (/^---(\s|#|$)/.test(lines[insertAt]?.trim() ?? "")) insertAt += 1;
 
   lines.splice(insertAt, 0, "minimumReleaseAgeExcludePrune: true");
-  writeFileSync(workspacePath, lines.join("\n"));
+  writeFileSync(workspacePath, bom + lines.join("\n"));
   // Strips the inserted line back out of whatever pnpm wrote, rather than
   // restoring the pre-insertion snapshot verbatim — the whole point of
   // inserting it was to let install/dedupe prune minimumReleaseAgeExclude
@@ -1055,7 +1065,12 @@ function enableMinimumReleaseAgeExcludePrune(workspacePath) {
   return () => {
     if (!existsSync(workspacePath)) return;
     const current = readFileSync(workspacePath, "utf8");
-    const stripped = current.replace(/^minimumReleaseAgeExcludePrune:.*\r?\n?/m, "");
+    // `﻿?` covers the one layout `^` in multiline mode can't reach on
+    // its own: a BOM directly followed by the inserted line, with no `\n`
+    // between them for `^` to anchor on.
+    const stripped = current.replace(/^﻿?minimumReleaseAgeExcludePrune:.*\r?\n?/m, (m) =>
+      m.startsWith("﻿") ? "﻿" : "",
+    );
     if (stripped !== current) writeFileSync(workspacePath, stripped);
   };
 }

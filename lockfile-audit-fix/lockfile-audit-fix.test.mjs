@@ -1691,6 +1691,56 @@ describe("enableMinimumReleaseAgeExcludePrune", () => {
       "# a header comment\nminimumReleaseAgeExcludePrune: true\nminimumReleaseAge: 4320\n",
     );
   });
+
+  test("inserts after a document-start marker that carries a trailing comment", () => {
+    const workspacePath = join(cwd, "doc-marker-trailing-comment.yaml");
+    const original = "--- # workspace config\nminimumReleaseAge: 4320\n";
+    writeFileSync(workspacePath, original);
+
+    enableMinimumReleaseAgeExcludePrune(workspacePath);
+    assert.equal(
+      readFileSync(workspacePath, "utf8"),
+      "--- # workspace config\nminimumReleaseAgeExcludePrune: true\nminimumReleaseAge: 4320\n",
+    );
+  });
+
+  test("does not treat a scalar merely starting with --- as a document-start marker", () => {
+    const workspacePath = join(cwd, "not-a-doc-marker.yaml");
+    const original = "---not-a-marker: true\nminimumReleaseAge: 4320\n";
+    writeFileSync(workspacePath, original);
+
+    enableMinimumReleaseAgeExcludePrune(workspacePath);
+    assert.equal(
+      readFileSync(workspacePath, "utf8"),
+      "minimumReleaseAgeExcludePrune: true\n---not-a-marker: true\nminimumReleaseAge: 4320\n",
+    );
+  });
+
+  test("preserves a leading UTF-8 BOM at byte 0 instead of stranding it mid-file", () => {
+    const workspacePath = join(cwd, "bom.yaml");
+    const original = "﻿minimumReleaseAge: 4320\nminimumReleaseAgeExclude:\n  - foo@1.0.0\n";
+    writeFileSync(workspacePath, original);
+
+    const restore = enableMinimumReleaseAgeExcludePrune(workspacePath);
+    const withPrune = readFileSync(workspacePath, "utf8");
+    assert.equal(withPrune, "﻿minimumReleaseAgeExcludePrune: true\nminimumReleaseAge: 4320\nminimumReleaseAgeExclude:\n  - foo@1.0.0\n");
+    assert.ok(withPrune.startsWith("﻿"), "the BOM must stay at byte 0");
+
+    restore();
+    assert.equal(readFileSync(workspacePath, "utf8"), original);
+  });
+
+  test("preserves a leading BOM together with a document-start marker", () => {
+    const workspacePath = join(cwd, "bom-doc-marker.yaml");
+    const original = "﻿---\nminimumReleaseAge: 4320\n";
+    writeFileSync(workspacePath, original);
+
+    enableMinimumReleaseAgeExcludePrune(workspacePath);
+    assert.equal(
+      readFileSync(workspacePath, "utf8"),
+      "﻿---\nminimumReleaseAgeExcludePrune: true\nminimumReleaseAge: 4320\n",
+    );
+  });
 });
 
 describe("buildSummary", () => {
