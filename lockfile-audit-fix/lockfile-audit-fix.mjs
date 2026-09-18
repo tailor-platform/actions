@@ -968,34 +968,39 @@ function pruneEmptyWorkspaceScaffold(workspacePath, originalWorkspaceText) {
  * warning is actually diagnosable instead of just "it failed" — pnpm prints
  * some errors to stdout rather than stderr, so both are captured.
  *
- * `--config.minimum-release-age-exclude-prune=true` causes pnpm to also
- * drop any `minimumReleaseAgeExclude` entry in pnpm-workspace.yaml that it
- * no longer needs, per the freshly-resolved lockfile (pnpm >=11.22.0; a
- * no-op on older pnpm, not an error) — but only on a real re-resolution.
- * `install` skips re-resolving (and so skips pruning) whenever the
- * lockfile is already "up to date" for package.json/pnpm-workspace.yaml —
- * the exact state a scheduled run with no new advisory to fix leaves it
- * in. The follow-up `dedupe` always re-resolves, so it's what actually
- * prunes a stale exclude entry in that case. Skipped unless
- * pnpm-workspace.yaml actually mentions `minimumReleaseAgeExclude` (a
- * plain substring check, not full parsing — this action otherwise never
- * reads that file): with nothing there to prune, the extra resolver pass
- * would only add cost and risk an unrelated duplicate-version cleanup
- * `dedupe` might also make along the way.
+ * A `minimumReleaseAgeExcludePrune: true` workspace setting causes pnpm to
+ * also drop any `minimumReleaseAgeExclude` entry in pnpm-workspace.yaml
+ * that it no longer needs, per the freshly-resolved lockfile (pnpm
+ * >=11.22.0; a no-op on older pnpm, not an error) — but only on a real
+ * re-resolution. `install` skips re-resolving (and so skips pruning)
+ * whenever the lockfile is already "up to date" for
+ * package.json/pnpm-workspace.yaml — the exact state a scheduled run with
+ * no new advisory to fix leaves it in. The follow-up `dedupe` always
+ * re-resolves, so it's what actually prunes a stale exclude entry in that
+ * case.
+ *
+ * This has to be a workspace setting, not the `--config.<key>` CLI flag
+ * the setting's own name suggests: pnpm's Rust v12 CLI deliberately left
+ * `minimum-release-age-exclude-prune` off the allowlist of `--config.<key>`
+ * tokens it re-applies after the yaml/env config layers load (pnpm/pnpm#13930),
+ * so passing it on the command line is silently a no-op there — same for
+ * the `PNPM_CONFIG_MINIMUM_RELEASE_AGE_EXCLUDE_PRUNE` env var, which reads
+ * from the same excluded set. pnpm 11 has no such allowlist gap, so the
+ * workspace-setting form works on both.
  * @param {string} cwd
  */
 function verifyInstallable(cwd) {
-  const pruneFlag = "--config.minimum-release-age-exclude-prune=true";
   const opts = { cwd, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 1024 * 1024 * 64 };
   const workspacePath = join(cwd, "pnpm-workspace.yaml");
   const hasExcludesToPrune =
     existsSync(workspacePath) && readFileSync(workspacePath, "utf8").includes("minimumReleaseAgeExclude");
+  const restorePrune = hasExcludesToPrune ? enableMinimumReleaseAgeExcludePrune(workspacePath) : null;
   let step = "install";
   try {
-    execFileSync("pnpm", ["install", "--no-frozen-lockfile", "--ignore-scripts", pruneFlag], opts);
+    execFileSync("pnpm", ["install", "--no-frozen-lockfile", "--ignore-scripts"], opts);
     if (hasExcludesToPrune) {
       step = "dedupe";
-      execFileSync("pnpm", ["dedupe", "--ignore-scripts", pruneFlag], opts);
+      execFileSync("pnpm", ["dedupe", "--ignore-scripts"], opts);
     }
   } catch (e) {
     const output = [e.stdout, e.stderr]
@@ -1004,7 +1009,72 @@ function verifyInstallable(cwd) {
       .join("\n")
       .slice(0, 2000);
     throw new Error(output ? `pnpm ${step} failed: ${output}` : `pnpm ${step} failed: ${e.message}`);
+  } finally {
+    restorePrune?.();
   }
+}
+
+/**
+ * Inserts a top-level `minimumReleaseAgeExcludePrune: true` line so the
+ * install/dedupe calls right after this actually prune, then hands back a
+ * function that restores the file to its pre-insertion text — this
+ * setting is only meaningful for the duration of this action's own
+ * install/dedupe calls, not something it should leave behind as an
+ * unrequested addition to the caller's declared policy. A no-op (returns
+ * null) when the key is already present — quoted or not, explicit `false`
+ * included: an explicit opt-out is the caller's call to make, not this
+ * action's to override.
+ *
+ * Inserted after a leading YAML document-start marker (`---`), and after
+ * any comment/directive lines ahead of it, rather than unconditionally at
+ * byte 0: a workspace file that already opens with `---` would otherwise
+ * gain a second one after the inserted line, splitting it into two YAML
+ * documents that pnpm's single-document parser can reject or silently
+ * only read the first (empty) one of.
+ * @param {string} workspacePath
+ * @returns {(() => void) | null}
+ */
+function enableMinimumReleaseAgeExcludePrune(workspacePath) {
+  const original = readFileSync(workspacePath, "utf8");
+  // Set aside a leading BOM before both the existing-key check and the
+  // line-based insertion below: left in place, it sits directly ahead of
+  // "minimumReleaseAgeExcludePrune" with no preceding newline for `^` (even
+  // in multiline mode) to anchor on, so the check below would miss an
+  // existing key and the insertion would strand the BOM mid-file once a
+  // line lands ahead of it.
+  const bom = original.startsWith("﻿") ? "﻿" : "";
+  const body = bom ? original.slice(bom.length) : original;
+  if (/^["']?minimumReleaseAgeExcludePrune["']?\s*:/m.test(body)) return null;
+
+  const lines = body.split("\n");
+  let insertAt = lines.findIndex((line) => !(line.trim() === "" || /^[#%]/.test(line.trim())));
+  if (insertAt === -1) insertAt = lines.length;
+  // A YAML document-start marker may carry a trailing comment
+  // (`--- # config`); only `\s`/`#`/end-of-line after the dashes still
+  // marks the start of the document, so this can't just compare to the
+  // literal string "---".
+  if (/^---(\s|#|$)/.test(lines[insertAt]?.trim() ?? "")) insertAt += 1;
+
+  lines.splice(insertAt, 0, "minimumReleaseAgeExcludePrune: true");
+  writeFileSync(workspacePath, bom + lines.join("\n"));
+  // Strips the inserted line back out of whatever pnpm wrote, rather than
+  // restoring the pre-insertion snapshot verbatim — the whole point of
+  // inserting it was to let install/dedupe prune minimumReleaseAgeExclude
+  // in place, and overwriting with the snapshot would discard that pruning
+  // along with the inserted line. pnpm's own rewrite has never been
+  // observed to add this key itself, so the line still present after the
+  // fact is the one this function added.
+  return () => {
+    if (!existsSync(workspacePath)) return;
+    const current = readFileSync(workspacePath, "utf8");
+    // `﻿?` covers the one layout `^` in multiline mode can't reach on
+    // its own: a BOM directly followed by the inserted line, with no `\n`
+    // between them for `^` to anchor on.
+    const stripped = current.replace(/^﻿?minimumReleaseAgeExcludePrune:.*\r?\n?/m, (m) =>
+      m.startsWith("﻿") ? "﻿" : "",
+    );
+    if (stripped !== current) writeFileSync(workspacePath, stripped);
+  };
 }
 
 /**
@@ -1326,4 +1396,5 @@ export {
   annotateMinimumReleaseAgeExclude,
   isYamlContentEmpty,
   pruneEmptyWorkspaceScaffold,
+  enableMinimumReleaseAgeExcludePrune,
 };

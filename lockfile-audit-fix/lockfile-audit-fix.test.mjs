@@ -38,6 +38,7 @@ import {
   annotateMinimumReleaseAgeExclude,
   isYamlContentEmpty,
   pruneEmptyWorkspaceScaffold,
+  enableMinimumReleaseAgeExcludePrune,
 } from "./lockfile-audit-fix.mjs";
 
 describe("extractAdvisoryIds", () => {
@@ -1600,6 +1601,157 @@ describe("annotateMinimumReleaseAgeExclude", () => {
   });
 });
 
+describe("enableMinimumReleaseAgeExcludePrune", () => {
+  let cwd;
+
+  before(() => {
+    cwd = mkdtempSync(join(tmpdir(), "lockfile-audit-fix-enable-prune-test-"));
+  });
+
+  after(() => {
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  test("inserts the setting at the top of a plain workspace file, and the returned restorer strips only that line", () => {
+    const workspacePath = join(cwd, "plain.yaml");
+    const original = "minimumReleaseAge: 4320\nminimumReleaseAgeExclude:\n  - foo@1.0.0\n";
+    writeFileSync(workspacePath, original);
+
+    const restore = enableMinimumReleaseAgeExcludePrune(workspacePath);
+    assert.equal(typeof restore, "function");
+    assert.equal(readFileSync(workspacePath, "utf8"), `minimumReleaseAgeExcludePrune: true\n${original}`);
+
+    restore();
+    assert.equal(readFileSync(workspacePath, "utf8"), original);
+  });
+
+  test("returns null and leaves the file untouched when the key is already present unquoted", () => {
+    const workspacePath = join(cwd, "already-set.yaml");
+    const original = "minimumReleaseAgeExcludePrune: true\nminimumReleaseAge: 4320\n";
+    writeFileSync(workspacePath, original);
+
+    assert.equal(enableMinimumReleaseAgeExcludePrune(workspacePath), null);
+    assert.equal(readFileSync(workspacePath, "utf8"), original);
+  });
+
+  test("respects an explicit opt-out even when the key is double-quoted", () => {
+    const workspacePath = join(cwd, "quoted-false.yaml");
+    const original = '"minimumReleaseAgeExcludePrune": false\nminimumReleaseAge: 4320\n';
+    writeFileSync(workspacePath, original);
+
+    assert.equal(enableMinimumReleaseAgeExcludePrune(workspacePath), null);
+    assert.equal(readFileSync(workspacePath, "utf8"), original);
+  });
+
+  test("respects an explicit opt-out when the key is single-quoted", () => {
+    const workspacePath = join(cwd, "quoted-single.yaml");
+    const original = "'minimumReleaseAgeExcludePrune': false\nminimumReleaseAge: 4320\n";
+    writeFileSync(workspacePath, original);
+
+    assert.equal(enableMinimumReleaseAgeExcludePrune(workspacePath), null);
+    assert.equal(readFileSync(workspacePath, "utf8"), original);
+  });
+
+  test("inserts after a leading YAML document-start marker instead of splitting the file into two documents", () => {
+    const workspacePath = join(cwd, "doc-marker.yaml");
+    const original = "---\nminimumReleaseAge: 4320\nminimumReleaseAgeExclude:\n  - foo@1.0.0\n";
+    writeFileSync(workspacePath, original);
+
+    const restore = enableMinimumReleaseAgeExcludePrune(workspacePath);
+    assert.equal(
+      readFileSync(workspacePath, "utf8"),
+      "---\nminimumReleaseAgeExcludePrune: true\nminimumReleaseAge: 4320\nminimumReleaseAgeExclude:\n  - foo@1.0.0\n",
+    );
+
+    restore();
+    assert.equal(readFileSync(workspacePath, "utf8"), original);
+  });
+
+  test("inserts after a leading comment followed by a document-start marker", () => {
+    const workspacePath = join(cwd, "comment-then-doc-marker.yaml");
+    const original =
+      "# yaml-language-server: $schema=https://example.com/schema.json\n---\nminimumReleaseAge: 4320\n";
+    writeFileSync(workspacePath, original);
+
+    enableMinimumReleaseAgeExcludePrune(workspacePath);
+    assert.equal(
+      readFileSync(workspacePath, "utf8"),
+      "# yaml-language-server: $schema=https://example.com/schema.json\n---\nminimumReleaseAgeExcludePrune: true\nminimumReleaseAge: 4320\n",
+    );
+  });
+
+  test("inserts before the first substantive line when there's a leading comment but no document-start marker", () => {
+    const workspacePath = join(cwd, "comment-no-doc-marker.yaml");
+    const original = "# a header comment\nminimumReleaseAge: 4320\n";
+    writeFileSync(workspacePath, original);
+
+    enableMinimumReleaseAgeExcludePrune(workspacePath);
+    assert.equal(
+      readFileSync(workspacePath, "utf8"),
+      "# a header comment\nminimumReleaseAgeExcludePrune: true\nminimumReleaseAge: 4320\n",
+    );
+  });
+
+  test("inserts after a document-start marker that carries a trailing comment", () => {
+    const workspacePath = join(cwd, "doc-marker-trailing-comment.yaml");
+    const original = "--- # workspace config\nminimumReleaseAge: 4320\n";
+    writeFileSync(workspacePath, original);
+
+    enableMinimumReleaseAgeExcludePrune(workspacePath);
+    assert.equal(
+      readFileSync(workspacePath, "utf8"),
+      "--- # workspace config\nminimumReleaseAgeExcludePrune: true\nminimumReleaseAge: 4320\n",
+    );
+  });
+
+  test("does not treat a scalar merely starting with --- as a document-start marker", () => {
+    const workspacePath = join(cwd, "not-a-doc-marker.yaml");
+    const original = "---not-a-marker: true\nminimumReleaseAge: 4320\n";
+    writeFileSync(workspacePath, original);
+
+    enableMinimumReleaseAgeExcludePrune(workspacePath);
+    assert.equal(
+      readFileSync(workspacePath, "utf8"),
+      "minimumReleaseAgeExcludePrune: true\n---not-a-marker: true\nminimumReleaseAge: 4320\n",
+    );
+  });
+
+  test("preserves a leading UTF-8 BOM at byte 0 instead of stranding it mid-file", () => {
+    const workspacePath = join(cwd, "bom.yaml");
+    const original = "﻿minimumReleaseAge: 4320\nminimumReleaseAgeExclude:\n  - foo@1.0.0\n";
+    writeFileSync(workspacePath, original);
+
+    const restore = enableMinimumReleaseAgeExcludePrune(workspacePath);
+    const withPrune = readFileSync(workspacePath, "utf8");
+    assert.equal(withPrune, "﻿minimumReleaseAgeExcludePrune: true\nminimumReleaseAge: 4320\nminimumReleaseAgeExclude:\n  - foo@1.0.0\n");
+    assert.ok(withPrune.startsWith("﻿"), "the BOM must stay at byte 0");
+
+    restore();
+    assert.equal(readFileSync(workspacePath, "utf8"), original);
+  });
+
+  test("preserves a leading BOM together with a document-start marker", () => {
+    const workspacePath = join(cwd, "bom-doc-marker.yaml");
+    const original = "﻿---\nminimumReleaseAge: 4320\n";
+    writeFileSync(workspacePath, original);
+
+    enableMinimumReleaseAgeExcludePrune(workspacePath);
+    assert.equal(
+      readFileSync(workspacePath, "utf8"),
+      "﻿---\nminimumReleaseAgeExcludePrune: true\nminimumReleaseAge: 4320\n",
+    );
+  });
+
+  test("respects an explicit opt-out when the key is preceded by a leading BOM", () => {
+    const workspacePath = join(cwd, "bom-existing-key.yaml");
+    const original = "﻿minimumReleaseAgeExcludePrune: false\nminimumReleaseAge: 4320\n";
+    writeFileSync(workspacePath, original);
+
+    assert.equal(enableMinimumReleaseAgeExcludePrune(workspacePath), null);
+    assert.equal(readFileSync(workspacePath, "utf8"), original);
+  });
+});
+
 describe("buildSummary", () => {
   const before = {
     advisories: {
@@ -1705,6 +1857,9 @@ function writeFakePnpm(fakeBinDir) {
     'if (args[0] === "install") {',
     '  const n = nextCount("install");',
     '  writeFileSync(`${process.env.FAKE_PNPM_STATE}/install-${n}-args`, JSON.stringify(args));',
+    '  if (existsSync("pnpm-workspace.yaml")) {',
+    '    writeFileSync(`${process.env.FAKE_PNPM_STATE}/install-${n}-workspace`, readFileSync("pnpm-workspace.yaml", "utf8"));',
+    "  }",
     '  const extraLockfile = process.env[`FAKE_PNPM_INSTALL_${n}_EXTRA_LOCKFILE`];',
     '  if (extraLockfile !== undefined) writeFileSync(process.env.FAKE_PNPM_EXTRA_LOCKFILE_PATH, extraLockfile);',
     '  if (process.env[`FAKE_PNPM_INSTALL_FAIL_${n}`] === "1") {',
@@ -1717,6 +1872,9 @@ function writeFakePnpm(fakeBinDir) {
     'if (args[0] === "dedupe") {',
     '  const n = nextCount("dedupe");',
     '  writeFileSync(`${process.env.FAKE_PNPM_STATE}/dedupe-${n}-args`, JSON.stringify(args));',
+    '  if (existsSync("pnpm-workspace.yaml")) {',
+    '    writeFileSync(`${process.env.FAKE_PNPM_STATE}/dedupe-${n}-workspace`, readFileSync("pnpm-workspace.yaml", "utf8"));',
+    "  }",
     '  if (process.env[`FAKE_PNPM_DEDUPE_FAIL_${n}`] === "1") {',
     '    process.stderr.write("dedupe failed\\n");',
     "    process.exit(1);",
@@ -1817,8 +1975,9 @@ describe("main() end-to-end via a fake pnpm binary", () => {
 
     const installArgs = JSON.parse(readFileSync(join(stateDir, "install-1-args"), "utf8"));
     assert.ok(
-      installArgs.includes("--config.minimum-release-age-exclude-prune=true"),
-      "verifyInstallable should ask pnpm install to prune stale minimumReleaseAgeExclude entries",
+      !installArgs.includes("--config.minimum-release-age-exclude-prune=true"),
+      "the exclude-prune setting is enabled via pnpm-workspace.yaml, not this CLI flag, which pnpm's Rust v12 " +
+        "CLI silently drops for install/dedupe (pnpm/pnpm#13930)",
     );
     assert.equal(
       existsSync(join(stateDir, "dedupe-1-args")),
@@ -1849,13 +2008,11 @@ describe("main() end-to-end via a fake pnpm binary", () => {
     }
   });
 
-  test("no advisories, but pnpm-workspace.yaml has a minimumReleaseAgeExclude list: dedupe also gets the prune flag", () => {
+  test("no advisories, but pnpm-workspace.yaml has a minimumReleaseAgeExclude list: install and dedupe both see minimumReleaseAgeExcludePrune enabled, restored afterward", () => {
     writeFileSync(join(repoDir, "pnpm-lock.yaml"), "clean\n");
     writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
-    writeFileSync(
-      join(repoDir, "pnpm-workspace.yaml"),
-      ["minimumReleaseAge: 4320", "minimumReleaseAgeExclude:", "  - foo@1.0.0", ""].join("\n"),
-    );
+    const original = ["minimumReleaseAge: 4320", "minimumReleaseAgeExclude:", "  - foo@1.0.0", ""].join("\n");
+    writeFileSync(join(repoDir, "pnpm-workspace.yaml"), original);
     writeFileSync(join(stateDir, "audit-count"), "0");
     writeFileSync(join(stateDir, "install-count"), "0");
     writeFileSync(join(stateDir, "dedupe-count"), "0");
@@ -1863,14 +2020,59 @@ describe("main() end-to-end via a fake pnpm binary", () => {
     try {
       runMain({ FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}' });
 
-      const dedupeArgs = JSON.parse(readFileSync(join(stateDir, "dedupe-1-args"), "utf8"));
-      assert.ok(
-        dedupeArgs.includes("--config.minimum-release-age-exclude-prune=true"),
-        "verifyInstallable should run pnpm dedupe with the prune flag when there's a minimumReleaseAgeExclude " +
-          "list, since install skips re-resolution (and so the prune) when the lockfile is already up to date",
+      assert.match(
+        readFileSync(join(stateDir, "install-1-workspace"), "utf8"),
+        /^minimumReleaseAgeExcludePrune: true\n/,
+        "verifyInstallable should enable minimumReleaseAgeExcludePrune via pnpm-workspace.yaml before install runs, " +
+          "since pnpm's Rust v12 CLI silently drops the --config.<key> CLI flag for install/dedupe (pnpm/pnpm#13930)",
+      );
+      assert.match(
+        readFileSync(join(stateDir, "dedupe-1-workspace"), "utf8"),
+        /^minimumReleaseAgeExcludePrune: true\n/,
+        "the setting should still be enabled when dedupe runs, since install skips re-resolution (and so the " +
+          "prune) when the lockfile is already up to date",
+      );
+      assert.equal(
+        readFileSync(join(repoDir, "pnpm-workspace.yaml"), "utf8"),
+        // annotateMinimumReleaseAgeExclude runs unconditionally after these
+        // install/dedupe calls and backfills a marker comment onto this
+        // legacy entry — that's its own, separately-tested behavior; this
+        // assertion only cares that the injected minimumReleaseAgeExcludePrune
+        // line itself is gone, not that the rest of the file is byte-identical.
+        "minimumReleaseAge: 4320\nminimumReleaseAgeExclude:\n  # Renovate security update: foo@1.0.0\n  - foo@1.0.0\n",
+        "the injected setting should be stripped back out once install/dedupe are done, since it's only " +
+          "meaningful for the duration of this action's own calls",
       );
     } finally {
       // Leaving this behind would break later tests' "no pnpm-workspace.yaml yet" preconditions.
+      rmSync(join(repoDir, "pnpm-workspace.yaml"), { force: true });
+    }
+  });
+
+  test("no advisories, but pnpm-workspace.yaml already opts out with minimumReleaseAgeExcludePrune: false: left untouched", () => {
+    writeFileSync(join(repoDir, "pnpm-lock.yaml"), "clean\n");
+    writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
+    const original = [
+      "minimumReleaseAge: 4320",
+      "minimumReleaseAgeExcludePrune: false",
+      "minimumReleaseAgeExclude:",
+      "  - foo@1.0.0",
+      "",
+    ].join("\n");
+    writeFileSync(join(repoDir, "pnpm-workspace.yaml"), original);
+    writeFileSync(join(stateDir, "audit-count"), "0");
+    writeFileSync(join(stateDir, "install-count"), "0");
+    writeFileSync(join(stateDir, "dedupe-count"), "0");
+
+    try {
+      runMain({ FAKE_PNPM_AUDIT_JSON_DEFAULT: '{"advisories":{}}' });
+
+      assert.equal(
+        readFileSync(join(stateDir, "install-1-workspace"), "utf8"),
+        original,
+        "an explicit minimumReleaseAgeExcludePrune: false is the caller's own opt-out, not this action's to override",
+      );
+    } finally {
       rmSync(join(repoDir, "pnpm-workspace.yaml"), { force: true });
     }
   });
