@@ -15,7 +15,7 @@
   },
   "devDependencies": {
     "@changesets/cli": "3.0.3",
-    "@mizchi/actrun": "0.22.1",
+    "@mizchi/actrun": "0.32.0",
     "yaml": "2.9.1"
   }
 }
