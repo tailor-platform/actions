@@ -12,8 +12,8 @@ importers:
         specifier: 3.0.3
         version: 3.0.3
       '@mizchi/actrun':
-        specifier: 0.22.1
-        version: 0.22.1
+        specifier: 0.32.0
+        version: 0.32.0
       yaml:
         specifier: 2.9.1
         version: 2.9.1
@@ -101,8 +101,8 @@ packages:
     resolution: {integrity: sha512-6QEf6yqFbETdwGITKq57aYoPfX/3K8XFNwsAlx0C1M7o8cb79sv1M3w+tWuWvIcSbNqrLF7OD7YpZMVVz335hQ==}
     engines: {node: '>=20.0.0'}
 
-  '@mizchi/actrun@0.22.1':
-    resolution: {integrity: sha512-vESVFdAvbbAvHV/J7LsqHohgmiyAZCweMQiiPllQZjZ9cXZL2YN++0FvbLUtWSV+ngFHg9oHqzPp6960hdofuQ==}
+  '@mizchi/actrun@0.32.0':
+    resolution: {integrity: sha512-RrFy81H/XpXgHeIAeFVlxI5NryFk2V3QLpKTIlaV6SNcS/un8k/Vt/BE4k8QZafo8GrQe7kd1Wo/qqURomswBw==}
     engines: {node: '>=18'}
     hasBin: true
 
@@ -316,7 +316,7 @@ snapshots:
       tinyglobby: 0.2.17
       yaml: 2.9.1
 
-  '@mizchi/actrun@0.22.1': {}
+  '@mizchi/actrun@0.32.0': {}
 
   '@pnpm/deps.graph-sequencer@1100.0.1': {}
 
