@@ -722,6 +722,10 @@ jobs:
           relevant-paths: |
             tailor.config.ts
             tailordb/
+          # Or GitHub `paths` filter syntax, with globs and `!` exclusions
+          path-patterns: |
+            apps/*/backend/**
+            !apps/*/backend/**/*.md
           github-token: ${{ secrets.GITHUB_TOKEN }}
     outputs:
       relevant: ${{ steps.relevance.outputs.relevant }}
@@ -735,6 +739,7 @@ jobs:
 | `sha-base` | Yes | | Base commit to diff from. Pass the all-zero SHA (`0000000000000000000000000000000000000000`, as GitHub does for a branch's first push) to always treat the diff as relevant. |
 | `sha-head` | Yes | | Head commit to diff to |
 | `relevant-paths` | No | | Newline-separated list of paths that make the diff relevant. A line ending in `/` matches as a prefix against changed file paths; anything else must match a changed file path exactly. Empty means no path makes the diff relevant on its own — only `sha-base` being the all-zero SHA, or the compare API's file list hitting its 300-entry cap (treated as possibly truncated), will set `relevant=true`. |
+| `path-patterns` | No | | Newline-separated [GitHub `paths` filter patterns](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#filter-pattern-cheat-sheet) (the syntax of `on.<push\|pull_request>.paths`): `*`, `**`, `?`, `+`, and `[]` wildcards, and a leading `!` to exclude paths an earlier line included. Lines are checked in order and the last one matching a changed file decides it; a `!` line needs at least one line without `!`. The diff is relevant when a changed file matches either this input or `relevant-paths`. |
 | `github-token` | Yes | | GitHub token for the compare API call |
 
 #### Outputs

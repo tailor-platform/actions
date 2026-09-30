@@ -28,6 +28,17 @@ inputs:
       cap (treated as possibly truncated), will set relevant=true.
     required: false
     default: ""
+  path-patterns:
+    description: >-
+      Newline-separated GitHub `paths` filter patterns (the syntax of
+      `on.<push|pull_request>.paths`): `*`, `**`, `?`, `+`, and `[]`
+      wildcards, and a leading `!` to exclude paths an earlier line
+      included. Lines are checked in order and the last one matching a
+      changed file decides it. A `!` line needs at least one line without
+      `!`. The diff is relevant when a changed file matches either this
+      input or `relevant-paths`.
+    required: false
+    default: ""
   github-token:
     description: GitHub token for the compare API call
     required: true
@@ -55,4 +66,5 @@ runs:
         SHA_BASE: ${{ inputs.sha-base }}
         SHA_HEAD: ${{ inputs.sha-head }}
         RELEVANT_PATHS: ${{ inputs.relevant-paths }}
+        PATH_PATTERNS: ${{ inputs.path-patterns }}
       run: node "${{ github.action_path }}/relevance.mjs"

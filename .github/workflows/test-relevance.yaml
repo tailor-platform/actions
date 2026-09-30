@@ -122,3 +122,36 @@ jobs:
           RELEVANT: ${{ steps.irrelevant-path.outputs.relevant }}
         run: |
           [ "$RELEVANT" = "false" ] || { echo "::error::Expected relevant=false, got '$RELEVANT'"; exit 1; }
+
+      - name: "Test: a path pattern matching every file is relevant"
+        id: pattern-match
+        uses: $/relevance
+        with:
+          sha-base: ${{ steps.parent.outputs.sha }}
+          sha-head: ${{ github.sha }}
+          path-patterns: |
+            **
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "Verify: relevant=true"
+        env:
+          RELEVANT: ${{ steps.pattern-match.outputs.relevant }}
+        run: |
+          [ "$RELEVANT" = "true" ] || { echo "::error::Expected relevant=true, got '$RELEVANT'"; exit 1; }
+
+      - name: "Test: a later ! pattern excludes what an earlier pattern included"
+        id: pattern-excluded
+        uses: $/relevance
+        with:
+          sha-base: ${{ steps.parent.outputs.sha }}
+          sha-head: ${{ github.sha }}
+          path-patterns: |
+            **
+            !**
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "Verify: relevant=false"
+        env:
+          RELEVANT: ${{ steps.pattern-excluded.outputs.relevant }}
+        run: |
+          [ "$RELEVANT" = "false" ] || { echo "::error::Expected relevant=false, got '$RELEVANT'"; exit 1; }
