@@ -176,6 +176,17 @@ describe("matchesPathPatterns", () => {
     assert.equal(matches("\\*.md", "a.md"), false);
   });
 
+  test("** matches file names containing a newline, which git allows", () => {
+    assert.equal(matches("src/**", "src/a\nb.ts"), true);
+    assert.equal(matches("**", "a\nb.ts"), true);
+  });
+
+  test("repeated **/ segments do not make a non-matching path slow to reject", { timeout: 1000 }, () => {
+    const pattern = `${"**/".repeat(30)}X`;
+    assert.equal(matches(pattern, `${"a/".repeat(40)}Y`), false);
+    assert.equal(matches(pattern, `${"a/".repeat(40)}X`), true);
+  });
+
   test("a pattern must match the whole path", () => {
     assert.equal(matches("docs", "docs/readme.md"), false);
     assert.equal(matches("docs", "my-docs"), false);

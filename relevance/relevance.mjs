@@ -41,9 +41,12 @@ function patternToRegExp(pattern) {
       if (i >= pattern.length) throw new Error("trailing backslash");
       source += escapeRegExp(pattern[i]);
     } else if (char === "*" && pattern[i + 1] === "*") {
-      i += 1;
+      while (pattern[i + 1] === "*") i += 1;
       if (pattern[i + 1] === "/") {
         i += 1;
+        // Consecutive `**/` mean the same as one; kept separate, each optional
+        // group backtracks against the others and rejection time grows exponentially.
+        while (pattern.startsWith("**/", i + 1)) i += 3;
         source += "(?:.*/)?";
       } else {
         source += ".*";
@@ -66,7 +69,7 @@ function patternToRegExp(pattern) {
       source += escapeRegExp(char);
     }
   }
-  return new RegExp(`^${source}$`);
+  return new RegExp(`^${source}$`, "s");
 }
 
 /**
