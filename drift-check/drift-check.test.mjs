@@ -36,6 +36,22 @@ if [ "$1" = "exec" ] && [ "$2" = "tailor" ] && [ "$3" = "setup" ] && [ "$4" = "c
   exit 0
 fi
 
+if [ "$1" = "exec" ] && [ "$2" = "tailor" ] && [ "$3" = "setup" ] && [ "$4" = "--help" ] && [ -z "$5" ]; then
+  echo "Commands:"
+  echo "  ci                              Generate a GitHub Actions deploy workflow or composite action."
+  echo "  check                           Audit generated workflows for drift against the current config/repo (read-only)."
+  if [ "$FAKE_SETUP_HELP" = "update" ] || [ "$FAKE_SETUP_HELP" = "fail" ]; then
+    echo "  update                          Regenerate every workflow recorded in .github/tailor.lock."
+  fi
+  if [ "$FAKE_SETUP_HELP" = "colored-update" ]; then
+    printf '  \\033[1mupdate\\033[22m                          Regenerate every workflow recorded in .github/tailor.lock.\\n'
+  fi
+  if [ "$FAKE_SETUP_HELP" = "fail" ]; then
+    exit 2
+  fi
+  exit 0
+fi
+
 if [ "$FAKE_SUPPORTS_CI" = "1" ]; then
   EXPECTED_CI="--ci"
 else
@@ -117,6 +133,7 @@ esac
       options.failOnDrift ?? action.inputs?.["fail-on-drift"]?.default ?? "",
     FAKE_CHECK_MODE: mode,
     FAKE_SUPPORTS_CI: options.supportsCi ? "1" : "",
+    FAKE_SETUP_HELP: options.setupHelp ?? "",
     GITHUB_STEP_SUMMARY: summary,
     IGNORE_RULES: options.ignore ?? "",
     PACKAGE_MANAGER: options.packageManager ?? "pnpm",
@@ -183,6 +200,36 @@ test("keeps drift findings advisory by default", async (t) => {
   assert.equal(result.exitCode, 0);
   assert.match(result.stdout, new RegExp(`::warning::\\[template-version\\] ${result.marker}`));
   assert.match(result.summary, /1 finding\(s\) emitted, 0 suppressed\./);
+});
+
+test("points the summary at `tailor setup update` when the installed plugin has it", async (t) => {
+  const result = await runAction(t, "drift", { setupHelp: "update" });
+
+  assert.equal(result.exitCode, 0);
+  assert.match(result.summary, /Run `tailor setup update` to regenerate every workflow, or add a rule key/);
+});
+
+test("points the summary at `tailor setup update` when the plugin prints its help in color", async (t) => {
+  const result = await runAction(t, "drift", { setupHelp: "colored-update" });
+
+  assert.equal(result.exitCode, 0);
+  assert.match(result.summary, /Run `tailor setup update` to regenerate every workflow, or add a rule key/);
+});
+
+test("keeps the re-run hint when the installed plugin has no `tailor setup update`", async (t) => {
+  const result = await runAction(t, "drift");
+
+  assert.equal(result.exitCode, 0);
+  assert.match(result.summary, /Re-run `tailor setup` to regenerate, or add a rule key/);
+  assert.doesNotMatch(result.summary, /setup update/);
+});
+
+test("keeps the re-run hint when `tailor setup --help` fails, even if its output lists `update`", async (t) => {
+  const result = await runAction(t, "drift", { setupHelp: "fail", failOnDrift: "true" });
+
+  assert.equal(result.exitCode, 1);
+  assert.match(result.stdout, /::error::\[drift-check\] 1 unsuppressed workflow drift finding/);
+  assert.match(result.summary, /Re-run `tailor setup` to regenerate, or add a rule key/);
 });
 
 test("supports the legacy SDK drift summary", async (t) => {
