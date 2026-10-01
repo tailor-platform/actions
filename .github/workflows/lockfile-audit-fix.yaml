@@ -81,12 +81,13 @@ jobs:
           DEPLOY_CHANGED: ${{ steps.audit_deploy.outputs.changed }}
           DEPLOY_SUMMARY: ${{ steps.audit_deploy.outputs.summary }}
         run: |
+          header='Automated fix from `pnpm audit --fix`.'
           delimiter="EOF_$(openssl rand -hex 16)"
           {
             echo "text<<${delimiter}"
-            echo 'Automated fix from `pnpm audit --fix`.'
-            if [ "$ROOT_CHANGED" = "true" ]; then printf '\n### `.`\n\n%s\n' "${ROOT_SUMMARY#*$'\n\n'}"; fi
-            if [ "$DEPLOY_CHANGED" = "true" ]; then printf '\n### `tests/deploy`\n\n%s\n' "${DEPLOY_SUMMARY#*$'\n\n'}"; fi
+            echo "$header"
+            if [ "$ROOT_CHANGED" = "true" ]; then printf '\n### `.`%s\n' "${ROOT_SUMMARY#"$header"}"; fi
+            if [ "$DEPLOY_CHANGED" = "true" ]; then printf '\n### `tests/deploy`%s\n' "${DEPLOY_SUMMARY#"$header"}"; fi
             echo "${delimiter}"
           } >> "$GITHUB_OUTPUT"
 
