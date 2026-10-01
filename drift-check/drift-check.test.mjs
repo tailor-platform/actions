@@ -37,15 +37,14 @@ if [ "$1" = "exec" ] && [ "$2" = "tailor" ] && [ "$3" = "setup" ] && [ "$4" = "c
 fi
 
 if [ "$1" = "exec" ] && [ "$2" = "tailor" ] && [ "$3" = "setup" ] && [ "$4" = "--help" ] && [ -z "$5" ]; then
-  if [ "$FAKE_SETUP_HELP" = "fail" ]; then
-    echo "setup help unavailable" >&2
-    exit 2
-  fi
   echo "Commands:"
   echo "  ci                              Generate a GitHub Actions deploy workflow or composite action."
   echo "  check                           Audit generated workflows for drift against the current config/repo (read-only)."
-  if [ "$FAKE_SETUP_HELP" = "update" ]; then
+  if [ "$FAKE_SETUP_HELP" = "update" ] || [ "$FAKE_SETUP_HELP" = "fail" ]; then
     echo "  update                          Regenerate every workflow recorded in .github/tailor.lock."
+  fi
+  if [ "$FAKE_SETUP_HELP" = "fail" ]; then
+    exit 2
   fi
   exit 0
 fi
@@ -215,7 +214,7 @@ test("keeps the re-run hint when the installed plugin has no `tailor setup updat
   assert.doesNotMatch(result.summary, /setup update/);
 });
 
-test("keeps the re-run hint when `tailor setup --help` fails", async (t) => {
+test("keeps the re-run hint when `tailor setup --help` fails, even if its output lists `update`", async (t) => {
   const result = await runAction(t, "drift", { setupHelp: "fail", failOnDrift: "true" });
 
   assert.equal(result.exitCode, 1);
