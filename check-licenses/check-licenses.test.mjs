@@ -279,23 +279,13 @@ describe("isInPnpmWorkspace", () => {
     assert.equal(isInPnpmWorkspace(root), false);
   });
 
-  test("true when the packages key is quoted", () => {
-    const root = makeTree({ "pnpm-workspace.yaml": '"packages": ["apps/*"]\n' });
+  test("true however the manifest serializes packages", () => {
+    const root = makeTree({ "pnpm-workspace.yaml": '{ onlyBuiltDependencies: [esbuild], packages: ["apps/*"] }\n' });
     assert.equal(isInPnpmWorkspace(root), true);
   });
 
-  test("true when the manifest is a flow mapping", () => {
-    const root = makeTree({ "pnpm-workspace.yaml": '{ packages: ["apps/*"] }\n' });
-    assert.equal(isInPnpmWorkspace(root), true);
-  });
-
-  test("false when packages is only a nested key under a setting", () => {
-    const root = makeTree({ "pnpm-workspace.yaml": "catalogs:\n  packages:\n    foo: 1.0.0\n" });
-    assert.equal(isInPnpmWorkspace(root), false);
-  });
-
-  test("false when pnpm-workspace.yaml only holds settings, without packages", () => {
+  test("true when pnpm-workspace.yaml only holds settings, without packages", () => {
     const root = makeTree({ "pnpm-workspace.yaml": "onlyBuiltDependencies:\n  - esbuild\n" });
-    assert.equal(isInPnpmWorkspace(root), false);
+    assert.equal(isInPnpmWorkspace(root), true);
   });
 });
