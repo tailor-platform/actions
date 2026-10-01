@@ -25,23 +25,20 @@ export function parseRelevantPaths(relevantPathsText) {
 }
 
 /**
- * @typedef {{ negate: boolean, regex: RegExp }} PathPattern
+ * @typedef {{ type: "char", char: string } | { type: "star" | "globstar" | "optional" | "untilSlash" }} Token
+ * @typedef {{ negate: boolean, tokens: Token[] }} PathPattern
  */
-
-function escapeRegExp(char) {
-  return char.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
-}
 
 // Other tools give these characters different meanings (`?` is one character in
 // minimatch but "zero or one of the previous one" in GitHub's `paths`), so they
 // are rejected rather than picked a meaning for.
 const UNSUPPORTED_CHARACTERS = /[?+[\]{}()\\]/;
 
-function patternToRegExp(pattern) {
+function tokenize(pattern) {
   if (UNSUPPORTED_CHARACTERS.test(pattern)) {
     throw new Error("only *, **, and a leading ! have a special meaning; ?+[]{}()\\ are not supported");
   }
-  let source = "";
+  const tokens = [];
   for (let i = 0; i < pattern.length; i++) {
     const char = pattern[i];
     if (char === "*" && pattern[i + 1] === "*") {
@@ -49,20 +46,55 @@ function patternToRegExp(pattern) {
       while (pattern[i + 1] === "*") i += 1;
       if (segmentStart && pattern[i + 1] === "/") {
         i += 1;
-        // Consecutive `**/` mean the same as one; kept separate, each optional
-        // group backtracks against the others and rejection time grows exponentially.
-        while (pattern.startsWith("**/", i + 1)) i += 3;
-        source += "(?:.*/)?";
+        tokens.push({ type: "optional" }, { type: "untilSlash" });
       } else {
-        source += ".*";
+        tokens.push({ type: "globstar" });
       }
     } else if (char === "*") {
-      source += "[^/]*";
+      tokens.push({ type: "star" });
     } else {
-      source += escapeRegExp(char);
+      tokens.push({ type: "char", char });
     }
   }
-  return new RegExp(`^${source}$`, "s");
+  return tokens;
+}
+
+// Tracks every pattern position the path so far can be at, one character at a
+// time. A backtracking RegExp would instead retry each way of splitting the path
+// between the wildcards, which grows exponentially with the number of `*`.
+function matchesTokens(file, tokens) {
+  const addWithEpsilons = (positions, start) => {
+    const pending = [start];
+    while (pending.length > 0) {
+      const i = pending.pop();
+      if (positions[i]) continue;
+      positions[i] = true;
+      const token = tokens[i];
+      if (token === undefined) continue;
+      if (token.type === "star" || token.type === "globstar") pending.push(i + 1);
+      if (token.type === "optional") pending.push(i + 1, i + 2);
+    }
+  };
+  let positions = new Array(tokens.length + 1).fill(false);
+  addWithEpsilons(positions, 0);
+  for (let at = 0; at < file.length; at++) {
+    const char = file[at];
+    const next = new Array(tokens.length + 1).fill(false);
+    positions.forEach((reached, i) => {
+      if (!reached) return;
+      const token = tokens[i];
+      if (token === undefined) return;
+      if (token.type === "char" && token.char === char) addWithEpsilons(next, i + 1);
+      if (token.type === "star" && char !== "/") addWithEpsilons(next, i);
+      if (token.type === "globstar") addWithEpsilons(next, i);
+      if (token.type === "untilSlash") {
+        addWithEpsilons(next, i);
+        if (char === "/") addWithEpsilons(next, i + 1);
+      }
+    });
+    positions = next;
+  }
+  return positions[tokens.length];
 }
 
 /**
@@ -78,7 +110,7 @@ export function parsePathPatterns(pathPatternsText) {
       const negate = line.startsWith("!");
       const pattern = negate ? line.slice(1) : line;
       try {
-        return { negate, regex: patternToRegExp(pattern) };
+        return { negate, tokens: tokenize(pattern) };
       } catch (error) {
         throw new Error(`Invalid path pattern "${line}": ${error.message}`);
       }
@@ -96,8 +128,8 @@ export function parsePathPatterns(pathPatternsText) {
  */
 export function matchesPathPatterns(file, patterns) {
   let included = false;
-  for (const { negate, regex } of patterns) {
-    if (regex.test(file)) included = !negate;
+  for (const { negate, tokens } of patterns) {
+    if (matchesTokens(file, tokens)) included = !negate;
   }
   return included;
 }

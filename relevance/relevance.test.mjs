@@ -185,18 +185,21 @@ describe("matchesPathPatterns", () => {
     assert.equal(matches("**", "a\nb.ts"), true);
   });
 
-  test("repeated **/ segments do not make a non-matching path slow to reject", () => {
-    // node:test cannot interrupt a synchronous test body, so the match runs in a
-    // child process that a timeout can kill.
+  test("characters outside the BMP, such as emoji, match literally and are matched by *", () => {
+    assert.equal(matches("docs/😀.md", "docs/😀.md"), true);
+    assert.equal(matches("docs/*.md", "docs/😀.md"), true);
+  });
+
+  // node:test cannot interrupt a synchronous test body, so slow matches run in a
+  // child process that a timeout can kill.
+  const matchInChildProcess = (patterns, files) => {
     const script = `
       import { matchesPathPatterns, parsePathPatterns } from ${JSON.stringify(
         pathToFileURL(join(import.meta.dirname, "relevance.mjs")).href,
       )};
-      const patterns = parsePathPatterns(${JSON.stringify(`${"**/".repeat(30)}X`)});
-      process.stdout.write(JSON.stringify([
-        matchesPathPatterns(${JSON.stringify(`${"a/".repeat(40)}Y`)}, patterns),
-        matchesPathPatterns(${JSON.stringify(`${"a/".repeat(40)}X`)}, patterns),
-      ]));
+      const patterns = parsePathPatterns(${JSON.stringify(patterns)});
+      const files = ${JSON.stringify(files)};
+      process.stdout.write(JSON.stringify(files.map((file) => matchesPathPatterns(file, patterns))));
     `;
     const dir = mkdtempSync(join(tmpdir(), "relevance-"));
     const file = join(dir, "match.mjs");
@@ -204,7 +207,21 @@ describe("matchesPathPatterns", () => {
     const result = spawnSync(process.execPath, [file], { encoding: "utf8", timeout: 5000 });
     rmSync(dir, { recursive: true, force: true });
     assert.equal(result.signal, null, "matching did not finish within 5s");
-    assert.deepEqual(JSON.parse(result.stdout), [false, true]);
+    return JSON.parse(result.stdout);
+  };
+
+  test("repeated **/ segments do not make a non-matching path slow to reject", () => {
+    assert.deepEqual(
+      matchInChildProcess(`${"**/".repeat(30)}X`, [`${"a/".repeat(40)}Y`, `${"a/".repeat(40)}X`]),
+      [false, true],
+    );
+  });
+
+  test("many * in one pattern do not make a non-matching path slow to reject", () => {
+    assert.deepEqual(
+      matchInChildProcess(`${"*a".repeat(20)}b`, [`${"a".repeat(60)}c`, `${"a".repeat(60)}b`]),
+      [false, true],
+    );
   });
 
   test("a pattern must match the whole path", () => {
