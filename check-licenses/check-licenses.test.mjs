@@ -1,5 +1,8 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   licenseGroups,
   LicenseCheckError,
@@ -14,6 +17,7 @@ import {
   isPackageException,
   splitMembers,
   isLicenseAllowed,
+  isInPnpmWorkspace,
 } from "./check-licenses.mjs";
 
 describe("parseLicenseList", () => {
@@ -244,5 +248,39 @@ describe("splitMembers", () => {
 
   test("a plain single license is returned as-is", () => {
     assert.deepEqual(splitMembers("MIT"), ["MIT"]);
+  });
+});
+
+describe("isInPnpmWorkspace", () => {
+  const makeTree = (files) => {
+    const root = mkdtempSync(join(tmpdir(), "check-licenses-"));
+    for (const [path, content] of Object.entries(files)) {
+      mkdirSync(join(root, path, ".."), { recursive: true });
+      writeFileSync(join(root, path), content);
+    }
+    return root;
+  };
+
+  test("true at a workspace root whose pnpm-workspace.yaml declares packages", () => {
+    const root = makeTree({ "pnpm-workspace.yaml": "packages:\n  - apps/*\n" });
+    assert.equal(isInPnpmWorkspace(root), true);
+  });
+
+  test("true in a sub-project below such a workspace root", () => {
+    const root = makeTree({
+      "pnpm-workspace.yaml": "packages:\n  - apps/*\n",
+      "apps/a/package.json": "{}",
+    });
+    assert.equal(isInPnpmWorkspace(join(root, "apps/a")), true);
+  });
+
+  test("false for a standalone project with no pnpm-workspace.yaml above it", () => {
+    const root = makeTree({ "package.json": "{}" });
+    assert.equal(isInPnpmWorkspace(root), false);
+  });
+
+  test("false when pnpm-workspace.yaml only holds settings, without packages", () => {
+    const root = makeTree({ "pnpm-workspace.yaml": "onlyBuiltDependencies:\n  - esbuild\n" });
+    assert.equal(isInPnpmWorkspace(root), false);
   });
 });
