@@ -46,7 +46,7 @@
  */
 
 import { execFileSync, execSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 const licenseGroups = {
@@ -307,11 +307,7 @@ function isLicenseAllowed(licenseString, allowSet) {
 function isInPnpmWorkspace(startDir) {
   let dir = resolve(startDir);
   for (;;) {
-    const manifest = join(dir, "pnpm-workspace.yaml");
-    if (existsSync(manifest)) {
-      // Not a YAML parser: this runs from the action path, where no yaml package is installed.
-      return /^(?:\{\s*)?(["']?)packages\1\s*:/m.test(readFileSync(manifest, "utf8"));
-    }
+    if (existsSync(join(dir, "pnpm-workspace.yaml"))) return true;
     const parent = dirname(dir);
     if (parent === dir) return false;
     dir = parent;
