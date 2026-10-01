@@ -38,8 +38,10 @@ inputs:
     required: true
   github-token:
     description: >-
-      GitHub token for commenting on PR.
-      When omitted, no PR comment is posted (step summary only).
+      GitHub token for commenting on PR, also used to fetch the base branch
+      so the checkout can use persist-credentials: false.
+      When omitted, no PR comment is posted (step summary only) and the fetch
+      relies on the credentials the checkout persisted.
     required: false
 
 outputs:
@@ -67,8 +69,15 @@ runs:
       shell: bash
       env:
         BASE_REF: ${{ github.base_ref }}
+        GH_TOKEN: ${{ inputs.github-token }}
       run: |
-        git fetch origin "$BASE_REF"
+        if [ -n "$GH_TOKEN" ]; then
+          git -c "http.${GITHUB_SERVER_URL}/.extraheader=" \
+            -c "http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)" \
+            fetch origin "$BASE_REF"
+        else
+          git fetch origin "$BASE_REF"
+        fi
         git merge --no-commit --no-ff "origin/$BASE_REF" || true
 
     - name: Run dry-run

@@ -11,7 +11,9 @@
     "test:create-signed-pr": "node --test create-signed-pr/*.test.mjs",
     "test:cli-bin-contract": "node --test tests/cli-bin-contract.test.mjs",
     "test:drift-check": "node --test drift-check/*.test.mjs",
-    "changeset": "changeset"
+    "changeset": "changeset",
+    "test:plan": "node --test plan/*.test.mjs",
+    "test:tag-guard": "node --test tag-guard/*.test.mjs"
   },
   "devDependencies": {
     "@changesets/cli": "3.0.3",
