@@ -3,9 +3,9 @@
 // caller cares about, and emits the compare's fork point (merge_base_commit)
 // for reuse by find-base-run. Each line of RELEVANT_PATHS is either an exact
 // path or, if it ends with "/", a prefix — no regex, so callers never need to
-// worry about pattern-escaping their own paths. PATH_PATTERNS takes GitHub's
-// `paths` filter patterns instead, for callers that already speak that
-// syntax. A full (300-entry) page of compare files is treated as
+// worry about pattern-escaping their own paths. PATH_PATTERNS takes globs
+// instead: `*`, `**`, and leading `!` exclusions checked in order. A full
+// (300-entry) page of compare files is treated as
 // possibly truncated, and kept relevant unconditionally, since the API
 // gives no total count to detect truncation by.
 import { appendFileSync } from "node:fs";
@@ -32,29 +32,19 @@ function escapeRegExp(char) {
   return char.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
 }
 
-const CHARACTER_CLASS_RANGES = ["az", "AZ", "09"];
-
-function isCharacterClassBody(body) {
-  const items = body.match(/[A-Za-z0-9](?:-[A-Za-z0-9])?/g) ?? [];
-  if (items.join("") !== body) return false;
-  return items.every((item) => {
-    if (item.length === 1) return true;
-    const [from, to] = [item[0], item[2]];
-    return CHARACTER_CLASS_RANGES.some(
-      ([low, high]) => low <= from && from <= to && to <= high,
-    );
-  });
-}
+// Other tools give these characters different meanings (`?` is one character in
+// minimatch but "zero or one of the previous one" in GitHub's `paths`), so they
+// are rejected rather than picked a meaning for.
+const UNSUPPORTED_CHARACTERS = /[?+[\]{}()\\]/;
 
 function patternToRegExp(pattern) {
+  if (UNSUPPORTED_CHARACTERS.test(pattern)) {
+    throw new Error("only *, **, and a leading ! have a special meaning; ?+[]{}()\\ are not supported");
+  }
   let source = "";
   for (let i = 0; i < pattern.length; i++) {
     const char = pattern[i];
-    if (char === "\\") {
-      i += 1;
-      if (i >= pattern.length) throw new Error("trailing backslash");
-      source += escapeRegExp(pattern[i]);
-    } else if (char === "*" && pattern[i + 1] === "*") {
+    if (char === "*" && pattern[i + 1] === "*") {
       while (pattern[i + 1] === "*") i += 1;
       if (pattern[i + 1] === "/") {
         i += 1;
@@ -67,18 +57,6 @@ function patternToRegExp(pattern) {
       }
     } else if (char === "*") {
       source += "[^/]*";
-    } else if (char === "?" || char === "+") {
-      if (source.length === 0) throw new Error(`"${char}" has no preceding character`);
-      source += char;
-    } else if (char === "[") {
-      const end = pattern.indexOf("]", i + 1);
-      if (end === -1) throw new Error("unclosed [");
-      const body = pattern.slice(i + 1, end);
-      if (!isCharacterClassBody(body)) {
-        throw new Error("[] may list only letters, digits, and ranges within a-z, A-Z, or 0-9");
-      }
-      source += `[${body}]`;
-      i = end;
     } else {
       source += escapeRegExp(char);
     }
@@ -87,7 +65,7 @@ function patternToRegExp(pattern) {
 }
 
 /**
- * @param {string} pathPatternsText - newline-separated GitHub `paths` filter patterns
+ * @param {string} pathPatternsText - newline-separated `*` / `**` / leading `!` patterns
  * @returns {PathPattern[]}
  */
 export function parsePathPatterns(pathPatternsText) {
@@ -128,7 +106,7 @@ export function matchesPathPatterns(file, patterns) {
  * @param {string} params.shaBase
  * @param {string} params.shaHead
  * @param {string[]} params.relevantPaths - exact paths, or prefixes ending in "/"
- * @param {PathPattern[]} [params.pathPatterns] - GitHub `paths` filter patterns
+ * @param {PathPattern[]} [params.pathPatterns] - patterns from {@link parsePathPatterns}
  * @param {(base: string, head: string) => Promise<{ files?: { filename: string, previous_filename?: string }[], merge_base_commit: { sha: string } }>} params.compareCommits
  * @returns {Promise<{ relevant: boolean, forkSha?: string, reason: string }>}
  */

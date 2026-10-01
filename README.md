@@ -722,7 +722,7 @@ jobs:
           relevant-paths: |
             tailor.config.ts
             tailordb/
-          # Or GitHub `paths` filter syntax, with globs and `!` exclusions
+          # Or globs with `*`, `**`, and `!` exclusions
           path-patterns: |
             apps/*/backend/**
             !apps/*/backend/**/*.md
@@ -739,7 +739,7 @@ jobs:
 | `sha-base` | Yes | | Base commit to diff from. Pass the all-zero SHA (`0000000000000000000000000000000000000000`, as GitHub does for a branch's first push) to always treat the diff as relevant. |
 | `sha-head` | Yes | | Head commit to diff to |
 | `relevant-paths` | No | | Newline-separated list of paths that make the diff relevant. A line ending in `/` matches as a prefix against changed file paths; anything else must match a changed file path exactly. Empty means no path in this input makes the diff relevant; a match in `path-patterns`, `sha-base` being the all-zero SHA, or the compare API's file list hitting its 300-entry cap (treated as possibly truncated) still sets `relevant=true`. |
-| `path-patterns` | No | | Newline-separated [GitHub `paths` filter patterns](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#filter-pattern-cheat-sheet) (the syntax of `on.<push\|pull_request>.paths`): `*`, `**`, `?`, `+`, and `[]` wildcards, and a leading `!` to exclude paths an earlier line included. Lines are checked in order and the last one matching a changed file decides it; a `!` line needs at least one line without `!`. The diff is relevant when a changed file matches either this input or `relevant-paths`. |
+| `path-patterns` | No | | Newline-separated glob patterns matched against the whole changed file path. `*` matches any characters except `/`, `**` matches any characters including `/` (a leading `**/` also matches at the repository root), and both match names starting with a dot. A leading `!` excludes paths an earlier line included; lines are checked in order and the last one matching a changed file decides it, so a later line can include a path again. Any other character matches literally, except `?+[]{}()\`, which are rejected because other glob tools give them different meanings. A `!` line needs at least one line without `!`. The diff is relevant when a changed file matches either this input or `relevant-paths`. |
 | `github-token` | Yes | | GitHub token for the compare API call |
 
 #### Outputs

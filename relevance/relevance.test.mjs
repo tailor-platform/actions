@@ -123,17 +123,18 @@ describe("parsePathPatterns", () => {
     assert.deepEqual(parsePathPatterns(""), []);
   });
 
-  test("rejects negated patterns without a positive one, as GitHub's paths filter does", () => {
+  test("rejects ! patterns without a pattern that includes anything", () => {
     assert.throws(() => parsePathPatterns("!docs/**"), /at least one pattern without "!"/);
   });
 
-  test("rejects a pattern that is not a valid filter pattern", () => {
-    assert.throws(() => parsePathPatterns("[abc.md"), /Invalid path pattern "\[abc\.md"/);
-  });
-
-  test("rejects a [] range that spans more than one of a-z, A-Z, and 0-9", () => {
-    assert.throws(() => parsePathPatterns("[A-z].md"), /Invalid path pattern "\[A-z\]\.md"/);
-    assert.throws(() => parsePathPatterns("[z-a].md"), /Invalid path pattern "\[z-a\]\.md"/);
+  test("rejects characters other tools treat as wildcards, so a pattern never means something else", () => {
+    for (const pattern of ["*.jsx?", "a+.txt", "[CB]at.md", "x].md", "{a,b}.md", "@(a).md", "a)b", "\\*.md"]) {
+      assert.throws(
+        () => parsePathPatterns(pattern),
+        new RegExp(`Invalid path pattern "${pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`),
+        pattern,
+      );
+    }
   });
 });
 
@@ -159,23 +160,9 @@ describe("matchesPathPatterns", () => {
     assert.equal(matches("docs/**/*.md", "docs/a/markdown/file.md"), true);
   });
 
-  test("? makes the preceding character optional", () => {
-    assert.equal(matches("*.jsx?", "page.js"), true);
-    assert.equal(matches("*.jsx?", "page.jsx"), true);
-    assert.equal(matches("*.jsx?", "page.jsxx"), false);
-  });
-
-  test("+ repeats the preceding character one or more times", () => {
-    assert.equal(matches("a+.txt", "aaa.txt"), true);
-    assert.equal(matches("a+.txt", ".txt"), false);
-  });
-
-  test("[] matches one listed character or range", () => {
-    assert.equal(matches("[CB]at.md", "Cat.md"), true);
-    assert.equal(matches("[CB]at.md", "Hat.md"), false);
-    assert.equal(matches("[1-2]00.md", "200.md"), true);
-    assert.equal(matches("[0-9a-z].md", "7.md"), true);
-    assert.equal(matches("[0-9a-z].md", "Q.md"), false);
+  test("wildcards match file names starting with a dot", () => {
+    assert.equal(matches("*", ".env"), true);
+    assert.equal(matches("apps/**", "apps/web/.eslintrc.json"), true);
   });
 
   test("other characters match literally", () => {
@@ -183,9 +170,8 @@ describe("matchesPathPatterns", () => {
     assert.equal(matches("a.b", "aXb"), false);
   });
 
-  test("a backslash makes a special character literal", () => {
-    assert.equal(matches("\\*.md", "*.md"), true);
-    assert.equal(matches("\\*.md", "a.md"), false);
+  test("a ! after the first character matches literally", () => {
+    assert.equal(matches("a!b.md", "a!b.md"), true);
   });
 
   test("** matches file names containing a newline, which git allows", () => {
