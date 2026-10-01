@@ -32,6 +32,20 @@ function escapeRegExp(char) {
   return char.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
 }
 
+const CHARACTER_CLASS_RANGES = ["az", "AZ", "09"];
+
+function isCharacterClassBody(body) {
+  const items = body.match(/[A-Za-z0-9](?:-[A-Za-z0-9])?/g) ?? [];
+  if (items.join("") !== body) return false;
+  return items.every((item) => {
+    if (item.length === 1) return true;
+    const [from, to] = [item[0], item[2]];
+    return CHARACTER_CLASS_RANGES.some(
+      ([low, high]) => low <= from && from <= to && to <= high,
+    );
+  });
+}
+
 function patternToRegExp(pattern) {
   let source = "";
   for (let i = 0; i < pattern.length; i++) {
@@ -60,8 +74,8 @@ function patternToRegExp(pattern) {
       const end = pattern.indexOf("]", i + 1);
       if (end === -1) throw new Error("unclosed [");
       const body = pattern.slice(i + 1, end);
-      if (!/^(?:[A-Za-z0-9](?:-[A-Za-z0-9])?)+$/.test(body)) {
-        throw new Error("[] may list only letters, digits, and a-z / A-Z / 0-9 ranges");
+      if (!isCharacterClassBody(body)) {
+        throw new Error("[] may list only letters, digits, and ranges within a-z, A-Z, or 0-9");
       }
       source += `[${body}]`;
       i = end;

@@ -1,3 +1,8 @@
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -125,6 +130,11 @@ describe("parsePathPatterns", () => {
   test("rejects a pattern that is not a valid filter pattern", () => {
     assert.throws(() => parsePathPatterns("[abc.md"), /Invalid path pattern "\[abc\.md"/);
   });
+
+  test("rejects a [] range that spans more than one of a-z, A-Z, and 0-9", () => {
+    assert.throws(() => parsePathPatterns("[A-z].md"), /Invalid path pattern "\[A-z\]\.md"/);
+    assert.throws(() => parsePathPatterns("[z-a].md"), /Invalid path pattern "\[z-a\]\.md"/);
+  });
 });
 
 describe("matchesPathPatterns", () => {
@@ -164,6 +174,8 @@ describe("matchesPathPatterns", () => {
     assert.equal(matches("[CB]at.md", "Cat.md"), true);
     assert.equal(matches("[CB]at.md", "Hat.md"), false);
     assert.equal(matches("[1-2]00.md", "200.md"), true);
+    assert.equal(matches("[0-9a-z].md", "7.md"), true);
+    assert.equal(matches("[0-9a-z].md", "Q.md"), false);
   });
 
   test("other characters match literally", () => {
@@ -181,10 +193,26 @@ describe("matchesPathPatterns", () => {
     assert.equal(matches("**", "a\nb.ts"), true);
   });
 
-  test("repeated **/ segments do not make a non-matching path slow to reject", { timeout: 1000 }, () => {
-    const pattern = `${"**/".repeat(30)}X`;
-    assert.equal(matches(pattern, `${"a/".repeat(40)}Y`), false);
-    assert.equal(matches(pattern, `${"a/".repeat(40)}X`), true);
+  test("repeated **/ segments do not make a non-matching path slow to reject", () => {
+    // node:test cannot interrupt a synchronous test body, so the match runs in a
+    // child process that a timeout can kill.
+    const script = `
+      import { matchesPathPatterns, parsePathPatterns } from ${JSON.stringify(
+        pathToFileURL(join(import.meta.dirname, "relevance.mjs")).href,
+      )};
+      const patterns = parsePathPatterns(${JSON.stringify(`${"**/".repeat(30)}X`)});
+      process.stdout.write(JSON.stringify([
+        matchesPathPatterns(${JSON.stringify(`${"a/".repeat(40)}Y`)}, patterns),
+        matchesPathPatterns(${JSON.stringify(`${"a/".repeat(40)}X`)}, patterns),
+      ]));
+    `;
+    const dir = mkdtempSync(join(tmpdir(), "relevance-"));
+    const file = join(dir, "match.mjs");
+    writeFileSync(file, script);
+    const result = spawnSync(process.execPath, [file], { encoding: "utf8", timeout: 5000 });
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(result.signal, null, "matching did not finish within 5s");
+    assert.deepEqual(JSON.parse(result.stdout), [false, true]);
   });
 
   test("a pattern must match the whole path", () => {
