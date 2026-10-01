@@ -309,7 +309,8 @@ function isInPnpmWorkspace(startDir) {
   for (;;) {
     const manifest = join(dir, "pnpm-workspace.yaml");
     if (existsSync(manifest)) {
-      return /^packages\s*:/m.test(readFileSync(manifest, "utf8"));
+      // Not a YAML parser: this runs from the action path, where no yaml package is installed.
+      return /^(?:\{\s*)?(["']?)packages\1\s*:/m.test(readFileSync(manifest, "utf8"));
     }
     const parent = dirname(dir);
     if (parent === dir) return false;
