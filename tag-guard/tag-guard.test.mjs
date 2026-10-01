@@ -60,6 +60,12 @@ test("drops a header the checkout persisted before adding github-token, so the f
   assert.deepEqual(fetch.slice(0, 2), ["-c", "http.https://github.com/.extraheader="]);
 });
 
+test("keeps the header on one line for a token longer than base64's default line width", async (t) => {
+  const token = "t".repeat(200);
+  const [fetch] = await runGuardStep(t, { GH_TOKEN: token });
+  assert.equal(fetch[3], header(token));
+});
+
 test("fetches the target branch without extra credentials when no github-token is given", async (t) => {
   const [fetch] = await runGuardStep(t, { GH_TOKEN: "" });
   assert.deepEqual(fetch, ["fetch", "origin", "main"]);

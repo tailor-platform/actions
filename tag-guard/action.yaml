@@ -35,7 +35,7 @@ runs:
         BRANCH="${TARGET_BRANCH#refs/heads/}"
         if [ -n "$GH_TOKEN" ]; then
           git -c "http.${GITHUB_SERVER_URL}/.extraheader=" \
-            -c "http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)" \
+            -c "http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')" \
             fetch origin "$BRANCH"
         else
           git fetch origin "$BRANCH"
