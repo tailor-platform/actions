@@ -153,7 +153,9 @@ runs:
 
         # Probe instead of assuming `setup update`: older plugins lack it and regenerate one target per `setup ci <kind>` run.
         REGENERATE_HINT="Re-run \`tailor setup\` to regenerate"
-        if SETUP_HELP=$($RUN tailor setup --help 2>&1) && grep -qE '^[[:space:]]+update([[:space:]]|$)' <<< "$SETUP_HELP"; then
+        if SETUP_HELP=$($RUN tailor setup --help 2>&1) \
+          && SETUP_HELP=$(printf '%s\n' "$SETUP_HELP" | sed $'s/\x1b\\[[0-9;]*[A-Za-z]//g') \
+          && grep -qE '^[[:space:]]+update([[:space:]]|$)' <<< "$SETUP_HELP"; then
           REGENERATE_HINT="Run \`tailor setup update\` to regenerate every workflow"
         fi
 

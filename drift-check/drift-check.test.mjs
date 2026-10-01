@@ -43,6 +43,9 @@ if [ "$1" = "exec" ] && [ "$2" = "tailor" ] && [ "$3" = "setup" ] && [ "$4" = "-
   if [ "$FAKE_SETUP_HELP" = "update" ] || [ "$FAKE_SETUP_HELP" = "fail" ]; then
     echo "  update                          Regenerate every workflow recorded in .github/tailor.lock."
   fi
+  if [ "$FAKE_SETUP_HELP" = "colored-update" ]; then
+    printf '  \\033[1mupdate\\033[22m                          Regenerate every workflow recorded in .github/tailor.lock.\\n'
+  fi
   if [ "$FAKE_SETUP_HELP" = "fail" ]; then
     exit 2
   fi
@@ -201,6 +204,13 @@ test("keeps drift findings advisory by default", async (t) => {
 
 test("points the summary at `tailor setup update` when the installed plugin has it", async (t) => {
   const result = await runAction(t, "drift", { setupHelp: "update" });
+
+  assert.equal(result.exitCode, 0);
+  assert.match(result.summary, /Run `tailor setup update` to regenerate every workflow, or add a rule key/);
+});
+
+test("points the summary at `tailor setup update` when the plugin prints its help in color", async (t) => {
+  const result = await runAction(t, "drift", { setupHelp: "colored-update" });
 
   assert.equal(result.exitCode, 0);
   assert.match(result.summary, /Run `tailor setup update` to regenerate every workflow, or add a rule key/);
