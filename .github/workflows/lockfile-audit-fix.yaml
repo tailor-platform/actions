@@ -1,7 +1,9 @@
 name: Lockfile Audit Auto-fix
 
 # Daily pnpm audit --fix for the root and tests/deploy lockfiles, opened as a
-# PR via create-signed-pr. Complements lockfile-audit.yaml's PR/push gate by
+# single PR via create-signed-pr. The two directories run as sequential steps
+# in one job rather than a matrix so both fixes land in one PR instead of one
+# PR per lockfile. Complements lockfile-audit.yaml's PR/push gate by
 # clearing pre-existing advisories on a schedule instead of blocking reviews.
 #
 # Uses GITHUB_TOKEN, so a PR opened here suppresses every pull_request-triggered
@@ -26,22 +28,12 @@ permissions: {}
 
 jobs:
   audit-fix:
-    name: Audit and fix lockfile (${{ matrix.working-directory }})
+    name: Audit and fix lockfiles
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     permissions:
       contents: write
       pull-requests: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - working-directory: "."
-            prefix: ""
-            branch: chore/lockfile-audit-fix
-          - working-directory: "tests/deploy"
-            prefix: "tests/deploy/"
-            branch: chore/lockfile-audit-fix-tests-deploy
 
     steps:
       - name: Checkout
@@ -57,32 +49,73 @@ jobs:
         with:
           node-version: 24.21.0
 
-      - name: Audit and fix lockfile
-        id: audit_fix
+      - name: Audit and fix lockfile (.)
+        id: audit_root
         uses: $/lockfile-audit-fix
         with:
-          working-directory: ${{ matrix.working-directory }}
+          working-directory: "."
 
-      - name: Determine which files to commit
-        id: paths
-        if: steps.audit_fix.outputs.changed == 'true'
+      # !cancelled() rather than continue-on-error on audit_root: a failure in
+      # one directory should still let the other be fixed (what the matrix's
+      # fail-fast: false used to give), but must keep the job red.
+      - name: Audit and fix lockfile (tests/deploy)
+        id: audit_deploy
+        if: ${{ !cancelled() }}
+        uses: $/lockfile-audit-fix
+        with:
+          working-directory: "tests/deploy"
+
+      # Gated on outcome too, not just changed: audit-fix sets changed=true
+      # before building its summary, so a later failure there can leave that
+      # directory's files modified — which must not land in the PR now that
+      # !cancelled() keeps this job going past a failed step.
+      - name: Collect changes for pull request
+        id: changes
+        if: ${{ !cancelled() }}
         env:
-          PREFIX: ${{ matrix.prefix }}
+          ROOT_INCLUDED: ${{ steps.audit_root.outcome == 'success' && steps.audit_root.outputs.changed == 'true' }}
+          ROOT_SUMMARY: ${{ steps.audit_root.outputs.summary }}
+          DEPLOY_INCLUDED: ${{ steps.audit_deploy.outcome == 'success' && steps.audit_deploy.outputs.changed == 'true' }}
+          DEPLOY_SUMMARY: ${{ steps.audit_deploy.outputs.summary }}
         run: |
+          header='Automated fix from `pnpm audit --fix`.'
+          section() {
+            local summary="${2#"$header"}"
+            summary="${summary#$'\n'}"
+            summary="${summary#$'\n'}"
+            printf '\n### `%s`\n\n%s\n' "$1" "$summary"
+          }
+          pathspecs=()
+          body="$header"$'\n'
+          if [ "$ROOT_INCLUDED" = "true" ]; then
+            pathspecs+=(pnpm-lock.yaml pnpm-workspace.yaml package.json)
+            body+="$(section "." "$ROOT_SUMMARY")"$'\n'
+          fi
+          if [ "$DEPLOY_INCLUDED" = "true" ]; then
+            pathspecs+=(tests/deploy/pnpm-lock.yaml tests/deploy/pnpm-workspace.yaml tests/deploy/package.json)
+            body+="$(section "tests/deploy" "$DEPLOY_SUMMARY")"$'\n'
+          fi
+          if [ "${#pathspecs[@]}" -eq 0 ]; then
+            exit 0
+          fi
+          delimiter="EOF_$(openssl rand -hex 16)"
           {
-            echo "list<<EOF"
-            git status --porcelain -- "${PREFIX}pnpm-lock.yaml" "${PREFIX}pnpm-workspace.yaml" "${PREFIX}package.json" | cut -c4-
-            echo "EOF"
+            echo "list<<${delimiter}"
+            git status --porcelain -- "${pathspecs[@]}" | cut -c4-
+            echo "${delimiter}"
+            echo "body<<${delimiter}"
+            printf '%s' "$body"
+            echo "${delimiter}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Create or update pull request
-        if: steps.audit_fix.outputs.changed == 'true'
+        if: ${{ !cancelled() && steps.changes.outputs.list != '' }}
         uses: $/create-signed-pr
         with:
           token: ${{ github.token }}
-          branch: ${{ matrix.branch }}
-          commit-message: "fix(deps): automated lockfile security fix (${{ matrix.working-directory }})"
-          title: "fix(deps): automated lockfile security fix (${{ matrix.working-directory }})"
-          body: ${{ steps.audit_fix.outputs.summary }}
-          paths: ${{ steps.paths.outputs.list }}
+          branch: chore/lockfile-audit-fix
+          commit-message: "fix(deps): automated lockfile security fix"
+          title: "fix(deps): automated lockfile security fix"
+          body: ${{ steps.changes.outputs.body }}
+          paths: ${{ steps.changes.outputs.list }}
           labels: security
