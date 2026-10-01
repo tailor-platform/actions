@@ -8,6 +8,13 @@ inputs:
   target-branch:
     description: Branch the tag must be reachable from (e.g. main)
     required: true
+  github-token:
+    description: >-
+      Token used only to fetch the target branch, for a checkout with
+      persist-credentials: false. When empty, the fetch relies on the
+      credentials the checkout persisted.
+    required: false
+    default: ""
 
 outputs:
   on-branch:
@@ -22,10 +29,17 @@ runs:
       shell: bash
       env:
         TARGET_BRANCH: ${{ inputs.target-branch }}
+        GH_TOKEN: ${{ inputs.github-token }}
       run: |
         # Accept both short names (main) and fully-qualified refs (refs/heads/main).
         BRANCH="${TARGET_BRANCH#refs/heads/}"
-        git fetch origin "$BRANCH"
+        if [ -n "$GH_TOKEN" ]; then
+          git -c "http.${GITHUB_SERVER_URL}/.extraheader=" \
+            -c "http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')" \
+            fetch origin "$BRANCH"
+        else
+          git fetch origin "$BRANCH"
+        fi
         # GITHUB_SHA may be a tag object for annotated tags; peel to its commit
         # so --is-ancestor (which expects commits) is reliable.
         COMMIT="$(git rev-parse "${GITHUB_SHA}^{commit}")"

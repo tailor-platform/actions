@@ -28,6 +28,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm test:cli-bin-contract
       - run: pnpm test:drift-check
+      - run: pnpm test:plan
+      - run: pnpm test:tag-guard
 
   internal-refs:
     runs-on: ubuntu-latest

@@ -100,6 +100,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -124,7 +125,7 @@ jobs:
 | `working-directory` | No | `.` | Working directory (for monorepo setups) |
 | `platform-client-id` | Yes | | OAuth2 client ID for machine user |
 | `platform-client-secret` | Yes | | OAuth2 client secret for machine user |
-| `github-token` | No | | GitHub token for commenting on PR. When omitted, no PR comment is posted (step summary only). |
+| `github-token` | No | | GitHub token for commenting on PR, also used to fetch the base branch so the checkout can use `persist-credentials: false`. When omitted, no PR comment is posted (step summary only) and the fetch relies on the credentials the checkout persisted. |
 
 #### Outputs
 
@@ -172,7 +173,14 @@ Run `tailor generate` and fail if it produces uncommitted changes. Catches gener
 
 ### [`tag-guard`](tag-guard/action.yaml)
 
-Guard that a pushed tag is reachable from a target branch before allowing a deploy to proceed. Skips gracefully when the tag is outside the branch (not an error).
+Guard that a pushed tag is reachable from a target branch before allowing a deploy to proceed. Skips gracefully when the tag is outside the branch (not an error). The caller must check out the repository with full history (`fetch-depth: 0`).
+
+#### Inputs
+
+| Name | Required | Default | Description |
+|------|----------|---------|-------------|
+| `target-branch` | Yes | | Branch the tag must be reachable from (e.g. `main`) |
+| `github-token` | No | | Token used only to fetch the target branch, so the checkout can use `persist-credentials: false`. When empty, the fetch relies on the credentials the checkout persisted |
 
 ---
 
