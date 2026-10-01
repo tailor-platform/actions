@@ -160,6 +160,12 @@ describe("matchesPathPatterns", () => {
     assert.equal(matches("docs/**/*.md", "docs/a/markdown/file.md"), true);
   });
 
+  test("**/ may match nothing only at the start of a path segment", () => {
+    assert.equal(matches("foo**/bar", "foo/bar"), true);
+    assert.equal(matches("foo**/bar", "foox/y/bar"), true);
+    assert.equal(matches("foo**/bar", "foobar"), false);
+  });
+
   test("wildcards match file names starting with a dot", () => {
     assert.equal(matches("*", ".env"), true);
     assert.equal(matches("apps/**", "apps/web/.eslintrc.json"), true);

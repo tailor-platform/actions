@@ -40,8 +40,9 @@ inputs:
       it, so a later line can include a path again. Any other character
       matches literally, except `?+[]{}()\`, which are rejected because
       other glob tools give them different meanings. A `!` line needs at
-      least one line without `!`. The diff is relevant when a changed
-      file matches either this input or `relevant-paths`.
+      least one line without `!`. Leading and trailing whitespace on each
+      line is ignored, as in `relevant-paths`. The diff is relevant when a
+      changed file matches either this input or `relevant-paths`.
     required: false
     default: ""
   github-token:

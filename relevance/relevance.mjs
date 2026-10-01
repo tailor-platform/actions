@@ -45,8 +45,9 @@ function patternToRegExp(pattern) {
   for (let i = 0; i < pattern.length; i++) {
     const char = pattern[i];
     if (char === "*" && pattern[i + 1] === "*") {
+      const segmentStart = i === 0 || pattern[i - 1] === "/";
       while (pattern[i + 1] === "*") i += 1;
-      if (pattern[i + 1] === "/") {
+      if (segmentStart && pattern[i + 1] === "/") {
         i += 1;
         // Consecutive `**/` mean the same as one; kept separate, each optional
         // group backtracks against the others and rejection time grows exponentially.
