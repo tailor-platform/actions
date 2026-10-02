@@ -1,7 +1,7 @@
 name: Lockfile Audit Auto-fix
 
 # Daily pnpm audit --fix for the root and tests/deploy lockfiles, opened as a
-# PR via create-signed-pr. Complements lockfile-audit.yaml's PR/push gate by
+# single PR via create-signed-pr. Complements lockfile-audit.yaml's PR/push gate by
 # clearing pre-existing advisories on a schedule instead of blocking reviews.
 #
 # Uses GITHUB_TOKEN, so a PR opened here suppresses every pull_request-triggered
@@ -26,22 +26,12 @@ permissions: {}
 
 jobs:
   audit-fix:
-    name: Audit and fix lockfile (${{ matrix.working-directory }})
+    name: Audit and fix lockfiles
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     permissions:
       contents: write
       pull-requests: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - working-directory: "."
-            prefix: ""
-            branch: chore/lockfile-audit-fix
-          - working-directory: "tests/deploy"
-            prefix: "tests/deploy/"
-            branch: chore/lockfile-audit-fix-tests-deploy
 
     steps:
       - name: Checkout
@@ -57,32 +47,58 @@ jobs:
         with:
           node-version: 24.21.0
 
-      - name: Audit and fix lockfile
-        id: audit_fix
+      - name: Audit and fix lockfile (.)
+        id: audit_root
         uses: $/lockfile-audit-fix
         with:
-          working-directory: ${{ matrix.working-directory }}
+          working-directory: "."
+
+      # !cancelled() rather than continue-on-error: a failure in one directory
+      # should still let the other be fixed, but must keep the job red.
+      - name: Audit and fix lockfile (tests/deploy)
+        id: audit_deploy
+        if: ${{ !cancelled() }}
+        uses: $/lockfile-audit-fix
+        with:
+          working-directory: "tests/deploy"
 
       - name: Determine which files to commit
         id: paths
-        if: steps.audit_fix.outputs.changed == 'true'
-        env:
-          PREFIX: ${{ matrix.prefix }}
+        if: ${{ !cancelled() && (steps.audit_root.outputs.changed == 'true' || steps.audit_deploy.outputs.changed == 'true') }}
         run: |
           {
             echo "list<<EOF"
-            git status --porcelain -- "${PREFIX}pnpm-lock.yaml" "${PREFIX}pnpm-workspace.yaml" "${PREFIX}package.json" | cut -c4-
+            git status --porcelain -- pnpm-lock.yaml pnpm-workspace.yaml package.json tests/deploy/pnpm-lock.yaml tests/deploy/pnpm-workspace.yaml tests/deploy/package.json | cut -c4-
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Build pull request body
+        id: body
+        if: ${{ !cancelled() && steps.paths.outputs.list != '' }}
+        env:
+          ROOT_CHANGED: ${{ steps.audit_root.outputs.changed }}
+          ROOT_SUMMARY: ${{ steps.audit_root.outputs.summary }}
+          DEPLOY_CHANGED: ${{ steps.audit_deploy.outputs.changed }}
+          DEPLOY_SUMMARY: ${{ steps.audit_deploy.outputs.summary }}
+        run: |
+          header='Automated fix from `pnpm audit --fix`.'
+          delimiter="EOF_$(openssl rand -hex 16)"
+          {
+            echo "text<<${delimiter}"
+            echo "$header"
+            if [ "$ROOT_CHANGED" = "true" ]; then printf '\n### `.`%s\n' "${ROOT_SUMMARY#"$header"}"; fi
+            if [ "$DEPLOY_CHANGED" = "true" ]; then printf '\n### `tests/deploy`%s\n' "${DEPLOY_SUMMARY#"$header"}"; fi
+            echo "${delimiter}"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Create or update pull request
-        if: steps.audit_fix.outputs.changed == 'true'
+        if: ${{ !cancelled() && steps.paths.outputs.list != '' }}
         uses: $/create-signed-pr
         with:
           token: ${{ github.token }}
-          branch: ${{ matrix.branch }}
-          commit-message: "fix(deps): automated lockfile security fix (${{ matrix.working-directory }})"
-          title: "fix(deps): automated lockfile security fix (${{ matrix.working-directory }})"
-          body: ${{ steps.audit_fix.outputs.summary }}
+          branch: chore/lockfile-audit-fix
+          commit-message: "fix(deps): automated lockfile security fix"
+          title: "fix(deps): automated lockfile security fix"
+          body: ${{ steps.body.outputs.text }}
           paths: ${{ steps.paths.outputs.list }}
           labels: security
