@@ -46,6 +46,8 @@
  */
 
 import { execFileSync, execSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 
 const licenseGroups = {
   // https://github.com/google/licenseclassifier/blob/e6a9bb99b5a6f71d5a34336b8245e305f5430f99/license_type.go#L225
@@ -302,6 +304,16 @@ function isLicenseAllowed(licenseString, allowSet) {
   return splitMembers(expr).every((l) => allowSet.has(l));
 }
 
+function isInPnpmWorkspace(startDir) {
+  let dir = resolve(startDir);
+  for (;;) {
+    if (existsSync(join(dir, "pnpm-workspace.yaml"))) return true;
+    const parent = dirname(dir);
+    if (parent === dir) return false;
+    dir = parent;
+  }
+}
+
 function main() {
   let groups, allowSet, packageExceptions;
   try {
@@ -315,9 +327,12 @@ function main() {
   }
 
   console.log(`Checking licenses (groups: ${groups.join(", ")})...\n`);
-  execSync("pnpm licenses list", { stdio: "inherit" });
+  // Not `-r` unconditionally: pnpm 10 crashes on `licenses list -r` in a
+  // standalone project with a `file:` dependency on its own subdirectory.
+  const listCommand = isInPnpmWorkspace(process.cwd()) ? "pnpm licenses list -r" : "pnpm licenses list";
+  execSync(listCommand, { stdio: "inherit" });
 
-  const output = execSync("pnpm licenses list --json");
+  const output = execSync(`${listCommand} --json`);
   const licensesJson = JSON.parse(output.toString());
 
   const violations = [];
@@ -363,4 +378,5 @@ export {
   isPackageException,
   splitMembers,
   isLicenseAllowed,
+  isInPnpmWorkspace,
 };
