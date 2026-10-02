@@ -1,5 +1,17 @@
 # tailor-platform-actions
 
+## 2.4.0
+
+### Minor Changes
+
+- d762f26: `relevance` accepts `path-patterns`: newline-separated globs with `*`, `**`, and leading `!` exclusions, checked in order so the last line matching a changed file decides it. Other glob characters (`?+[]{}()\`) are rejected, since tools disagree on their meaning. A workflow can use this instead of `on.<event>.paths`, so its checks always report a status and can be required — a workflow skipped by `on.paths` leaves its required checks pending, while a job skipped by `if` reports success. `relevant-paths` is unchanged, and the diff is relevant when a changed file matches either input.
+- 104b5ad: `plan` and `tag-guard` no longer need the checkout to persist its credentials. `plan` authenticates its base-branch fetch with `github-token`, and `tag-guard` takes a new optional `github-token` input for its target-branch fetch; the token is passed to that one `git fetch` and is never written to `.git/config`, so callers can check out with `persist-credentials: false`. Without a token, both fetch as before, relying on the credentials the checkout persisted.
+
+### Patch Changes
+
+- 0495746: `check-licenses` now runs `pnpm licenses list -r` when the working directory is inside a pnpm workspace (a `pnpm-workspace.yaml` in it or any parent directory, whatever the file contains). Starting with pnpm 12.8.0, `pnpm licenses list` without `-r` only reports the current project's own dependencies, so at a workspace root whose `package.json` has no dependencies it returned `{}` and the action passed without checking any of the sub-projects' licenses. With `-r`, every pnpm version checks the whole workspace again, matching how earlier pnpm versions (checked on 10.33.0 and 12.4.1) behaved without it. Projects with no `pnpm-workspace.yaml` above them keep running without `-r`, since pnpm 10 crashes on `licenses list -r` in such a project when it has a `file:` dependency on its own subdirectory.
+- 4f17cc0: `drift-check` now points the job summary at `tailor setup update` when the installed `@tailor-platform/sdk-plugin-setup` provides it, so a drifted repository can regenerate every workflow recorded in `.github/tailor.lock` with one command instead of re-running `tailor setup ci <kind>` with the original flags for each target. Plugins without `setup update` keep the previous "Re-run `tailor setup` to regenerate" hint.
+
 ## 2.3.5
 
 ### Patch Changes
