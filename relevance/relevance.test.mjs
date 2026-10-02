@@ -1,6 +1,17 @@
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { ZERO_SHA, parseRelevantPaths, determineRelevance } from "./relevance.mjs";
+import {
+  ZERO_SHA,
+  parseRelevantPaths,
+  parsePathPatterns,
+  matchesPathPatterns,
+  determineRelevance,
+} from "./relevance.mjs";
 
 describe("parseRelevantPaths", () => {
   test("empty input yields no entries", () => {
@@ -101,6 +112,181 @@ describe("determineRelevance", () => {
       relevantPaths: ["src/"],
       compareCommits: compareCommits([
         { filename: "docs/moved.ts", previous_filename: "src/moved.ts" },
+      ]),
+    });
+    assert.equal(result.relevant, true);
+  });
+});
+
+describe("parsePathPatterns", () => {
+  test("empty input yields no patterns", () => {
+    assert.deepEqual(parsePathPatterns(""), []);
+  });
+
+  test("rejects ! patterns without a pattern that includes anything", () => {
+    assert.throws(() => parsePathPatterns("!docs/**"), /at least one pattern without "!"/);
+  });
+
+  test("rejects characters other tools treat as wildcards, so a pattern never means something else", () => {
+    for (const pattern of ["*.jsx?", "a+.txt", "[CB]at.md", "x].md", "{a,b}.md", "@(a).md", "a)b", "\\*.md"]) {
+      assert.throws(
+        () => parsePathPatterns(pattern),
+        new RegExp(`Invalid path pattern "${pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`),
+        pattern,
+      );
+    }
+  });
+});
+
+describe("matchesPathPatterns", () => {
+  const matches = (patterns, file) => matchesPathPatterns(file, parsePathPatterns(patterns));
+
+  test("* does not cross a slash", () => {
+    assert.equal(matches("*.js", "app.js"), true);
+    assert.equal(matches("*.js", "js/app.js"), false);
+  });
+
+  test("** crosses slashes", () => {
+    assert.equal(matches("**.js", "src/js/app.js"), true);
+  });
+
+  test("a leading **/ also matches at the repository root", () => {
+    assert.equal(matches("**/README.md", "README.md"), true);
+    assert.equal(matches("**/README.md", "js/README.md"), true);
+  });
+
+  test("** between directories matches zero or more of them", () => {
+    assert.equal(matches("docs/**/*.md", "docs/README.md"), true);
+    assert.equal(matches("docs/**/*.md", "docs/a/markdown/file.md"), true);
+  });
+
+  test("**/ may match nothing only at the start of a path segment", () => {
+    assert.equal(matches("foo**/bar", "foo/bar"), true);
+    assert.equal(matches("foo**/bar", "foox/y/bar"), true);
+    assert.equal(matches("foo**/bar", "foobar"), false);
+  });
+
+  test("wildcards match file names starting with a dot", () => {
+    assert.equal(matches("*", ".env"), true);
+    assert.equal(matches("apps/**", "apps/web/.eslintrc.json"), true);
+  });
+
+  test("other characters match literally", () => {
+    assert.equal(matches("a.b", "a.b"), true);
+    assert.equal(matches("a.b", "aXb"), false);
+  });
+
+  test("a ! after the first character matches literally", () => {
+    assert.equal(matches("a!b.md", "a!b.md"), true);
+  });
+
+  test("** matches file names containing a newline, which git allows", () => {
+    assert.equal(matches("src/**", "src/a\nb.ts"), true);
+    assert.equal(matches("**", "a\nb.ts"), true);
+  });
+
+  test("characters outside the BMP, such as emoji, match literally and are matched by *", () => {
+    assert.equal(matches("docs/😀.md", "docs/😀.md"), true);
+    assert.equal(matches("docs/*.md", "docs/😀.md"), true);
+  });
+
+  // node:test cannot interrupt a synchronous test body, so slow matches run in a
+  // child process that a timeout can kill.
+  const matchInChildProcess = (patterns, files) => {
+    const script = `
+      import { matchesPathPatterns, parsePathPatterns } from ${JSON.stringify(
+        pathToFileURL(join(import.meta.dirname, "relevance.mjs")).href,
+      )};
+      const patterns = parsePathPatterns(${JSON.stringify(patterns)});
+      const files = ${JSON.stringify(files)};
+      process.stdout.write(JSON.stringify(files.map((file) => matchesPathPatterns(file, patterns))));
+    `;
+    const dir = mkdtempSync(join(tmpdir(), "relevance-"));
+    const file = join(dir, "match.mjs");
+    writeFileSync(file, script);
+    const result = spawnSync(process.execPath, [file], { encoding: "utf8", timeout: 5000 });
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(result.signal, null, "matching did not finish within 5s");
+    return JSON.parse(result.stdout);
+  };
+
+  test("repeated **/ segments do not make a non-matching path slow to reject", () => {
+    assert.deepEqual(
+      matchInChildProcess(`${"**/".repeat(30)}X`, [`${"a/".repeat(40)}Y`, `${"a/".repeat(40)}X`]),
+      [false, true],
+    );
+  });
+
+  test("many * in one pattern do not make a non-matching path slow to reject", () => {
+    assert.deepEqual(
+      matchInChildProcess(`${"*a".repeat(20)}b`, [`${"a".repeat(60)}c`, `${"a".repeat(60)}b`]),
+      [false, true],
+    );
+  });
+
+  test("a pattern must match the whole path", () => {
+    assert.equal(matches("docs", "docs/readme.md"), false);
+    assert.equal(matches("docs", "my-docs"), false);
+  });
+
+  test("a later ! pattern excludes a path an earlier pattern included", () => {
+    assert.equal(matches("*.md\n!README.md", "hello.md"), true);
+    assert.equal(matches("*.md\n!README.md", "README.md"), false);
+  });
+
+  test("a positive pattern after a ! pattern includes the path again", () => {
+    assert.equal(matches("*.md\n!README.md\nREADME*", "README.md"), true);
+    assert.equal(matches("*.md\n!README.md\nREADME*", "README.doc"), true);
+  });
+});
+
+describe("determineRelevance with path patterns", () => {
+  const compareCommits = (files) => async () => ({
+    files,
+    merge_base_commit: { sha: "merge-base-sha" },
+  });
+
+  test("a changed file matching a path pattern is relevant", async () => {
+    const result = await determineRelevance({
+      shaBase: "base",
+      shaHead: "head",
+      relevantPaths: [],
+      pathPatterns: parsePathPatterns("apps/*/frontend/**"),
+      compareCommits: compareCommits([{ filename: "apps/erp/frontend/src/main.tsx" }]),
+    });
+    assert.equal(result.relevant, true);
+  });
+
+  test("a changed file excluded by a ! pattern is not relevant", async () => {
+    const result = await determineRelevance({
+      shaBase: "base",
+      shaHead: "head",
+      relevantPaths: [],
+      pathPatterns: parsePathPatterns("apps/erp/backend/**\n!apps/erp/backend/**/*.md"),
+      compareCommits: compareCommits([{ filename: "apps/erp/backend/docs/README.md" }]),
+    });
+    assert.equal(result.relevant, false);
+  });
+
+  test("a match in either relevant paths or path patterns is relevant", async () => {
+    const result = await determineRelevance({
+      shaBase: "base",
+      shaHead: "head",
+      relevantPaths: ["pnpm-lock.yaml"],
+      pathPatterns: parsePathPatterns("apps/**"),
+      compareCommits: compareCommits([{ filename: "pnpm-lock.yaml" }]),
+    });
+    assert.equal(result.relevant, true);
+  });
+
+  test("a file renamed out of a path pattern is still relevant", async () => {
+    const result = await determineRelevance({
+      shaBase: "base",
+      shaHead: "head",
+      relevantPaths: [],
+      pathPatterns: parsePathPatterns("modules/**"),
+      compareCommits: compareCommits([
+        { filename: "archive/users.ts", previous_filename: "modules/users.ts" },
       ]),
     });
     assert.equal(result.relevant, true);

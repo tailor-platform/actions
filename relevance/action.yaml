@@ -23,9 +23,26 @@ inputs:
       Newline-separated list of paths that make the diff relevant. A line
       ending in "/" matches as a prefix against changed file paths;
       anything else must match a changed file path exactly. Empty means no
-      path makes the diff relevant on its own — only sha-base being the
-      all-zero SHA, or the compare API's file list hitting its 300-entry
-      cap (treated as possibly truncated), will set relevant=true.
+      path in this input makes the diff relevant; a match in path-patterns,
+      sha-base being the all-zero SHA, or the compare API's file list
+      hitting its 300-entry cap (treated as possibly truncated) still sets
+      relevant=true.
+    required: false
+    default: ""
+  path-patterns:
+    description: >-
+      Newline-separated glob patterns matched against the whole changed
+      file path. `*` matches any characters except `/`, `**` matches any
+      characters including `/` (a leading `**/` also matches at the
+      repository root), and both match names starting with a dot. A
+      leading `!` excludes paths an earlier line included; lines are
+      checked in order and the last one matching a changed file decides
+      it, so a later line can include a path again. Any other character
+      matches literally, except `?+[]{}()\`, which are rejected because
+      other glob tools give them different meanings. A `!` line needs at
+      least one line without `!`. Leading and trailing whitespace on each
+      line is ignored, as in `relevant-paths`. The diff is relevant when a
+      changed file matches either this input or `relevant-paths`.
     required: false
     default: ""
   github-token:
@@ -55,4 +72,5 @@ runs:
         SHA_BASE: ${{ inputs.sha-base }}
         SHA_HEAD: ${{ inputs.sha-head }}
         RELEVANT_PATHS: ${{ inputs.relevant-paths }}
+        PATH_PATTERNS: ${{ inputs.path-patterns }}
       run: node "${{ github.action_path }}/relevance.mjs"
