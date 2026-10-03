@@ -12,7 +12,7 @@ branch, not `main`.
 
 ## Actions
 
-### [`deploy`](deploy/action.yaml)
+### [`deploy`](deploy/README.md)
 
 Deploy an application to Tailor Platform. Handles token acquisition, code generation, and deployment.
 
@@ -59,6 +59,7 @@ jobs:
 |------|-------------|
 | `workspace-id` | Workspace ID passed in |
 | `app-url` | Application URL (GraphQL endpoint) of the deployed workspace. Available to subsequent steps, e.g. for passing to a static website build slot. |
+| `frontend-urls` | JSON object mapping frontendPlugin site names to published URLs, e.g. `{"web":"https://web.example.com"}`. `{}` when none were deployed, including with older SDKs. |
 
 #### Secrets and variables setup
 
@@ -264,7 +265,7 @@ Send a deployment notification. Currently supports Slack via Bot token and chann
 
 ---
 
-### [`preview-deploy`](preview-deploy/action.yaml)
+### [`preview-deploy`](preview-deploy/README.md)
 
 Deploy a per-PR preview workspace. On the first push to a PR the workspace is created; subsequent pushes reuse the existing workspace (identified by the workspace ID recorded in the PR comment by `preview-comment`). Run on `pull_request` events (not `closed`).
 
@@ -328,6 +329,7 @@ jobs:
 | `workspace-id` | Workspace ID of the preview deployment |
 | `workspace-name` | Full workspace name (e.g. `my-app-pr-42`) |
 | `app-url` | Application URL (GraphQL endpoint) of the preview workspace |
+| `frontend-urls` | JSON object mapping frontendPlugin site names to published URLs, e.g. `{"web":"https://web.example.com"}`. `{}` when none were deployed, including with older SDKs. |
 
 ---
 
