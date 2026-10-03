@@ -34,6 +34,9 @@ outputs:
   app-url:
     description: Application URL (GraphQL endpoint) of the deployed workspace
     value: ${{ steps.deploy.outputs.app-url }}
+  frontend-urls:
+    description: JSON object mapping frontendPlugin site names to published URLs; {} when none were deployed
+    value: ${{ steps.deploy.outputs.frontend-urls }}
 
 runs:
   using: composite
@@ -58,7 +61,9 @@ runs:
 
     - name: Deploy
       id: deploy
-      uses: tailor-platform/actions/_internal/deploy@053ee1c31460fc04639c466e5f483ea3150a9a31
-      with:
-        workspace-id: ${{ inputs.workspace-id }}
-        working-directory: ${{ inputs.working-directory }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        TAILOR_PLATFORM_WORKSPACE_ID: ${{ inputs.workspace-id }}
+        DEPLOY_SCRIPT: ${{ github.action_path }}/../_internal/deploy/deploy.sh
+      run: bash "$DEPLOY_SCRIPT"

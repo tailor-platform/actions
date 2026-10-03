@@ -11,7 +11,6 @@ import { parse } from "yaml";
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const executeFile = promisify(execFile);
 const directCliActions = [
-  "_internal/deploy/action.yaml",
   "_internal/erd-export/action.yaml",
   "_internal/sdk-setup/action.yaml",
   "drift-check/action.yaml",
@@ -486,4 +485,10 @@ test("discovers only action definitions tracked by Git", async (context) => {
 
 test("all v2 action definitions use the v2 CLI contract", async () => {
   verifyActionSources(await discoverActionSources(repositoryRoot));
+});
+
+test("the shared deploy script uses the v2 CLI contract", async () => {
+  const script = await fs.readFile(path.join(repositoryRoot, "_internal/deploy/deploy.sh"), "utf8");
+  assert(!invokesCli(script, removedCliPattern));
+  assert(invokesCli(script, v2CliPattern));
 });

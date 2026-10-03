@@ -1,7 +1,7 @@
-name: Deploy and resolve app URL
+name: Deploy and resolve URLs
 description: >-
   Run tailor deploy and show for a given workspace.
-  Internal action shared by deploy and preview-deploy.
+  Internal action using the deploy script shared by deploy and preview-deploy.
   Requires TAILOR_RUN to be set (by sdk-setup) before this action runs.
 
 inputs:
@@ -16,28 +16,19 @@ inputs:
 outputs:
   app-url:
     description: Application URL (GraphQL endpoint) of the deployed workspace
-    value: ${{ steps.show.outputs.app-url }}
+    value: ${{ steps.deploy.outputs.app-url }}
+  frontend-urls:
+    description: JSON object mapping frontendPlugin site names to published URLs; {} when none were deployed
+    value: ${{ steps.deploy.outputs.frontend-urls }}
 
 runs:
   using: composite
   steps:
-    - name: Deploy
+    - name: Deploy and resolve URLs
+      id: deploy
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
         TAILOR_PLATFORM_WORKSPACE_ID: ${{ inputs.workspace-id }}
-      run: $TAILOR_RUN tailor deploy --yes
-
-    - name: Resolve app URL
-      id: show
-      shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      env:
-        TAILOR_PLATFORM_WORKSPACE_ID: ${{ inputs.workspace-id }}
-      run: |
-        if APP_JSON=$($TAILOR_RUN tailor show --json 2>/dev/null); then
-          APP_URL=$(echo "$APP_JSON" | jq -r '.url // ""')
-        else
-          APP_URL=""
-        fi
-        echo "app-url=$APP_URL" >> "$GITHUB_OUTPUT"
+        DEPLOY_SCRIPT: ${{ github.action_path }}/deploy.sh
+      run: bash "$DEPLOY_SCRIPT"
