@@ -32,6 +32,13 @@ outputs:
       pnpm-workspace.yaml or package.json's `pnpm.overrides`, depending on
       pnpm version)
     value: ${{ steps.fix.outputs.changed }}
+  changed-files:
+    description: >-
+      Newline-separated repo-root-relative existing workspace manifest, lockfile,
+      and root configuration paths to publish together. Empty when unchanged.
+      Includes unchanged files needed for the verified state; use the entire list.
+      A failed frozen install or required deletion fails the action without outputs.
+    value: ${{ steps.fix.outputs.changed-files }}
   runtime-deps-changed:
     description: >-
       'true' if any non-private package's runtime (non-dev) dependencies

@@ -62,19 +62,9 @@ jobs:
         with:
           working-directory: "tests/deploy"
 
-      - name: Determine which files to commit
-        id: paths
-        if: ${{ !cancelled() && (steps.audit_root.outputs.changed == 'true' || steps.audit_deploy.outputs.changed == 'true') }}
-        run: |
-          {
-            echo "list<<EOF"
-            git status --porcelain -- pnpm-lock.yaml pnpm-workspace.yaml package.json tests/deploy/pnpm-lock.yaml tests/deploy/pnpm-workspace.yaml tests/deploy/package.json | cut -c4-
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
       - name: Build pull request body
         id: body
-        if: ${{ !cancelled() && steps.paths.outputs.list != '' }}
+        if: ${{ success() && (steps.audit_root.outputs.changed == 'true' || steps.audit_deploy.outputs.changed == 'true') }}
         env:
           ROOT_CHANGED: ${{ steps.audit_root.outputs.changed }}
           ROOT_SUMMARY: ${{ steps.audit_root.outputs.summary }}
@@ -92,7 +82,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Create or update pull request
-        if: ${{ !cancelled() && steps.paths.outputs.list != '' }}
+        if: ${{ success() && (steps.audit_root.outputs.changed == 'true' || steps.audit_deploy.outputs.changed == 'true') }}
         uses: $/create-signed-pr
         with:
           token: ${{ github.token }}
@@ -100,5 +90,7 @@ jobs:
           commit-message: "fix(deps): automated lockfile security fix"
           title: "fix(deps): automated lockfile security fix"
           body: ${{ steps.body.outputs.text }}
-          paths: ${{ steps.paths.outputs.list }}
+          paths: |
+            ${{ steps.audit_root.outputs.changed-files }}
+            ${{ steps.audit_deploy.outputs.changed-files }}
           labels: security
