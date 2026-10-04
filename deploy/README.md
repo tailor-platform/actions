@@ -8,10 +8,10 @@ Deploy an application to an existing Tailor Platform workspace. See the [usage a
 |------|-------|-------------|
 | `workspace-id` | String | The workspace ID passed to the action. |
 | `app-url` | String | Backend application URL (GraphQL endpoint), or an empty string if unavailable. |
-| `frontend-urls` | JSON object string | Published frontendPlugin URLs keyed by site name, such as `{"web":"https://web.example.com","admin":"https://admin.example.com"}`. |
+| `frontend-urls` | JSON object string | Static website URLs keyed by site name, such as `{"web":"https://web.example.com","admin":"https://admin.example.com"}`. |
 
-`frontend-urls` comes from `tailor deploy --json` hooks whose `pluginId` is `@tailor-platform/frontend`, using `outputs.frontends[].site` and `.url`. It includes every frontend across comma-separated `TAILOR_PLATFORM_SDK_CONFIG_PATH` configs. The config list is passed unchanged to the SDK in a single deploy, so builds and uploads complete before the output is available. If a site appears more than once in the result, the last URL wins.
+After `tailor deploy` completes, the action runs `tailor staticwebsite list --json` to collect every static website in the workspace. This includes frontendPlugin sites after their builds and uploads complete, as well as existing sites. Comma-separated `TAILOR_PLATFORM_SDK_CONFIG_PATH` configs are deployed together as before; the URL lookup covers the whole workspace and does not depend on deploy hook outputs.
 
-The output is `{}` when the plugin did not report any frontends, including older SDKs without `deployedHooks`. Static websites uploaded outside frontendPlugin are not included. A failed deploy or frontend build/upload fails the action.
+The output is `{}` when the workspace has no static websites. It also works with SDK versions without `deployedHooks`. A failed deploy, frontend build/upload, or website lookup fails the action.
 
 Use `fromJSON(steps.deploy.outputs.frontend-urls)['web']` to read one site's URL. To pass the map to a later job, declare a job output; see the [preview example](../preview-deploy/README.md#use-a-frontend-url-in-a-later-job).

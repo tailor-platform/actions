@@ -11,11 +11,7 @@ import { parse } from "yaml";
 const execute = promisify(execFile);
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const actions = ["deploy", "preview-deploy", "_internal/deploy"];
-const frontendHook = (application, frontends) => ({
-  application,
-  pluginId: "@tailor-platform/frontend",
-  outputs: { frontends },
-});
+const web = { name: "web", url: "https://web.example.com" };
 
 async function runDeploy(context, actionName, options = {}) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "deploy-outputs-"));
@@ -38,43 +34,59 @@ appendFileSync(process.env.MOCK_CALLS, JSON.stringify({
 }) + "\\n");
 if (args[0] !== "tailor") process.exit(2);
 if (args[1] === "deploy") {
-  process.stderr.write("frontend build log\\n");
-  process.stdout.write(process.env.MOCK_DEPLOY_JSON);
+  process.stdout.write("Deployment complete (SDK without hook outputs)\\n");
   process.exit(Number(process.env.MOCK_DEPLOY_STATUS));
 }
 if (args[1] === "show") {
   process.stdout.write(process.env.MOCK_SHOW_JSON);
   process.exit(Number(process.env.MOCK_SHOW_STATUS));
 }
+if (args[1] === "staticwebsite" && args[2] === "list") {
+  process.stdout.write(process.env.MOCK_WEBSITES_JSON);
+  process.exit(Number(process.env.MOCK_LIST_STATUS));
+}
 process.exit(2);
 `);
 
-  const actionPath = path.join(repositoryRoot, actionName);
-  const action = parse(await readFile(path.join(actionPath, "action.yaml"), "utf8"));
-  const step = action.runs.steps.find((step) => step.id === "deploy");
-  assert.equal(step["working-directory"], "${{ inputs.working-directory }}");
-  assert.equal(step.env.TAILOR_PLATFORM_WORKSPACE_ID, actionName === "preview-deploy"
+  const action = parse(await readFile(path.join(repositoryRoot, actionName, "action.yaml"), "utf8"));
+  const frontendStep = action.runs.steps.find((step) => step.id === "frontends");
+  assert.equal(frontendStep["working-directory"], "${{ inputs.working-directory }}");
+  assert.equal(frontendStep.env.TAILOR_PLATFORM_WORKSPACE_ID, actionName === "preview-deploy"
     ? "${{ steps.workspace.outputs.workspace-id }}"
     : "${{ inputs.workspace-id }}");
-  const actionEnv = Object.fromEntries(Object.entries(step.env).map(([name, value]) => [
-    name,
-    value.replaceAll("${{ github.action_path }}", actionPath)
-      .replaceAll("${{ inputs.workspace-id }}", "workspace-123")
-      .replaceAll("${{ steps.workspace.outputs.workspace-id }}", "workspace-123"),
-  ]));
-  const result = await execute("bash", ["--noprofile", "--norc", "-eo", "pipefail", "-c", step.run], {
+  let deploySteps;
+  if (actionName === "_internal/deploy") {
+    deploySteps = action.runs.steps.filter((step) => step.id !== "frontends");
+  } else {
+    const deployStep = action.runs.steps.find((step) => step.id === "deploy");
+    assert.equal(deployStep.with["workspace-id"], frontendStep.env.TAILOR_PLATFORM_WORKSPACE_ID);
+    assert.equal(deployStep.with["working-directory"], frontendStep["working-directory"]);
+    const match = deployStep.uses.match(/^tailor-platform\/actions\/_internal\/deploy@([a-f0-9]{40})$/);
+    assert(match, "public actions must use the SHA-pinned internal deploy action");
+    const { stdout } = await execute("git", ["show", `${match[1]}:_internal/deploy/action.yaml`], {
+      cwd: repositoryRoot,
+    });
+    deploySteps = parse(stdout).runs.steps;
+  }
+  for (const step of deploySteps) {
+    assert.equal(step["working-directory"], "${{ inputs.working-directory }}");
+    assert.equal(step.env.TAILOR_PLATFORM_WORKSPACE_ID, "${{ inputs.workspace-id }}");
+  }
+  const script = [...deploySteps, frontendStep].map((step) => step.run).join("\n");
+  const result = await execute("bash", ["--noprofile", "--norc", "-eo", "pipefail", "-c", script], {
     cwd: project,
     env: {
       ...process.env,
-      ...actionEnv,
       TAILOR_RUN: `node ${runner}`,
+      TAILOR_PLATFORM_WORKSPACE_ID: "workspace-123",
       TAILOR_PLATFORM_SDK_CONFIG_PATH: options.config ?? "tailor.config.ts",
       GITHUB_OUTPUT: outputFile,
       MOCK_CALLS: callsFile,
-      MOCK_DEPLOY_JSON: options.rawJson ?? JSON.stringify(options.result ?? { status: "applied" }),
       MOCK_DEPLOY_STATUS: String(options.deployStatus ?? 0),
       MOCK_SHOW_JSON: JSON.stringify(options.show ?? { url: "https://backend.example.com/query" }),
       MOCK_SHOW_STATUS: String(options.showStatus ?? 0),
+      MOCK_WEBSITES_JSON: options.rawJson ?? JSON.stringify(options.websites ?? []),
+      MOCK_LIST_STATUS: String(options.listStatus ?? 0),
     },
   }).then((result) => ({ ...result, code: 0 }), (error) => error);
   const output = await readFile(outputFile, "utf8");
@@ -87,70 +99,44 @@ process.exit(2);
 }
 
 for (const actionName of actions) {
-  test(`${actionName}: exposes only frontendPlugin URLs from all configs`, async (context) => {
+  test(`${actionName}: resolves all workspace sites after multi-config deployment`, async (context) => {
     const config = "apps/backend/tailor.config.ts, apps/admin/tailor.config.ts";
     const result = await runDeploy(context, actionName, {
       config,
-      result: {
-        status: "applied",
-        deployedHooks: [
-          frontendHook("backend", [
-            { site: "web", url: "https://web.example.com", skippedFiles: [] },
-            { site: "docs", url: "https://docs.example.com" },
-          ]),
-          { pluginId: "other-plugin", outputs: { frontends: [{ site: "ignored", url: "wrong" }] } },
-          frontendHook("admin", [{ site: "admin", url: "https://admin.example.com" }]),
-        ],
-      },
+      websites: [web, { name: "admin", url: "https://admin.example.com" },
+        { name: "existing", url: "https://existing.example.com" }],
     });
     assert.equal(result.code, 0, result.stderr);
     assert.deepEqual(JSON.parse(result.outputs["frontend-urls"]), {
-      web: "https://web.example.com",
-      docs: "https://docs.example.com",
+      web: web.url,
       admin: "https://admin.example.com",
+      existing: "https://existing.example.com",
     });
     assert.equal(result.outputs["app-url"], "https://backend.example.com/query");
-    assert.equal(result.action.outputs["frontend-urls"].value, "${{ steps.deploy.outputs.frontend-urls }}");
-    assert.equal(result.action.outputs["app-url"].value, "${{ steps.deploy.outputs.app-url }}");
+    assert.equal(result.action.outputs["frontend-urls"].value, "${{ steps.frontends.outputs.frontend-urls }}");
+    assert.equal(result.action.outputs["app-url"].value, actionName === "_internal/deploy"
+      ? "${{ steps.show.outputs.app-url }}" : "${{ steps.deploy.outputs.app-url }}");
     assert.deepEqual(result.calls, [
-      { args: ["tailor", "deploy", "--yes", "--json"], cwd: result.project, workspace: "workspace-123", config },
+      { args: ["tailor", "deploy", "--yes"], cwd: result.project, workspace: "workspace-123", config },
       { args: ["tailor", "show", "--json"], cwd: result.project, workspace: "workspace-123", config },
+      { args: ["tailor", "staticwebsite", "list", "--json"], cwd: result.project, workspace: "workspace-123", config },
     ]);
-    assert.match(result.stderr, /frontend build log/);
+    assert.match(result.stdout, /SDK without hook outputs/);
   });
 
-  for (const [name, deployedHooks] of [
-    ["older SDK without deployedHooks", undefined],
-    ["no hooks", []],
-    ["unrelated hooks", [{ pluginId: "other-plugin", outputs: { value: 42 } }]],
-    ["empty frontends", [frontendHook("app", [])]],
-    ["missing frontend outputs", [{ pluginId: "@tailor-platform/frontend" }]],
-  ]) {
-    test(`${actionName}: returns {} for ${name}`, async (context) => {
-      const result = await runDeploy(context, actionName, { result: { status: "applied", deployedHooks } });
-      assert.equal(result.code, 0, result.stderr);
-      assert.equal(result.outputs["frontend-urls"], "{}");
-    });
-  }
-
-  test(`${actionName}: keeps the last URL for a repeated site`, async (context) => {
-    const result = await runDeploy(context, actionName, { result: { deployedHooks: [
-      frontendHook("first", [{ site: "web", url: "https://old.example.com" }]),
-      frontendHook("last", [{ site: "web", url: "https://new.example.com" }]),
-    ] } });
+  test(`${actionName}: returns {} when the workspace has no sites`, async (context) => {
+    const result = await runDeploy(context, actionName);
     assert.equal(result.code, 0, result.stderr);
-    assert.deepEqual(JSON.parse(result.outputs["frontend-urls"]), { web: "https://new.example.com" });
+    assert.equal(result.outputs["frontend-urls"], "{}");
   });
 
   test(`${actionName}: writes compact JSON without output injection`, async (context) => {
-    const site = 'web\nforged-output=bad"';
+    const name = 'web\nforged-output=bad"';
     const url = 'https://web.example.com/?x="quoted"&y=1\nother=bad';
-    const result = await runDeploy(context, actionName, { result: {
-      deployedHooks: [frontendHook("app", [{ site, url }])],
-    } });
+    const result = await runDeploy(context, actionName, { websites: [{ name, url }] });
     assert.equal(result.code, 0, result.stderr);
     assert.equal(result.output.trimEnd().split("\n").length, 2);
-    assert.deepEqual(JSON.parse(result.outputs["frontend-urls"]), { [site]: url });
+    assert.deepEqual(JSON.parse(result.outputs["frontend-urls"]), { [name]: url });
   });
 
   for (const [name, options] of [
@@ -158,27 +144,31 @@ for (const actionName of actions) {
     ["show has no URL", { show: {} }],
     ["show URL is null", { show: { url: null } }],
   ]) {
-    test(`${actionName}: preserves frontend URLs and empty app-url when ${name}`, async (context) => {
-      const result = await runDeploy(context, actionName, {
-        ...options,
-        result: { deployedHooks: [frontendHook("app", [{ site: "web", url: "https://web.example.com" }])] },
-      });
+    test(`${actionName}: resolves frontend URLs with empty app-url when ${name}`, async (context) => {
+      const result = await runDeploy(context, actionName, { ...options, websites: [web] });
       assert.equal(result.code, 0, result.stderr);
       assert.equal(result.outputs["app-url"], "");
-      assert.deepEqual(JSON.parse(result.outputs["frontend-urls"]), { web: "https://web.example.com" });
+      assert.deepEqual(JSON.parse(result.outputs["frontend-urls"]), { web: web.url });
     });
   }
 
+  test(`${actionName}: does not query URLs after deployment fails`, async (context) => {
+    const result = await runDeploy(context, actionName, { deployStatus: 7 });
+    assert.equal(result.code, 7);
+    assert.equal(result.output, "");
+    assert.equal(result.calls.length, 1);
+  });
+
   for (const [name, options] of [
-    ["deploy or frontend upload fails", { deployStatus: 7 }],
-    ["deploy JSON is invalid", { rawJson: "not JSON" }],
-    ["deploy JSON is empty", { rawJson: "" }],
+    ["lookup fails", { listStatus: 7 }],
+    ["list JSON is invalid", { rawJson: "not JSON" }],
+    ["list JSON is empty", { rawJson: "" }],
   ]) {
-    test(`${actionName}: fails without outputs or show when ${name}`, async (context) => {
+    test(`${actionName}: fails without frontend-urls when ${name}`, async (context) => {
       const result = await runDeploy(context, actionName, options);
       assert.notEqual(result.code, 0);
-      assert.equal(result.output, "");
-      assert.equal(result.calls.length, 1);
+      assert.equal(result.outputs["frontend-urls"], undefined);
+      assert.equal(result.calls.length, 3);
     });
   }
 }

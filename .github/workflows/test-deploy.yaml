@@ -107,6 +107,7 @@ jobs:
         env:
           WORKSPACE_ID: ${{ steps.deploy.outputs.workspace-id }}
           APP_URL: ${{ steps.deploy.outputs.app-url }}
+          FRONTEND_URLS: ${{ steps.deploy.outputs.frontend-urls }}
         run: |
           if [ -z "$WORKSPACE_ID" ]; then
             echo "::error::workspace-id output is empty"
@@ -114,6 +115,10 @@ jobs:
           fi
           if [ "$APP_URL" = "null" ]; then
             echo "::error::app-url output is the literal string 'null' — jq fallback not applied"
+            exit 1
+          fi
+          if [ "$FRONTEND_URLS" != "{}" ]; then
+            echo "::error::frontend-urls must be {} for the test workspace without static websites"
             exit 1
           fi
           echo "Deploy succeeded. workspace-id=$WORKSPACE_ID app-url=${APP_URL:-(empty)}"
