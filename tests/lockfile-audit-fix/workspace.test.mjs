@@ -56,7 +56,7 @@ if (args[0] === "audit") {
     run(["install", "--frozen-lockfile", "--ignore-scripts", "--offline"], published);
     writeFileSync(join(published, "packages/peer/package.json"), manifest);
     assert.throws(() => run(["install", "--frozen-lockfile", "--ignore-scripts", "--offline"], published),
-      (error) => /ERR_PNPM_OUTDATED_LOCKFILE/.test(error.stdout));
+      (error) => /ERR_PNPM_OUTDATED_LOCKFILE/.test([error.stdout, error.stderr].join("\n")));
   } finally {
     rmSync(temp, { recursive: true, force: true });
   }
