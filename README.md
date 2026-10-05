@@ -451,9 +451,9 @@ resource "github_actions_organization_variable" "denied_licenses" {
 
 ### [`lockfile-audit`](lockfile-audit/action.yaml)
 
-Regression-only gate against `pnpm-lock.yaml` changes: fails only when a pull request or push introduces a security advisory that wasn't already present in the lockfile at the base commit. Pre-existing advisories elsewhere in the lockfile don't block unrelated changes — pair this with a scheduled `pnpm audit --fix` workflow (run independent of any PR) to clear those over time.
+Audits the selected `pnpm-lock.yaml` and fails on any vulnerability at or above `audit-level`, including pre-existing vulnerabilities. Audit errors also fail. Pair this with a scheduled `pnpm audit --fix` workflow to clear advisories over time.
 
-**Prerequisites:** The caller is responsible for checkout (with `fetch-depth: 0` — the base commit's lockfile must be reachable) and pnpm setup. `pnpm audit` resolves advisories from the lockfile alone, so no dependency install is needed. A resolved base commit that isn't reachable in the checkout (most commonly a missing `fetch-depth: 0`) fails the job outright rather than silently skipping — silently no-op'ing would defeat the gate for exactly the callers who most need it.
+**Prerequisites:** The caller is responsible for checkout and pnpm setup. No dependency install, base commit, or full Git history is needed. This replaces the previous regression-only behavior: existing advisories now block the job too.
 
 #### Usage
 
@@ -466,8 +466,6 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - uses: pnpm/action-setup@v4
         with:
           run_install: false
@@ -479,14 +477,14 @@ jobs:
 | Name | Required | Default | Description |
 |------|----------|---------|-------------|
 | `audit-level` | No | `moderate` | Minimum severity to report, passed through to `pnpm audit --audit-level`. One of `low`, `moderate`, `high`, `critical`. |
-| `base-sha` | No | | Commit to diff the lockfile against, overriding the default auto-detection (the pull request's base commit, or the pushed ref's previous tip). Mainly for `workflow_dispatch` runs, where neither of those is available from the event payload. |
+| `base-sha` | No | | Deprecated and ignored; the current lockfile is always audited. |
 | `working-directory` | No | `.` | Working directory containing `pnpm-lock.yaml` (for monorepo setups) |
 
 ---
 
 ### [`lockfile-audit-fix`](lockfile-audit-fix/action.yaml)
 
-Runs `pnpm audit --fix` against `pnpm-lock.yaml` (update mode, falling back to override mode when update alone can't clear an advisory), verifying the result still installs before keeping it. Meant for a standalone scheduled/dispatched workflow that clears pre-existing advisories independent of any specific PR — pair with `lockfile-audit`'s regression-only gate, which only blocks *new* advisories.
+Runs `pnpm audit --fix` against `pnpm-lock.yaml` (update mode, falling back to override mode when update alone can't clear an advisory), verifying the result still installs before keeping it. Meant for a standalone scheduled/dispatched workflow that clears pre-existing advisories independent of any specific PR — pair with `lockfile-audit` to check the current lockfile for advisories.
 
 This action does not commit or open a pull request; it only fixes workspace lockfiles in the working tree and reports what changed. Pair it with a commit/PR step of your own so you control where a changeset gets inserted (if `runtime-deps-changed` calls for one).
 

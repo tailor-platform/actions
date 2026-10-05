@@ -1,7 +1,7 @@
 {
   "name": "lockfile-audit-fixture-new-advisory",
   "private": true,
-  "description": "Adds ansi-html@0.0.1 (GHSA-whgm-jr23-g3j9) on top of the base fixture's trim@0.0.1, simulating a change that introduces a new advisory.",
+  "description": "Contains advisories in trim and ansi-html that must fail the full audit.",
   "dependencies": {
     "trim": "0.0.1",
     "ansi-html": "0.0.1"

@@ -5,7 +5,7 @@
  *
  * Runs `pnpm audit --fix` against pnpm-lock.yaml and verifies the result
  * before keeping it, then reports what changed. Unlike lockfile-audit.mjs
- * (a regression-only gate meant to run on every PR), this is meant for a
+ * (an advisory gate meant to run on every PR), this is meant for a
  * standalone scheduled/dispatched workflow that clears pre-existing
  * advisories independent of any specific change — so a fix failing here
  * never blocks an unrelated PR.
