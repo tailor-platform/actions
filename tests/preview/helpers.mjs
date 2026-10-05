@@ -45,6 +45,7 @@ const failure = (name) => {
 };
 if (args[0] === "tailor" && args[1] === "workspace" && args[2] === "create") {
   process.stdout.write(JSON.stringify({ id: process.env.MOCK_CREATED_ID }));
+  failure("CREATE");
 }
 if (args[0] === "tailor" && args[1] === "workspace" && args[2] === "get") {
   failure("GET");

@@ -706,7 +706,7 @@ jobs:
 | `workspace-name-prefix` | Yes | | Same prefix used in `preview-deploy` |
 | `prune-expired` | No | `false` | Set to `true` to also delete this app's other preview workspaces whose `ttl` has passed. See [Pruning expired previews](#pruning-expired-previews). |
 | `organization-id` | No | | Organization whose root is swept when `folder-id` is empty. Use the same value as `preview-deploy`. Defaults to `TAILOR_PLATFORM_ORGANIZATION_ID` env var. Only used with `prune-expired`. |
-| `folder-id` | No | | Folder swept for expired previews. Use the same value as `preview-deploy`. Takes precedence over `organization-id`. Only used with `prune-expired`. |
+| `folder-id` | No | | Folder swept for expired previews. Use the same value as `preview-deploy`. Defaults to `TAILOR_PLATFORM_FOLDER_ID` env var. Takes precedence over `organization-id`. Only used with `prune-expired`. |
 | `working-directory` | No | `.` | Working directory (for monorepo setups) |
 | `package-manager` | No | | Package manager (`pnpm`, `npm`, `yarn`, or `bun`). Defaults to `npx`. |
 | `platform-client-id` | Yes | | OAuth2 client ID for machine user |
@@ -732,7 +732,7 @@ A close-time cleanup that fails, is disabled, or never runs (a PR left open for 
 - It only considers workspaces in the folder (or, without `folder-id`, directly under the organization) whose whole name is `{workspace-name-prefix}-pr-{number}`, so other apps' workspaces in the same location stay out of it. Use the same location as `preview-deploy`.
 - A workspace with no recorded expiry (created without `ttl`) is never deleted by the sweep.
 - The sweep runs `workspace prune` with `--limit 0`, so it deletes every expired match. With the CLI default of 20, a backlog of more than 20 would abort the sweep without deleting anything on every later PR close. The name and location filters above are what keep it narrow.
-- With neither `folder-id`, `organization-id`, nor `TAILOR_PLATFORM_ORGANIZATION_ID`, the sweep is skipped with a warning and the rest of the cleanup is unaffected.
+- With none of `folder-id`, `organization-id`, `TAILOR_PLATFORM_FOLDER_ID` or `TAILOR_PLATFORM_ORGANIZATION_ID`, the sweep is skipped with a warning and the rest of the cleanup is unaffected.
 - If a PR sits idle past `ttl`, its workspace is swept while the PR is still open. The next push to that PR creates a fresh workspace under the same name and updates the PR comment with the new ID. Closing such a PR after the sweep is not an error: `preview-cleanup` reports that the workspace is already gone and still updates the comment.
 - A workspace restored after it expired is deleted again by the next sweep unless its expiry is changed with `tailor workspace ttl set` or `ttl clear`.
 

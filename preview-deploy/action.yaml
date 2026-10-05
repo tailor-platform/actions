@@ -139,10 +139,19 @@ runs:
           [ -n "$ORG_ID" ] && CREATE_ARGS+=(--organization-id "$ORG_ID")
           [ -n "$FOLDER_ID" ] && CREATE_ARGS+=(--folder-id "$FOLDER_ID")
           [ -n "$TTL" ] && CREATE_ARGS+=(--ttl "$TTL")
-          WORKSPACE_ID=$($TAILOR_RUN tailor "${CREATE_ARGS[@]}" | jq -r '.id // empty')
+          CREATE_STATUS=0
+          CREATE_OUTPUT=$($TAILOR_RUN tailor "${CREATE_ARGS[@]}") || CREATE_STATUS=$?
+          WORKSPACE_ID=$(printf '%s' "$CREATE_OUTPUT" | jq -r '.id // empty' 2>/dev/null || true)
           if [ -z "$WORKSPACE_ID" ]; then
             echo "::error::Failed to create preview workspace '$WORKSPACE_NAME'"
             exit 1
+          fi
+          if [ "$CREATE_STATUS" -ne 0 ]; then
+            echo "::warning::workspace create exited with $CREATE_STATUS after creating $WORKSPACE_ID (the expiry could not be confirmed) — setting it again"
+            if [ -n "$TTL" ]; then
+              $TAILOR_RUN tailor workspace ttl set --workspace-id "$WORKSPACE_ID" --ttl "$TTL" ||
+                echo "::warning::Could not set the expiry of preview workspace $WORKSPACE_ID — it may never be pruned"
+            fi
           fi
         fi
 

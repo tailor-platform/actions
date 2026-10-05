@@ -18,8 +18,8 @@ inputs:
       per-PR workspace is deleted. Workspaces without a recorded expiry are
       never deleted this way. Runs even when deleting the per-PR workspace
       failed. Needs `folder-id`, `organization-id`, or the
-      TAILOR_PLATFORM_ORGANIZATION_ID environment variable; with none of them
-      the sweep is skipped with a warning.
+      TAILOR_PLATFORM_FOLDER_ID / TAILOR_PLATFORM_ORGANIZATION_ID environment
+      variable; with none of them the sweep is skipped with a warning.
     required: false
     default: "false"
   organization-id:
@@ -33,7 +33,8 @@ inputs:
   folder-id:
     description: >-
       Folder swept for expired preview workspaces. Use the same value as
-      preview-deploy. Takes precedence over `organization-id`, matching where
+      preview-deploy. Defaults to the TAILOR_PLATFORM_FOLDER_ID environment
+      variable. Takes precedence over `organization-id`, matching where
       preview-deploy creates the workspace. Only used when `prune-expired` is
       "true".
     required: false
@@ -151,6 +152,7 @@ runs:
         FOLDER_ID: ${{ inputs.folder-id }}
       run: |
         ORG_ID="${ORG_ID:-${TAILOR_PLATFORM_ORGANIZATION_ID:-}}"
+        FOLDER_ID="${FOLDER_ID:-${TAILOR_PLATFORM_FOLDER_ID:-}}"
         if [ -n "$FOLDER_ID" ]; then
           LOCATION=(--folder-id "$FOLDER_ID")
         elif [ -n "$ORG_ID" ]; then

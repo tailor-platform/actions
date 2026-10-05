@@ -130,6 +130,22 @@ test("preview-cleanup: falls back to TAILOR_PLATFORM_ORGANIZATION_ID like previe
   assert.equal(prune[prune.indexOf("--organization-root") + 1], "org-from-env");
 });
 
+test("preview-cleanup: falls back to TAILOR_PLATFORM_FOLDER_ID like workspace create, and prefers it over the organization", async (context) => {
+  const action = await loadAction("preview-cleanup");
+  const result = await runStep(context, {
+    action,
+    stepId: "prune",
+    env: {
+      ...cleanupEnv,
+      ORG_ID: "org-1",
+      TAILOR_PLATFORM_FOLDER_ID: "folder-from-env",
+    },
+  });
+  const [prune] = pruneCalls(result.calls);
+  assert.equal(prune[prune.indexOf("--folder-id") + 1], "folder-from-env");
+  assert(!prune.includes("--organization-root"));
+});
+
 test("preview-cleanup: warns and skips the sweep when no location is known, without failing the job", async (context) => {
   const action = await loadAction("preview-cleanup");
   const result = await runStep(context, { action, stepId: "prune", env: cleanupEnv });

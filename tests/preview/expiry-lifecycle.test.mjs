@@ -130,3 +130,32 @@ test("preview-cleanup: does not take an unrelated 'not found' for an already del
   });
   assert.notEqual(result.code, 0);
 });
+
+test("preview-deploy: keeps the workspace when create prints its ID and then fails to confirm the expiry", async (context) => {
+  const result = await deploy(context, {
+    env: {},
+    comments: [],
+    createdId: "ws-partial",
+    mock: {
+      MOCK_CREATE_STATUS: "1",
+      MOCK_CREATE_STDERR: "WORKSPACE_TTL_WRITE_FAILED: --ttl could not be confirmed",
+    },
+  });
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /^::warning::.*ws-partial/m);
+  assert.match(result.output, /workspace-id=ws-partial/);
+  assert.deepEqual(callsTo(result, "ttl"), [
+    ["tailor", "workspace", "ttl", "set", "--workspace-id", "ws-partial", "--ttl", "7d"],
+  ]);
+});
+
+test("preview-deploy: fails when create fails without printing a workspace ID", async (context) => {
+  const result = await deploy(context, {
+    env: {},
+    comments: [],
+    createdId: "",
+    mock: { MOCK_CREATE_STATUS: "1", MOCK_CREATE_STDERR: "boom" },
+  });
+  assert.notEqual(result.code, 0);
+  assert.doesNotMatch(result.output, /workspace-id=/);
+});
