@@ -66,7 +66,7 @@ runs:
             '[ .[][] | select(.user.type == "Bot" and (.body | startswith($m))) ] | first | .body // empty')
 
         WORKSPACE_ID=$(echo "$COMMENT" | \
-          jq -rR '(try capture("<!-- tailor-preview: [^ ]+ id=(?P<id>[a-f0-9-]+)") | .id) // empty')
+          jq -rR '(try capture("<!-- tailor-preview: [^ ]+ id=(?<id>[a-f0-9-]+)") | .id) // empty')
 
         if [ -z "$WORKSPACE_ID" ]; then
           echo "::warning::No preview workspace ID found in PR comment — skipping deletion"
