@@ -6,8 +6,8 @@ description: >-
   elsewhere in the lockfile don't block unrelated changes — a scheduled
   `pnpm audit --fix` workflow, run independent of any PR, is the right place
   to clear those. If the base lockfile cannot be audited, requires a clean
-  full audit of HEAD at audit-level instead. Requires pnpm to be set up by the caller; `pnpm audit`
-  resolves advisories from the lockfile alone, so no dependency install is
+  full audit of HEAD at audit-level instead. Requires pnpm to be set up by
+  the caller; `pnpm audit` resolves advisories from the lockfile alone, so no dependency install is
   needed. The caller must check out the repository with full history
   (`fetch-depth: 0`) so the base commit's lockfile is reachable.
 

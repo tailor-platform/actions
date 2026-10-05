@@ -1770,21 +1770,13 @@ describe("buildSummary", () => {
     },
   };
 
-  test("lists fixed advisories and omits the remaining-count line when none remain", () => {
+  test("lists fixed advisories", () => {
     const after = { advisories: {} };
     const summary = buildSummary(before, after);
     assert.match(summary, /Fixed advisories:/);
     assert.match(summary, /GHSA-aaaa/);
     assert.match(summary, /GHSA-bbbb/);
     assert.doesNotMatch(summary, /remain/);
-  });
-
-  test("reports advisories that remain unfixed", () => {
-    const after = { advisories: { 1: before.advisories[1] } };
-    const summary = buildSummary(before, after);
-    assert.match(summary, /Fixed advisories:/);
-    assert.match(summary, /GHSA-bbbb/);
-    assert.match(summary, /1 advisory remains/);
   });
 
   test("degrades gracefully when audit data is unavailable", () => {

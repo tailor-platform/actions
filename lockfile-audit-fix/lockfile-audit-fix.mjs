@@ -43,7 +43,7 @@
  *                           changes don't affect consumers
  *   changed-names        - newline-separated names of packages whose
  *                           runtime dependencies changed
- *   summary              - markdown summary of fixed/remaining advisories,
+ *   summary              - markdown summary of fixed advisories,
  *                           for use as a PR body
  */
 
@@ -1209,13 +1209,6 @@ function buildSummary(beforeAudit, afterAudit) {
     lines.push("", "Fixed advisories:");
     lines.push(...formatAdvisoryLines(beforeAudit, fixedIds));
   }
-  if (afterIds.size > 0) {
-    const noun = afterIds.size === 1 ? "advisory remains" : "advisories remain";
-    lines.push(
-      "",
-      `${afterIds.size} ${noun} and could not be auto-fixed (no compatible patched version in range, or still blocked by \`minimumReleaseAge\`).`,
-    );
-  }
   return lines.join("\n");
 }
 
@@ -1290,7 +1283,6 @@ function main() {
         writeFileSync(path, text);
       }
     }
-
   };
 
   readFileSync(lockfilePath);

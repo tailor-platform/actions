@@ -534,7 +534,7 @@ jobs:
 | `changed-files` | Newline-separated repo-root-relative existing workspace manifests, lockfiles, and root configuration files to publish together; empty when unchanged. Includes unchanged files needed for the verified state. |
 | `runtime-deps-changed` | `'true'` if any non-private package's runtime (non-dev) dependencies changed, per the workspace project lockfiles — devDependencies-only and `pnpm-workspace.yaml`/`package.json`-overrides-only changes don't affect consumers |
 | `changed-names` | Newline-separated names of packages whose runtime dependencies changed |
-| `summary` | Markdown summary of fixed and remaining advisories, for use as a PR body |
+| `summary` | Markdown summary of fixed advisories, for use as a PR body |
 
 ---
 
