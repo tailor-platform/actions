@@ -5,7 +5,7 @@
  *
  * Runs `pnpm audit --fix` against pnpm-lock.yaml and verifies the result
  * before keeping it, then reports what changed. Unlike lockfile-audit.mjs
- * (an advisory gate meant to run on every PR), this is meant for a
+ * (a regression-only gate meant to run on every PR), this is meant for a
  * standalone scheduled/dispatched workflow that clears pre-existing
  * advisories independent of any specific change — so a fix failing here
  * never blocks an unrelated PR.
@@ -1333,6 +1333,7 @@ function main() {
 
   const after = snapshot();
   const changed = trackedPaths.some((path) => after.files[path] !== original.files[path]);
+  let afterAudit;
   if (changed) {
     try {
       const currentLockfiles = findPnpmLockfilePaths(cwd);
@@ -1349,6 +1350,9 @@ function main() {
       if (trackedPaths.some((path) => verified.files[path] !== after.files[path])) {
         throw new Error("Frozen verification modified publication files");
       }
+      afterAudit = JSON.parse(execFileSync("pnpm", ["audit", `--audit-level=${auditLevel}`, "--json"], {
+        cwd, encoding: "utf8", maxBuffer: 1024 * 1024 * 64,
+      }));
     } catch (e) {
       restore(original);
       throw new Error(`Publication verification failed; restored original workspace files. ${e.message}`, { cause: e });
@@ -1389,7 +1393,6 @@ function main() {
       : "No runtime dependency changes (devDependencies-only and/or pnpm-workspace.yaml/package.json-overrides changes).",
   );
 
-  const afterAudit = runAuditSafe(auditLevel, cwd);
   setMultilineOutput("summary", buildSummary(beforeAudit, afterAudit));
 }
 

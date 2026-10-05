@@ -1840,7 +1840,8 @@ function writeFakePnpm(fakeBinDir) {
     '  const n = nextCount("audit");',
     "  const json = process.env[`FAKE_PNPM_AUDIT_JSON_${n}`] ?? process.env.FAKE_PNPM_AUDIT_JSON_DEFAULT ?? '{\"advisories\":{}}';",
     "  process.stdout.write(json);",
-    "  process.exit(0);",
+    '  writeFileSync(`${process.env.FAKE_PNPM_STATE}/audit-${n}-install-count`, existsSync(`${process.env.FAKE_PNPM_STATE}/install-count`) ? readFileSync(`${process.env.FAKE_PNPM_STATE}/install-count`, "utf8") : "0");',
+    '  process.exit(Number(process.env[`FAKE_PNPM_AUDIT_EXIT_${n}`] ?? 0));',
     "}",
     "",
     'if (args[0] === "audit" && args.includes("--fix")) {',
@@ -1961,6 +1962,43 @@ describe("main() end-to-end via a fake pnpm binary", () => {
     writeFileSync(join(stateDir, "last-stdout.txt"), stdout);
     return parseGithubOutput(readFileSync(outputFile, "utf8"));
   };
+
+  for (const [name, auditOutput, auditStatus] of [
+    ["remaining vulnerability", '{"advisories":{"1":{"severity":"high"}}}', "1"],
+    ["registry failure", '{"error":{"code":"REGISTRY_UNAVAILABLE"}}', "1"],
+    ["invalid audit report", "not json", "0"],
+  ]) {
+    test(`publication rolls back without outputs after frozen install passes but ${name} blocks audit`, () => {
+      const childDir = join(repoDir, "packages", "peer");
+      mkdirSync(childDir, { recursive: true });
+      const childPath = join(childDir, "package.json");
+      const before = '{"peerDependencies":{"playwright":"^2.10.4"}}';
+      const updated = before.replace("^2.10.4", "^2.12.0");
+      const lock = "lockfileVersion: '9.0'\n";
+      writeFileSync(childPath, before);
+      writeFileSync(join(repoDir, "package.json"), "{}\n");
+      writeFileSync(join(repoDir, "pnpm-lock.yaml"), lock);
+      writeFileSync(join(repoDir, "pnpm-workspace.yaml"), "packages:\n  - packages/*\n");
+      for (const name of ["install", "audit"]) writeFileSync(join(stateDir, `${name}-count`), "0");
+      try {
+        assert.throws(() => runMain({
+          FAKE_PNPM_LIST_JSON: JSON.stringify([{ path: repoDir }, { path: childDir }]),
+          FAKE_PNPM_CHILD_PATH: childPath,
+          FAKE_PNPM_FIX_UPDATE_CHILD: updated,
+          FAKE_PNPM_FIX_UPDATE_LOCKFILE: `${lock}settings: {}\n`,
+          FAKE_PNPM_AUDIT_JSON_2: auditOutput,
+          FAKE_PNPM_AUDIT_EXIT_2: auditStatus,
+        }));
+        assert.equal(readFileSync(join(stateDir, "audit-2-install-count"), "utf8"), "3");
+        assert.deepEqual(JSON.parse(readFileSync(join(stateDir, "install-3-args"), "utf8")), ["install", "--frozen-lockfile", "--ignore-scripts"]);
+        assert.equal(readFileSync(childPath, "utf8"), before);
+        assert.equal(readFileSync(join(repoDir, "pnpm-lock.yaml"), "utf8"), lock);
+        assert.equal(readFileSync(outputFile, "utf8"), "");
+      } finally {
+        rmSync(childDir, { recursive: true, force: true });
+      }
+    });
+  }
 
   test("optional child peers and importer specifiers are returned together for publication", () => {
     const childDir = join(repoDir, "packages", "peer");

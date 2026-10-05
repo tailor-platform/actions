@@ -1,9 +1,15 @@
-name: Audit lockfile for vulnerabilities
+name: Audit lockfile for newly introduced vulnerabilities
 description: >-
-  Audit the selected pnpm-lock.yaml and fail on any vulnerability at or above
-  audit-level, including pre-existing vulnerabilities. Audit errors also fail.
-  Requires pnpm to be set up by the caller; no dependency install or base
-  commit history is needed.
+  Regression-only gate against pnpm-lock.yaml changes: fails only when a
+  pull request or push introduces a security advisory that wasn't already
+  present in the lockfile at the base commit, so pre-existing advisories
+  elsewhere in the lockfile don't block unrelated changes — a scheduled
+  `pnpm audit --fix` workflow, run independent of any PR, is the right place
+  to clear those. If the base lockfile cannot be audited, requires a clean
+  full audit of HEAD at audit-level instead. Requires pnpm to be set up by the caller; `pnpm audit`
+  resolves advisories from the lockfile alone, so no dependency install is
+  needed. The caller must check out the repository with full history
+  (`fetch-depth: 0`) so the base commit's lockfile is reachable.
 
 inputs:
   audit-level:
@@ -13,7 +19,11 @@ inputs:
     required: false
     default: moderate
   base-sha:
-    description: Deprecated and ignored. The action always audits the current lockfile.
+    description: >-
+      Commit to diff the lockfile against, overriding the default
+      auto-detection (the pull request's base commit, or the pushed ref's
+      previous tip). Mainly for `workflow_dispatch` runs, where neither of
+      those is available from the event payload.
     required: false
     default: ""
   working-directory:
@@ -24,9 +34,13 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Audit lockfile for vulnerabilities
+    - name: Audit lockfile for newly introduced vulnerabilities
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
         AUDIT_LEVEL: ${{ inputs.audit-level }}
+        BASE_SHA_INPUT: ${{ inputs.base-sha }}
+        EVENT_NAME: ${{ github.event_name }}
+        PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        PUSH_BEFORE_SHA: ${{ github.event.before }}
       run: node "${{ github.action_path }}/lockfile-audit.mjs"

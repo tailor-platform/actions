@@ -2,7 +2,7 @@ name: Audit and auto-fix pnpm lockfile vulnerabilities
 description: >-
   Run `pnpm audit --fix` (update mode, falling back to override mode when
   update alone can't clear an advisory) against pnpm-lock.yaml, verifying the
-  result still installs before keeping it. Reports whether any workspace
+  result passes frozen install and full audit at audit-level before publishing it. Reports whether any workspace
   project lockfile changed, whether the change touched a published package's runtime
   dependencies (as opposed to devDependencies-only or pnpm-workspace.yaml-only
   changes), and a markdown summary of fixed/remaining advisories. Requires
@@ -37,7 +37,7 @@ outputs:
       Newline-separated repo-root-relative existing workspace manifest, lockfile,
       and root configuration paths to publish together. Empty when unchanged.
       Includes unchanged files needed for the verified state; use the entire list.
-      A failed frozen install or required deletion fails the action without outputs.
+      A failed frozen install, final audit, or required deletion rolls back and fails without outputs.
     value: ${{ steps.fix.outputs.changed-files }}
   runtime-deps-changed:
     description: >-
