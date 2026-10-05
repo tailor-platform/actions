@@ -316,7 +316,7 @@ jobs:
 | `region` | Yes | | Workspace region for creation (e.g. `us-west`, `asia-northeast`). Only used on first run. |
 | `organization-id` | No | | Organization ID for workspace creation. Defaults to `TAILOR_PLATFORM_ORGANIZATION_ID` env var. |
 | `folder-id` | No | | Folder ID for workspace creation |
-| `ttl` | No | | Duration after creation (e.g. `7d`, `24h`) after which the workspace can be deleted by `preview-cleanup`'s `prune-expired`. Only used on first run; later pushes do not extend it. Empty records no expiry. |
+| `ttl` | No | | Duration (e.g. `7d`, `24h`) after which the workspace can be deleted by `preview-cleanup`'s `prune-expired`. Every push restarts it, so it counts from the last push. Empty records no expiry and leaves an existing workspace's expiry untouched. |
 | `working-directory` | No | `.` | Working directory (for monorepo setups) |
 | `package-manager` | No | | Package manager (`pnpm`, `npm`, `yarn`, or `bun`). Defaults to `npx`. |
 | `platform-client-id` | Yes | | OAuth2 client ID for machine user |
@@ -733,6 +733,7 @@ A close-time cleanup that fails, is disabled, or never runs (a PR left open for 
 - A workspace with no recorded expiry (created without `ttl`) is never deleted by the sweep.
 - The sweep runs `workspace prune` with `--limit 0`, so it deletes every expired match. With the CLI default of 20, a backlog of more than 20 would abort the sweep without deleting anything on every later PR close. The name and location filters above are what keep it narrow.
 - With neither `folder-id`, `organization-id`, nor `TAILOR_PLATFORM_ORGANIZATION_ID`, the sweep is skipped with a warning and the rest of the cleanup is unaffected.
+- If a PR sits idle past `ttl`, its workspace is swept while the PR is still open. The next push to that PR creates a fresh workspace under the same name and updates the PR comment with the new ID. Closing such a PR after the sweep is not an error: `preview-cleanup` reports that the workspace is already gone and still updates the comment.
 - A workspace restored after it expired is deleted again by the next sweep unless its expiry is changed with `tailor workspace ttl set` or `ttl clear`.
 
 ---

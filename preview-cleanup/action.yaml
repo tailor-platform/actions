@@ -101,7 +101,14 @@ runs:
         fi
 
         echo "Deleting preview workspace: $WORKSPACE_NAME ($WORKSPACE_ID)"
-        $TAILOR_RUN tailor workspace delete --workspace-id "$WORKSPACE_ID" --yes
+        if DELETE_OUTPUT=$($TAILOR_RUN tailor workspace delete --workspace-id "$WORKSPACE_ID" --yes 2>&1); then
+          printf '%s\n' "$DELETE_OUTPUT"
+        elif printf '%s' "$DELETE_OUTPUT" | grep -qiE 'not_found|workspace .*not found'; then
+          echo "::warning::Preview workspace $WORKSPACE_ID no longer exists (expired and pruned?) — nothing to delete"
+        else
+          printf '%s\n' "$DELETE_OUTPUT" >&2
+          exit 1
+        fi
 
         echo "workspace-id=$WORKSPACE_ID" >> "$GITHUB_OUTPUT"
         echo "workspace-name=$WORKSPACE_NAME" >> "$GITHUB_OUTPUT"

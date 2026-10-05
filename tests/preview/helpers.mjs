@@ -14,7 +14,7 @@ export async function loadAction(name) {
   return parse(await readFile(path.join(repositoryRoot, name, "action.yaml"), "utf8"));
 }
 
-export async function runStep(context, { action, stepId, env, comments = [], createdId = "ws-new" }) {
+export async function runStep(context, { action, stepId, env, comments = [], createdId = "ws-new", mock = {} }) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "preview-ttl-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const runner = path.join(directory, "runner.mjs");
@@ -37,9 +37,21 @@ export async function runStep(context, { action, stepId, env, comments = [], cre
 import { appendFileSync } from "node:fs";
 const args = process.argv.slice(2);
 appendFileSync(process.env.MOCK_CALLS, JSON.stringify(args) + "\\n");
+const failure = (name) => {
+  const status = Number(process.env["MOCK_" + name + "_STATUS"] ?? 0);
+  if (status === 0) return;
+  process.stderr.write(process.env["MOCK_" + name + "_STDERR"] ?? "");
+  process.exit(status);
+};
 if (args[0] === "tailor" && args[1] === "workspace" && args[2] === "create") {
   process.stdout.write(JSON.stringify({ id: process.env.MOCK_CREATED_ID }));
 }
+if (args[0] === "tailor" && args[1] === "workspace" && args[2] === "get") {
+  failure("GET");
+  process.stdout.write(JSON.stringify({ id: args[4] }));
+}
+if (args[0] === "tailor" && args[1] === "workspace" && args[2] === "ttl") failure("TTL_SET");
+if (args[0] === "tailor" && args[1] === "workspace" && args[2] === "delete") failure("DELETE");
 `,
     ),
   ]);
@@ -60,6 +72,7 @@ if (args[0] === "tailor" && args[1] === "workspace" && args[2] === "create") {
         GITHUB_REPOSITORY: "owner/repo",
         MOCK_CALLS: callsFile,
         MOCK_CREATED_ID: createdId,
+        ...mock,
         ...env,
       },
     },
@@ -71,5 +84,6 @@ if (args[0] === "tailor" && args[1] === "workspace" && args[2] === "create") {
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line));
-  return { ...result, calls, step };
+  const output = await readFile(outputFile, "utf8");
+  return { ...result, calls, step, output };
 }

@@ -10,7 +10,7 @@ const deployEnv = {
   PR_NUMBER: "42",
 };
 
-test("preview-deploy: leaves the expiry of an existing workspace alone on later pushes", async (context) => {
+test("preview-deploy: reuses the workspace recorded in the PR comment instead of creating another", async (context) => {
   const action = await loadAction("preview-deploy");
   const result = await runStep(context, {
     action,
@@ -24,7 +24,10 @@ test("preview-deploy: leaves the expiry of an existing workspace alone on later 
     ],
   });
   assert.equal(result.code, 0, result.stderr);
-  assert.deepEqual(result.calls, []);
+  assert.deepEqual(
+    result.calls.filter((args) => args[2] === "create"),
+    [],
+  );
 });
 
 test("preview-cleanup: deletes the workspace recorded in the PR comment", async (context) => {

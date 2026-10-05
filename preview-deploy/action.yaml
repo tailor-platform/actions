@@ -31,9 +31,10 @@ inputs:
     description: >-
       Duration after creation (e.g. 7d, 24h) at which the preview workspace
       becomes prunable by `tailor workspace prune --expired` (see the
-      `prune-expired` input of preview-cleanup). Only used when creating a new
-      workspace; later pushes do not extend it. Empty (default) records no
-      expiry.
+      `prune-expired` input of preview-cleanup). Every push restarts it, so it
+      counts from the last push; a workspace that was pruned while its PR was
+      idle is created again on the next push. Empty (default) records no
+      expiry and leaves an existing workspace's expiry untouched.
     required: false
     default: ""
   working-directory:
@@ -114,10 +115,25 @@ runs:
             '[ .[][] | select(.user.type == "Bot" and (.body | startswith($m))) ] | first | .body // empty' | \
           jq -rR '(try capture("<!-- tailor-preview: [^ ]+ id=(?<id>[a-f0-9-]+)") | .id) // empty')
 
+        WORKSPACE_ID=""
         if [ -n "$EXISTING_ID" ]; then
-          echo "Found existing preview workspace: $EXISTING_ID"
-          WORKSPACE_ID="$EXISTING_ID"
-        else
+          if GET_OUTPUT=$($TAILOR_RUN tailor workspace get --workspace-id "$EXISTING_ID" --json 2>&1); then
+            echo "Found existing preview workspace: $EXISTING_ID"
+            WORKSPACE_ID="$EXISTING_ID"
+            if [ -n "$TTL" ]; then
+              $TAILOR_RUN tailor workspace ttl set --workspace-id "$WORKSPACE_ID" --ttl "$TTL" ||
+                echo "::warning::Could not extend the expiry of preview workspace $WORKSPACE_ID — it may be pruned sooner than $TTL after this push"
+            fi
+          elif printf '%s' "$GET_OUTPUT" | grep -qiE 'not_found|workspace .*not found'; then
+            echo "::warning::Preview workspace $EXISTING_ID recorded in the PR comment no longer exists (expired and pruned?) — creating a new one"
+          else
+            printf '%s\n' "$GET_OUTPUT" >&2
+            echo "::error::Could not check whether preview workspace $EXISTING_ID still exists"
+            exit 1
+          fi
+        fi
+
+        if [ -z "$WORKSPACE_ID" ]; then
           echo "Creating preview workspace: $WORKSPACE_NAME (region: $REGION)"
           CREATE_ARGS=(workspace create --name "$WORKSPACE_NAME" --region "$REGION" --json)
           [ -n "$ORG_ID" ] && CREATE_ARGS+=(--organization-id "$ORG_ID")
