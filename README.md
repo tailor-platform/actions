@@ -316,6 +316,7 @@ jobs:
 | `region` | Yes | | Workspace region for creation (e.g. `us-west`, `asia-northeast`). Only used on first run. |
 | `organization-id` | No | | Organization ID for workspace creation. Defaults to `TAILOR_PLATFORM_ORGANIZATION_ID` env var. |
 | `folder-id` | No | | Folder ID for workspace creation |
+| `ttl` | No | | Duration after creation (e.g. `7d`, `24h`) after which the workspace can be deleted by `preview-cleanup`'s `prune-expired`. Only used on first run; later pushes do not extend it. Empty records no expiry. |
 | `working-directory` | No | `.` | Working directory (for monorepo setups) |
 | `package-manager` | No | | Package manager (`pnpm`, `npm`, `yarn`, or `bun`). Defaults to `npx`. |
 | `platform-client-id` | Yes | | OAuth2 client ID for machine user |
@@ -703,11 +704,36 @@ jobs:
 | Name | Required | Default | Description |
 |------|----------|---------|-------------|
 | `workspace-name-prefix` | Yes | | Same prefix used in `preview-deploy` |
+| `prune-expired` | No | `false` | Set to `true` to also delete this app's other preview workspaces whose `ttl` has passed. See [Pruning expired previews](#pruning-expired-previews). |
+| `organization-id` | No | | Organization whose root is swept when `folder-id` is empty. Use the same value as `preview-deploy`. Defaults to `TAILOR_PLATFORM_ORGANIZATION_ID` env var. Only used with `prune-expired`. |
+| `folder-id` | No | | Folder swept for expired previews. Use the same value as `preview-deploy`. Takes precedence over `organization-id`. Only used with `prune-expired`. |
 | `working-directory` | No | `.` | Working directory (for monorepo setups) |
 | `package-manager` | No | | Package manager (`pnpm`, `npm`, `yarn`, or `bun`). Defaults to `npx`. |
 | `platform-client-id` | Yes | | OAuth2 client ID for machine user |
 | `platform-client-secret` | Yes | | OAuth2 client secret for machine user |
 | `github-token` | Yes | | GitHub token with `pull-requests: write` for reading and updating the PR comment |
+
+#### Pruning expired previews
+
+A close-time cleanup that fails, is disabled, or never runs (a PR left open for a long time) leaves its preview workspace behind. Pass `ttl` to `preview-deploy` so each workspace records an expiry when it is created, and set `prune-expired: "true"` here so every PR close also deletes the expired ones:
+
+```yaml
+      - uses: tailor-platform/actions/preview-cleanup@v2
+        with:
+          workspace-name-prefix: my-app
+          prune-expired: "true"
+          folder-id: ${{ vars.TAILOR_PLATFORM_FOLDER_ID }}
+          platform-client-id: ${{ secrets.TAILOR_PLATFORM_MACHINE_USER_CLIENT_ID }}
+          platform-client-secret: ${{ secrets.TAILOR_PLATFORM_MACHINE_USER_CLIENT_SECRET }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+- The sweep runs after the per-PR workspace is deleted and the PR comment is updated, and it runs even when that deletion failed.
+- It only considers workspaces in the folder (or, without `folder-id`, directly under the organization) whose whole name is `{workspace-name-prefix}-pr-{number}`, so other apps' workspaces in the same location stay out of it. Use the same location as `preview-deploy`.
+- A workspace with no recorded expiry (created without `ttl`) is never deleted by the sweep.
+- The sweep runs `workspace prune` with `--limit 0`, so it deletes every expired match. With the CLI default of 20, a backlog of more than 20 would abort the sweep without deleting anything on every later PR close. The name and location filters above are what keep it narrow.
+- With neither `folder-id`, `organization-id`, nor `TAILOR_PLATFORM_ORGANIZATION_ID`, the sweep is skipped with a warning and the rest of the cleanup is unaffected.
+- A workspace restored after it expired is deleted again by the next sweep unless its expiry is changed with `tailor workspace ttl set` or `ttl clear`.
 
 ---
 
