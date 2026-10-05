@@ -17,6 +17,9 @@ outputs:
   app-url:
     description: Application URL (GraphQL endpoint) of the deployed workspace
     value: ${{ steps.show.outputs.app-url }}
+  frontend-urls:
+    description: JSON object mapping all static website names in the workspace to URLs; {} when none exist
+    value: ${{ steps.frontends.outputs.frontend-urls }}
 
 runs:
   using: composite
@@ -41,3 +44,14 @@ runs:
           APP_URL=""
         fi
         echo "app-url=$APP_URL" >> "$GITHUB_OUTPUT"
+
+    - name: Resolve frontend URLs
+      id: frontends
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        TAILOR_PLATFORM_WORKSPACE_ID: ${{ inputs.workspace-id }}
+      run: |
+        WEBSITES=$($TAILOR_RUN tailor staticwebsite list --json)
+        FRONTEND_URLS=$(printf '%s\n' "$WEBSITES" | jq -ce 'map({key: .name, value: .url}) | from_entries')
+        printf 'frontend-urls=%s\n' "$FRONTEND_URLS" >> "$GITHUB_OUTPUT"
