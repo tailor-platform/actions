@@ -14,6 +14,9 @@ inputs:
     default: "."
 
 outputs:
+  result:
+    description: The `tailor deploy --json` result as one line of JSON, exactly as the SDK printed it
+    value: ${{ steps.deploy.outputs.result }}
   app-url:
     description: Application URL (GraphQL endpoint) of the deployed workspace
     value: ${{ steps.show.outputs.app-url }}
@@ -25,11 +28,16 @@ runs:
   using: composite
   steps:
     - name: Deploy
+      id: deploy
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
         TAILOR_PLATFORM_WORKSPACE_ID: ${{ inputs.workspace-id }}
-      run: $TAILOR_RUN tailor deploy --yes
+      run: |
+        OUTPUT=$($TAILOR_RUN tailor deploy --yes --json)
+        if RESULT=$(printf '%s' "$OUTPUT" | jq -cs 'last // empty' 2> /dev/null) && [ -n "$RESULT" ]; then
+          printf 'result=%s\n' "$RESULT" >> "$GITHUB_OUTPUT"
+        fi
 
     - name: Resolve app URL
       id: show
