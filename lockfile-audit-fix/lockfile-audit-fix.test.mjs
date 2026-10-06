@@ -1770,21 +1770,13 @@ describe("buildSummary", () => {
     },
   };
 
-  test("lists fixed advisories and omits the remaining-count line when none remain", () => {
+  test("lists fixed advisories", () => {
     const after = { advisories: {} };
     const summary = buildSummary(before, after);
     assert.match(summary, /Fixed advisories:/);
     assert.match(summary, /GHSA-aaaa/);
     assert.match(summary, /GHSA-bbbb/);
     assert.doesNotMatch(summary, /remain/);
-  });
-
-  test("reports advisories that remain unfixed", () => {
-    const after = { advisories: { 1: before.advisories[1] } };
-    const summary = buildSummary(before, after);
-    assert.match(summary, /Fixed advisories:/);
-    assert.match(summary, /GHSA-bbbb/);
-    assert.match(summary, /1 advisory remains/);
   });
 
   test("degrades gracefully when audit data is unavailable", () => {
@@ -1840,7 +1832,8 @@ function writeFakePnpm(fakeBinDir) {
     '  const n = nextCount("audit");',
     "  const json = process.env[`FAKE_PNPM_AUDIT_JSON_${n}`] ?? process.env.FAKE_PNPM_AUDIT_JSON_DEFAULT ?? '{\"advisories\":{}}';",
     "  process.stdout.write(json);",
-    "  process.exit(0);",
+    '  writeFileSync(`${process.env.FAKE_PNPM_STATE}/audit-${n}-install-count`, existsSync(`${process.env.FAKE_PNPM_STATE}/install-count`) ? readFileSync(`${process.env.FAKE_PNPM_STATE}/install-count`, "utf8") : "0");',
+    '  process.exit(Number(process.env[`FAKE_PNPM_AUDIT_EXIT_${n}`] ?? 0));',
     "}",
     "",
     'if (args[0] === "audit" && args.includes("--fix")) {',
@@ -1851,6 +1844,8 @@ function writeFakePnpm(fakeBinDir) {
     '  if (lockfile !== undefined) writeFileSync("pnpm-lock.yaml", lockfile);',
     '  if (workspace !== undefined) writeFileSync("pnpm-workspace.yaml", workspace);',
     '  if (packageJson !== undefined) writeFileSync("package.json", packageJson);',
+    '  const child = process.env[`FAKE_PNPM_FIX_${mode}_CHILD`];',
+    '  if (child !== undefined) writeFileSync(process.env.FAKE_PNPM_CHILD_PATH, child);',
     "  process.exit(0);",
     "}",
     "",
@@ -1940,16 +1935,17 @@ describe("main() end-to-end via a fake pnpm binary", () => {
   // it directly) so existing call sites destructuring just the outputs
   // object don't need to change; only the handful of tests that care about
   // the console.log warning text read that file.
-  const runMain = (env) => {
+  const runMain = (env, cwd = repoDir) => {
     outputFile = join(stateDir, `output-${Math.random().toString(36).slice(2)}`);
     writeFileSync(outputFile, "");
     const stdout = execFileSync("node", [join(__dirname, "lockfile-audit-fix.mjs")], {
-      cwd: repoDir,
+      cwd,
       env: {
         ...process.env,
         PATH: `${fakeBinDir}:${process.env.PATH}`,
         FAKE_PNPM_STATE: stateDir,
         GITHUB_OUTPUT: outputFile,
+        GITHUB_WORKSPACE: repoDir,
         ...env,
       },
       stdio: ["ignore", "pipe", "ignore"],
@@ -1958,6 +1954,135 @@ describe("main() end-to-end via a fake pnpm binary", () => {
     writeFileSync(join(stateDir, "last-stdout.txt"), stdout);
     return parseGithubOutput(readFileSync(outputFile, "utf8"));
   };
+
+  for (const [name, auditOutput, auditStatus] of [
+    ["remaining vulnerability", '{"advisories":{"1":{"severity":"high"}}}', "1"],
+    ["registry failure", '{"error":{"code":"REGISTRY_UNAVAILABLE"}}', "1"],
+    ["invalid audit report", "not json", "0"],
+  ]) {
+    test(`publication rolls back without outputs after frozen install passes but ${name} blocks audit`, () => {
+      const childDir = join(repoDir, "packages", "peer");
+      mkdirSync(childDir, { recursive: true });
+      const childPath = join(childDir, "package.json");
+      const before = '{"peerDependencies":{"playwright":"^2.10.4"}}';
+      const updated = before.replace("^2.10.4", "^2.12.0");
+      const lock = "lockfileVersion: '9.0'\n";
+      writeFileSync(childPath, before);
+      writeFileSync(join(repoDir, "package.json"), "{}\n");
+      writeFileSync(join(repoDir, "pnpm-lock.yaml"), lock);
+      writeFileSync(join(repoDir, "pnpm-workspace.yaml"), "packages:\n  - packages/*\n");
+      for (const name of ["install", "audit"]) writeFileSync(join(stateDir, `${name}-count`), "0");
+      try {
+        assert.throws(() => runMain({
+          FAKE_PNPM_LIST_JSON: JSON.stringify([{ path: repoDir }, { path: childDir }]),
+          FAKE_PNPM_CHILD_PATH: childPath,
+          FAKE_PNPM_FIX_UPDATE_CHILD: updated,
+          FAKE_PNPM_FIX_UPDATE_LOCKFILE: `${lock}settings: {}\n`,
+          FAKE_PNPM_AUDIT_JSON_2: auditOutput,
+          FAKE_PNPM_AUDIT_EXIT_2: auditStatus,
+        }));
+        assert.equal(readFileSync(join(stateDir, "audit-2-install-count"), "utf8"), "3");
+        assert.deepEqual(JSON.parse(readFileSync(join(stateDir, "install-3-args"), "utf8")), ["install", "--frozen-lockfile", "--ignore-scripts"]);
+        assert.equal(readFileSync(childPath, "utf8"), before);
+        assert.equal(readFileSync(join(repoDir, "pnpm-lock.yaml"), "utf8"), lock);
+        assert.equal(readFileSync(outputFile, "utf8"), "");
+      } finally {
+        rmSync(childDir, { recursive: true, force: true });
+      }
+    });
+  }
+
+  test("optional child peers and importer specifiers are returned together for publication", () => {
+    const childDir = join(repoDir, "packages", "peer");
+    mkdirSync(childDir, { recursive: true });
+    const childPath = join(childDir, "package.json");
+    const before = JSON.stringify({ peerDependencies: { playwright: "^2.10.4" }, peerDependenciesMeta: { playwright: { optional: true } } });
+    const after = before.replace("^2.10.4", "^2.12.0");
+    const lock = "lockfileVersion: '9.0'\nimporters:\n  packages/peer:\n    dependencies:\n      playwright:\n        specifier: ^2.10.4\n        version: 2.12.0\n";
+    writeFileSync(childPath, before);
+    writeFileSync(join(repoDir, "package.json"), "{}\n");
+    writeFileSync(join(repoDir, "pnpm-lock.yaml"), lock);
+    writeFileSync(join(repoDir, "pnpm-workspace.yaml"), "packages:\n  - packages/*\n");
+    writeFileSync(join(stateDir, "install-count"), "0");
+    try {
+      const outputs = runMain({
+        GITHUB_WORKSPACE: repoDir,
+        FAKE_PNPM_LIST_JSON: JSON.stringify([{ path: repoDir }, { path: childDir }]),
+        FAKE_PNPM_CHILD_PATH: childPath,
+        FAKE_PNPM_FIX_UPDATE_CHILD: after,
+        FAKE_PNPM_FIX_UPDATE_LOCKFILE: lock.replace("^2.10.4", "^2.12.0"),
+      });
+      assert.equal(outputs.changed, "true");
+      assert.equal(outputs["changed-files"], "package.json\npackages/peer/package.json\npnpm-lock.yaml\npnpm-workspace.yaml");
+      assert.equal(readFileSync(childPath, "utf8"), after);
+      const args = JSON.parse(readFileSync(join(stateDir, "install-3-args"), "utf8"));
+      assert.ok(args.includes("--frozen-lockfile"));
+    } finally {
+      rmSync(childDir, { recursive: true, force: true });
+    }
+  });
+
+  test("child-only changes are detected and failed override restores the child fallback", () => {
+    const childDir = join(repoDir, "packages", "child");
+    mkdirSync(childDir, { recursive: true });
+    const childPath = join(childDir, "package.json");
+    writeFileSync(join(repoDir, "package.json"), "{}\n");
+    writeFileSync(join(repoDir, "pnpm-lock.yaml"), "clean\n");
+    writeFileSync(join(repoDir, "pnpm-workspace.yaml"), "packages:\n  - packages/*\n");
+    const before = '{"peerDependencies":{"react-dom":"^5.9.1"}}';
+    const fallback = before.replace("^5.9.1", "^5.19.1");
+    try {
+      for (const updateFails of [false, true]) {
+        writeFileSync(childPath, before);
+        writeFileSync(join(stateDir, "install-count"), "0");
+        const outputs = runMain({
+          FAKE_PNPM_LIST_JSON: JSON.stringify([{ path: repoDir }, { path: childDir }]),
+          FAKE_PNPM_CHILD_PATH: childPath,
+          FAKE_PNPM_FIX_UPDATE_CHILD: fallback,
+          FAKE_PNPM_FIX_OVERRIDE_CHILD: '{"peerDependencies":{"react-dom":"^6.0.0"}}',
+          FAKE_PNPM_INSTALL_FAIL_1: updateFails ? "1" : "0",
+          FAKE_PNPM_INSTALL_FAIL_2: "1",
+        });
+        assert.equal(readFileSync(childPath, "utf8"), updateFails ? before : fallback);
+        assert.equal(outputs.changed, updateFails ? "false" : "true");
+        assert.equal(outputs["changed-files"], updateFails ? "" : "package.json\npackages/child/package.json\npnpm-lock.yaml\npnpm-workspace.yaml");
+      }
+    } finally {
+      rmSync(childDir, { recursive: true, force: true });
+    }
+  });
+
+  test("failed frozen verification restores all files and publishes no outputs", () => {
+    writeFileSync(join(repoDir, "package.json"), "{}\n");
+    writeFileSync(join(repoDir, "pnpm-lock.yaml"), "original\n");
+    writeFileSync(join(stateDir, "install-count"), "0");
+    assert.throws(() => runMain({ FAKE_PNPM_FIX_UPDATE_LOCKFILE: "updated\n", FAKE_PNPM_INSTALL_FAIL_3: "1" }));
+    assert.equal(readFileSync(join(repoDir, "pnpm-lock.yaml"), "utf8"), "original\n");
+    assert.equal(readFileSync(outputFile, "utf8"), "");
+  });
+
+  test("root and independent website outputs never mix their workspace files", () => {
+    const website = join(repoDir, "website");
+    mkdirSync(website);
+    writeFileSync(join(website, "package.json"), "{}\n");
+    writeFileSync(join(website, "pnpm-lock.yaml"), "website\n");
+    writeFileSync(join(website, "pnpm-workspace.yaml"), "packages: []\n");
+    writeFileSync(join(repoDir, "package.json"), "{}\n");
+    writeFileSync(join(repoDir, "pnpm-lock.yaml"), "root\n");
+    writeFileSync(join(repoDir, "pnpm-workspace.yaml"), "packages:\n  - packages/*\n  - '!website'\n");
+    writeFileSync(join(stateDir, "install-count"), "0");
+    try {
+      const rootOutputs = runMain({ GITHUB_WORKSPACE: repoDir, FAKE_PNPM_FIX_UPDATE_LOCKFILE: "root-fixed\n" });
+      assert.equal(rootOutputs["changed-files"], "package.json\npnpm-lock.yaml\npnpm-workspace.yaml");
+      assert.equal(readFileSync(join(website, "pnpm-lock.yaml"), "utf8"), "website\n");
+      const websiteOutputs = runMain({ GITHUB_WORKSPACE: repoDir, FAKE_PNPM_FIX_UPDATE_LOCKFILE: "website-fixed\n" }, website);
+      assert.equal(websiteOutputs["changed-files"], "website/package.json\nwebsite/pnpm-lock.yaml\nwebsite/pnpm-workspace.yaml");
+      assert.equal(readFileSync(join(repoDir, "pnpm-lock.yaml"), "utf8"), "root-fixed\n");
+    } finally {
+      rmSync(website, { recursive: true, force: true });
+      rmSync(join(repoDir, "pnpm-workspace.yaml"), { force: true });
+    }
+  });
 
   test("no advisories: reports no changes and doesn't touch the lockfile", () => {
     writeFileSync(join(repoDir, "pnpm-lock.yaml"), "clean\n");
@@ -2462,6 +2587,7 @@ describe("main() end-to-end via a fake pnpm binary", () => {
   test("keeps a root override used only by a sibling project lockfile", () => {
     const siblingDir = join(repoDir, "packages", "app");
     mkdirSync(siblingDir, { recursive: true });
+    writeFileSync(join(siblingDir, "package.json"), JSON.stringify({ name: "app-pkg" }));
     writeFileSync(join(repoDir, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n\nimporters:\n  .: {}\n");
     writeFileSync(join(repoDir, "package.json"), JSON.stringify({ name: "my-pkg" }));
     writeFileSync(join(repoDir, "pnpm-workspace.yaml"), "packages:\n  - packages/*\noverrides:\n  is-odd: 3.0.1\n");

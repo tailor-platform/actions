@@ -151,11 +151,16 @@ function runAudit(auditLevel, cwd) {
     // report is still on stdout. Only treat this as a real error when stdout
     // isn't valid JSON (registry outage, auth failure, etc.).
     if (e.stdout) {
+      let report;
       try {
-        return JSON.parse(e.stdout.toString());
+        report = JSON.parse(e.stdout.toString());
       } catch {
         throw new LockfileAuditError(`\`pnpm audit\` produced unparseable output: ${e.message}`);
       }
+      if (report?.error) {
+        throw new LockfileAuditError(`\`pnpm audit\` reported an error: ${JSON.stringify(report.error)}`);
+      }
+      return report;
     }
     throw new LockfileAuditError(`\`pnpm audit\` failed: ${e.message}`);
   }
@@ -273,8 +278,15 @@ function main() {
     writeFileSync(lockfilePath, headLockfile);
   }
   if (baseAuditError) {
-    console.error(`::error::${baseAuditError.message}`);
-    process.exit(1);
+    console.log(`::warning::Base audit failed; requiring a clean full audit of HEAD. ${baseAuditError.message}`);
+    try {
+      execFileSync("pnpm", ["audit", `--audit-level=${auditLevel}`], { cwd, stdio: "inherit" });
+    } catch {
+      console.error("::error::Full HEAD audit failed; unable to verify this change safely.");
+      process.exit(1);
+    }
+    console.log("Full HEAD audit passed; no vulnerabilities at or above the configured audit level.");
+    return;
   }
 
   const headIds = extractAdvisoryIds(headAudit);

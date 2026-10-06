@@ -2,10 +2,11 @@ name: Audit and auto-fix pnpm lockfile vulnerabilities
 description: >-
   Run `pnpm audit --fix` (update mode, falling back to override mode when
   update alone can't clear an advisory) against pnpm-lock.yaml, verifying the
-  result still installs before keeping it. Reports whether any workspace
-  project lockfile changed, whether the change touched a published package's runtime
-  dependencies (as opposed to devDependencies-only or pnpm-workspace.yaml-only
-  changes), and a markdown summary of fixed/remaining advisories. Requires
+  result passes frozen install and full audit at audit-level before publishing
+  it. Reports whether any workspace project lockfile changed, whether the
+  change touched a published package's runtime dependencies (as opposed to
+  devDependencies-only or pnpm-workspace.yaml-only changes), and a markdown
+  summary of fixed advisories. Requires
   pnpm and Node.js to be set up by the caller. Does not commit or open a pull
   request — pair it with a caller-provided commit/PR step so the point where
   a changeset gets inserted (if the runtime-deps-changed output calls for one)
@@ -32,6 +33,13 @@ outputs:
       pnpm-workspace.yaml or package.json's `pnpm.overrides`, depending on
       pnpm version)
     value: ${{ steps.fix.outputs.changed }}
+  changed-files:
+    description: >-
+      Newline-separated repo-root-relative existing workspace manifest, lockfile,
+      and root configuration paths to publish together. Empty when unchanged.
+      Includes unchanged files needed for the verified state; use the entire list.
+      A failed frozen install, final audit, or required deletion rolls back and fails without outputs.
+    value: ${{ steps.fix.outputs.changed-files }}
   runtime-deps-changed:
     description: >-
       'true' if any non-private package's runtime (non-dev) dependencies
@@ -41,7 +49,7 @@ outputs:
     description: Newline-separated names of packages whose runtime dependencies changed
     value: ${{ steps.fix.outputs.changed-names }}
   summary:
-    description: Markdown summary of fixed and remaining advisories, for use as a PR body
+    description: Markdown summary of fixed advisories, for use as a PR body
     value: ${{ steps.fix.outputs.summary }}
 
 runs:

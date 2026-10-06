@@ -455,6 +455,8 @@ resource "github_actions_organization_variable" "denied_licenses" {
 
 Regression-only gate against `pnpm-lock.yaml` changes: fails only when a pull request or push introduces a security advisory that wasn't already present in the lockfile at the base commit. Pre-existing advisories elsewhere in the lockfile don't block unrelated changes — pair this with a scheduled `pnpm audit --fix` workflow (run independent of any PR) to clear those over time.
 
+If the base lockfile cannot be audited, the action restores HEAD and requires a clean full HEAD audit at `audit-level` instead. Existing advisories at that severity then fail because the comparison cannot establish that they are pre-existing. A missing or unreachable base commit still follows the documented skip/error rules below.
+
 **Prerequisites:** The caller is responsible for checkout (with `fetch-depth: 0` — the base commit's lockfile must be reachable) and pnpm setup. `pnpm audit` resolves advisories from the lockfile alone, so no dependency install is needed. A resolved base commit that isn't reachable in the checkout (most commonly a missing `fetch-depth: 0`) fails the job outright rather than silently skipping — silently no-op'ing would defeat the gate for exactly the callers who most need it.
 
 #### Usage
@@ -496,6 +498,8 @@ It also cleans up after override mode's own accumulation: when repeated runs lea
 
 It also inserts a `# Renovate security update: <entry>` comment directly above every version-pinned `pnpm-workspace.yaml` `minimumReleaseAgeExclude` entry that doesn't already have one — `pnpm audit --fix`/`pnpm install` add these `minimumReleaseAge`-bypass entries with no comment at all, but some callers run a separate, always-on policy check that requires this marker on every version-pinned entry as a sign that the bypass was added through this automated flow rather than by hand.
 
+Workspace membership comes from pnpm for the selected `working-directory`, not a repository-wide file search. All member `package.json` files participate in snapshots, rollback, and change detection. Before returning a changed result, the action runs `pnpm install --frozen-lockfile --ignore-scripts`, confirms publication files remain unchanged, and requires a successful full `pnpm audit` at `audit-level`. Remaining advisories at that severity, audit errors, workspace membership changes, and required deletions restore the original files and fail without outputs. Append any generated changeset paths to `changed-files` (for example, a multiline `paths` input containing `${{ steps.fix.outputs.changed-files }}` followed by `.changeset/audit-fix.md`). Publish the entire `changed-files` list from a successful invocation; do not filter out child manifests. Paths use `GITHUB_WORKSPACE` as the repository root (or Git's root outside Actions), so separate root/website invocations stay scoped independently. The action preserves pnpm's audit fixes, including peer range changes, without adding its own range bumps.
+
 **Prerequisites:** The caller is responsible for checkout and pnpm setup.
 
 #### Usage
@@ -514,8 +518,7 @@ jobs:
           run_install: false
       - uses: tailor-platform/actions/lockfile-audit-fix@v2
         id: fix
-      # commit workspace pnpm-lock.yaml files / pnpm-workspace.yaml / package.json and open
-      # a PR yourself when steps.fix.outputs.changed == 'true'
+      # publish every path in steps.fix.outputs.changed-files together when changed is true
 ```
 
 #### Inputs
@@ -530,9 +533,10 @@ jobs:
 | Name | Description |
 |------|-------------|
 | `changed` | `'true'` if any workspace project's `pnpm-lock.yaml`, `pnpm-workspace.yaml`, and/or `package.json` changed — pnpm writes an override it can't express as a plain version bump to `pnpm-workspace.yaml` (creating it if it doesn't exist) or to `package.json`'s `pnpm.overrides`, depending on pnpm version and whether the repo already has a `pnpm-workspace.yaml` |
+| `changed-files` | Newline-separated repo-root-relative existing workspace manifests, lockfiles, and root configuration files to publish together; empty when unchanged. Includes unchanged files needed for the verified state. |
 | `runtime-deps-changed` | `'true'` if any non-private package's runtime (non-dev) dependencies changed, per the workspace project lockfiles — devDependencies-only and `pnpm-workspace.yaml`/`package.json`-overrides-only changes don't affect consumers |
 | `changed-names` | Newline-separated names of packages whose runtime dependencies changed |
-| `summary` | Markdown summary of fixed and remaining advisories, for use as a PR body |
+| `summary` | Markdown summary of fixed advisories, for use as a PR body |
 
 ---
 
@@ -544,7 +548,7 @@ Commits created this way are automatically shown as "Verified" on GitHub when us
 
 This is deliberately **not** a general-purpose alternative to [`peter-evans/create-pull-request`](https://github.com/peter-evans/create-pull-request): `paths` must be a known, caller-supplied list of files that already exist in the checkout (e.g. files a prior step just modified), not an arbitrary repo-wide diff — this action never inspects the working tree's git status, doesn't support deletions, and reads each listed path directly.
 
-When pairing it with `lockfile-audit-fix` in a workspace that sets `sharedWorkspaceLockfile: false`, include every project's `pnpm-lock.yaml` explicitly in `paths`; `create-signed-pr` does not discover workspace lockfiles or expand globs.
+When pairing it with `lockfile-audit-fix`, pass its entire `changed-files` output to `paths`, including child manifests and per-project lockfiles. `create-signed-pr` does not discover workspace files or expand globs.
 
 Each run re-parents the new commit on the base branch's *current* head and force-moves the target branch to it, so the branch always holds a single commit rebased on the latest base. A consequence: any commit a human pushed to that branch directly is discarded on the next run — same behavior as `peter-evans/create-pull-request`'s default mode.
 
@@ -573,9 +577,7 @@ jobs:
         if: steps.fix.outputs.changed == 'true'
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          paths: |
-            pnpm-lock.yaml
-            pnpm-workspace.yaml
+          paths: ${{ steps.fix.outputs.changed-files }}
           branch: chore/lockfile-audit-fix
           commit-message: "fix(deps): automated lockfile security fix"
           title: "fix(deps): automated lockfile security fix"

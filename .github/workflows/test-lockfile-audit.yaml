@@ -220,3 +220,65 @@ jobs:
             echo "::error::Expected lockfile-audit to fail hard when base-sha isn't reachable in this checkout"
             exit 1
           fi
+
+  test-broken-base-requires-clean-head:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - fixture: clean
+            outcome: success
+          - fixture: no-new-advisory
+            outcome: failure
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 12.8.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.21.0
+      - name: Prepare a broken base and repaired HEAD
+        id: fixture
+        env:
+          FIXTURE: ${{ matrix.fixture }}
+          FIXTURE_DIR: ${{ runner.temp }}/lockfile-audit-broken-${{ matrix.fixture }}
+        run: |
+          mkdir -p "$FIXTURE_DIR"
+          cp "$GITHUB_WORKSPACE/tests/lockfile-audit/$FIXTURE/package.json" "$FIXTURE_DIR/package.json"
+          cd "$FIXTURE_DIR"
+          pnpm install --lockfile-only --ignore-scripts
+          cp pnpm-lock.yaml "../repaired-${FIXTURE}.yaml"
+          node -e 'const fs = require("node:fs"); const file = "pnpm-lock.yaml"; fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace(/^snapshots:[\s\S]*$/m, "snapshots: {}\n"));'
+          git init -q
+          git config user.email test@example.com
+          git config user.name test
+          git add package.json pnpm-lock.yaml
+          git commit -q -m base
+          echo "base-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "fixture-dir=$FIXTURE_DIR" >> "$GITHUB_OUTPUT"
+          cp "../repaired-${FIXTURE}.yaml" pnpm-lock.yaml
+          git add pnpm-lock.yaml
+          git commit -q -m repair
+      - name: Audit repaired lockfile
+        id: audit
+        continue-on-error: true
+        uses: $/lockfile-audit
+        with:
+          working-directory: ${{ steps.fixture.outputs.fixture-dir }}
+          base-sha: ${{ steps.fixture.outputs.base-sha }}
+      - name: Verify audit outcome and restored HEAD
+        env:
+          OUTCOME: ${{ steps.audit.outcome }}
+          EXPECTED: ${{ matrix.outcome }}
+          FIXTURE: ${{ matrix.fixture }}
+          FIXTURE_DIR: ${{ steps.fixture.outputs.fixture-dir }}
+        run: |
+          test "$OUTCOME" = "$EXPECTED"
+          cmp "$FIXTURE_DIR/pnpm-lock.yaml" "$FIXTURE_DIR/../repaired-${FIXTURE}.yaml"

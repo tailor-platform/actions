@@ -34,6 +34,8 @@
  * Outputs (via $GITHUB_OUTPUT):
  *   changed              - "true" if any workspace pnpm-lock.yaml,
  *                           pnpm-workspace.yaml, and/or package.json changed
+ *   changed-files        - newline-separated repo-relative workspace files
+ *                           to publish together after frozen verification
  *   runtime-deps-changed - "true" if any non-private package's runtime
  *                           (non-dev) dependencies changed, per
  *                           workspace lockfiles; devDependencies-only changes
@@ -41,13 +43,13 @@
  *                           changes don't affect consumers
  *   changed-names        - newline-separated names of packages whose
  *                           runtime dependencies changed
- *   summary              - markdown summary of fixed/remaining advisories,
+ *   summary              - markdown summary of fixed advisories,
  *                           for use as a PR body
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, unlinkSync, appendFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync, writeFileSync, unlinkSync, appendFileSync, realpathSync } from "node:fs";
+import { dirname, join, relative, isAbsolute, sep } from "node:path";
 import { randomBytes } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
@@ -600,7 +602,7 @@ function findPnpmLockfilePaths(rootPath) {
     rootPath,
     ...projects.map((project) => project?.path).filter((path) => typeof path === "string"),
   ];
-  return [...new Set(projectPaths.map((path) => join(path, "pnpm-lock.yaml")))].sort();
+  return [...new Set(projectPaths.map((path) => join(realpathSync(path), "pnpm-lock.yaml")))].sort();
 }
 
 /**
@@ -1207,13 +1209,6 @@ function buildSummary(beforeAudit, afterAudit) {
     lines.push("", "Fixed advisories:");
     lines.push(...formatAdvisoryLines(beforeAudit, fixedIds));
   }
-  if (afterIds.size > 0) {
-    const noun = afterIds.size === 1 ? "advisory remains" : "advisories remain";
-    lines.push(
-      "",
-      `${afterIds.size} ${noun} and could not be auto-fixed (no compatible patched version in range, or still blocked by \`minimumReleaseAge\`).`,
-    );
-  }
   return lines.join("\n");
 }
 
@@ -1228,6 +1223,27 @@ function main() {
   // restore existing files and delete files created during the run without
   // depending on another discovery command after a failure.
   const trackedLockfilePaths = findPnpmLockfilePaths(cwd);
+
+  const trackedManifestPaths = trackedLockfilePaths.map((path) => join(dirname(path), "package.json"));
+  const trackedPaths = [...new Set([...trackedLockfilePaths, ...trackedManifestPaths, workspacePath])].sort();
+  let repoRoot = process.env.GITHUB_WORKSPACE;
+  if (!repoRoot) {
+    try {
+      repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    } catch {
+      repoRoot = cwd;
+    }
+  }
+  repoRoot = realpathSync(repoRoot);
+  const outputPaths = new Map(trackedPaths.map((path) => {
+    const local = relative(repoRoot, path);
+    const workspaceLocal = relative(cwd, path);
+    if (!local || isAbsolute(local) || local === ".." || local.startsWith(`..${sep}`) ||
+        workspaceLocal === ".." || workspaceLocal.startsWith(`..${sep}`) || /[\r\n]/.test(local)) {
+      throw new Error(`Workspace file is outside the publication scope: ${path}`);
+    }
+    return [path, local.split(sep).join("/")];
+  }));
 
   const outputFile = process.env.GITHUB_OUTPUT;
   const setOutput = (name, value) => {
@@ -1254,31 +1270,23 @@ function main() {
       trackedLockfilePaths.map((path) => [path, existsSync(path) ? readFileSync(path, "utf8") : null]),
     );
     return {
-      // Preserve the original required-root-lockfile behavior: a missing
-      // root lockfile is an action configuration error, not a nullable
-      // snapshot entry to continue past.
-      lockfile: readFileSync(lockfilePath, "utf8"),
       lockfiles,
+      files: Object.fromEntries(trackedPaths.map((path) => [path, existsSync(path) ? readFileSync(path, "utf8") : null])),
       workspace: existsSync(workspacePath) ? readFileSync(workspacePath, "utf8") : null,
-      packageJson: readFileSync(packageJsonPath, "utf8"),
     };
   };
   const restore = (snap) => {
-    for (const [path, text] of Object.entries(snap.lockfiles)) {
+    for (const [path, text] of Object.entries(snap.files)) {
       if (text === null) {
         if (existsSync(path)) unlinkSync(path);
       } else {
         writeFileSync(path, text);
       }
     }
-    writeFileSync(packageJsonPath, snap.packageJson);
-    if (snap.workspace !== null) {
-      writeFileSync(workspacePath, snap.workspace);
-    } else if (existsSync(workspacePath)) {
-      unlinkSync(workspacePath);
-    }
   };
 
+  readFileSync(lockfilePath);
+  for (const path of trackedManifestPaths) readFileSync(path);
   const original = snapshot();
   const beforeAudit = runAuditSafe(auditLevel, cwd);
 
@@ -1289,7 +1297,7 @@ function main() {
     fallback = snapshot();
   } catch (e) {
     console.log(
-      `::warning::pnpm verification failed after the update-mode fix; reverting workspace lockfiles, pnpm-workspace.yaml, and package.json to their original state. ${e.message}`,
+      `::warning::pnpm verification failed after the update-mode fix; reverting workspace lockfiles, pnpm-workspace.yaml, and package manifests to their original state. ${e.message}`,
     );
     restore(original);
   }
@@ -1310,16 +1318,41 @@ function main() {
     // result that may never have existed.
     const revertTarget = fallback === original ? "their original state" : "the update-mode-only result";
     console.log(
-      `::warning::Override-mode cleanup or verification failed; reverting workspace lockfiles, pnpm-workspace.yaml, and package.json to ${revertTarget}. ${e.message}`,
+      `::warning::Override-mode cleanup or verification failed; reverting workspace lockfiles, pnpm-workspace.yaml, and package manifests to ${revertTarget}. ${e.message}`,
     );
     restore(fallback);
   }
 
   const after = snapshot();
-  const changed =
-    trackedLockfilePaths.some((path) => after.lockfiles[path] !== original.lockfiles[path]) ||
-    after.workspace !== original.workspace ||
-    after.packageJson !== original.packageJson;
+  const changed = trackedPaths.some((path) => after.files[path] !== original.files[path]);
+  let afterAudit;
+  if (changed) {
+    try {
+      const currentLockfiles = findPnpmLockfilePaths(cwd);
+      if (JSON.stringify(currentLockfiles) !== JSON.stringify(trackedLockfilePaths)) {
+        throw new Error("Workspace membership changed during audit");
+      }
+      if (trackedPaths.some((path) => original.files[path] !== null && after.files[path] === null)) {
+        throw new Error("Publication requires a deletion; changed-files only supports existing files");
+      }
+      execFileSync("pnpm", ["install", "--frozen-lockfile", "--ignore-scripts"], {
+        cwd, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 1024 * 1024 * 64,
+      });
+      const verified = snapshot();
+      if (trackedPaths.some((path) => verified.files[path] !== after.files[path])) {
+        throw new Error("Frozen verification modified publication files");
+      }
+      afterAudit = JSON.parse(execFileSync("pnpm", ["audit", `--audit-level=${auditLevel}`, "--json"], {
+        cwd, encoding: "utf8", maxBuffer: 1024 * 1024 * 64,
+      }));
+    } catch (e) {
+      restore(original);
+      throw new Error(`Publication verification failed; restored original workspace files. ${e.message}`, { cause: e });
+    }
+  }
+  setMultilineOutput("changed-files", changed
+    ? trackedPaths.filter((path) => after.files[path] !== null).map((path) => outputPaths.get(path)).sort().join("\n")
+    : "");
   setOutput("changed", changed);
 
   if (!changed) {
@@ -1352,7 +1385,6 @@ function main() {
       : "No runtime dependency changes (devDependencies-only and/or pnpm-workspace.yaml/package.json-overrides changes).",
   );
 
-  const afterAudit = runAuditSafe(auditLevel, cwd);
   setMultilineOutput("summary", buildSummary(beforeAudit, afterAudit));
 }
 
