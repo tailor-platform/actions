@@ -319,6 +319,59 @@ describe("main() verifies HEAD when the base audit fails", () => {
   }
 });
 
+describe("main() treats a failed pnpm audit that printed an error report as a failed audit", () => {
+  test("error-shaped JSON from the base audit still triggers the full HEAD audit", () => {
+    const repoDir = mkdtempSync(join(tmpdir(), "lockfile-audit-error-json-test-"));
+    const fakeBinDir = mkdtempSync(join(tmpdir(), "lockfile-audit-fake-pnpm-"));
+    try {
+      const git = (...args) => execFileSync("git", args, { cwd: repoDir, stdio: "ignore" });
+      git("init", "-q");
+      git("config", "user.email", "test@example.com");
+      git("config", "user.name", "test");
+      writeFileSync(join(repoDir, "pnpm-lock.yaml"), "base-content\n");
+      git("add", "-A");
+      git("commit", "-q", "-m", "base");
+      const baseSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoDir, encoding: "utf8" }).trim();
+      writeFileSync(join(repoDir, "pnpm-lock.yaml"), "head-content\n");
+      git("add", "-A");
+      git("commit", "-q", "-m", "head");
+
+      const counterFile = join(fakeBinDir, "call-count");
+      writeFileSync(counterFile, "0");
+      writeFileSync(
+        join(fakeBinDir, "pnpm"),
+        [
+          "#!/bin/sh",
+          `n=$(cat "${counterFile}")`,
+          "n=$((n + 1))",
+          `echo "$n" > "${counterFile}"`,
+          'if [ "$n" -eq 1 ]; then echo \'{"advisories":{}}\'; exit 0; fi',
+          'if [ "$n" -eq 2 ]; then echo \'{"error":{"code":"REGISTRY_UNAVAILABLE"}}\'; exit 1; fi',
+          "exit 1",
+        ].join("\n"),
+      );
+      chmodSync(join(fakeBinDir, "pnpm"), 0o755);
+
+      let exitCode = 0;
+      try {
+        execFileSync("node", [join(__dirname, "lockfile-audit.mjs")], {
+          cwd: repoDir,
+          env: { ...process.env, PATH: `${fakeBinDir}:${process.env.PATH}`, BASE_SHA_INPUT: baseSha },
+          stdio: ["ignore", "ignore", "ignore"],
+        });
+      } catch (e) {
+        exitCode = e.status;
+      }
+
+      assert.equal(exitCode, 1);
+      assert.equal(readFileSync(counterFile, "utf8").trim(), "3");
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+      rmSync(fakeBinDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("main() rejects a base-sha that doesn't look like a git object id, before ever invoking git or pnpm", () => {
   test("a base-sha input starting with - fails hard instead of being passed to git", () => {
     const repoDir = mkdtempSync(join(tmpdir(), "lockfile-audit-invalid-sha-test-"));
