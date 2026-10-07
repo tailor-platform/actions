@@ -12,7 +12,6 @@ const execute = promisify(execFile);
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const actions = ["deploy", "preview-deploy", "_internal/deploy"];
 const web = { name: "web", url: "https://web.example.com" };
-// The public actions still call the internal action at its pinned SHA, which predates --json.
 const deployArguments = (actionName) =>
   actionName === "_internal/deploy" ? ["tailor", "deploy", "--yes", "--json"] : ["tailor", "deploy", "--yes"];
 
