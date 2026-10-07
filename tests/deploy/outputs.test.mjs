@@ -36,7 +36,9 @@ appendFileSync(process.env.MOCK_CALLS, JSON.stringify({
 }) + "\\n");
 if (args[0] !== "tailor") process.exit(2);
 if (args[1] === "deploy") {
-  if (args.includes("--json") && process.env.MOCK_DEPLOY_JSON !== undefined) {
+  if (args.includes("--json") && process.env.MOCK_DEPLOY_RAW !== undefined) {
+    process.stdout.write(process.env.MOCK_DEPLOY_RAW + "\\n");
+  } else if (args.includes("--json") && process.env.MOCK_DEPLOY_JSON !== undefined) {
     const result = JSON.parse(process.env.MOCK_DEPLOY_JSON);
     process.stdout.write(JSON.stringify(result) + "\\n");
   } else {
@@ -91,6 +93,7 @@ process.exit(2);
       MOCK_CALLS: callsFile,
       MOCK_DEPLOY_STATUS: String(options.deployStatus ?? 0),
       ...(options.deployJson === undefined ? {} : { MOCK_DEPLOY_JSON: JSON.stringify(options.deployJson) }),
+      ...(options.deployRaw === undefined ? {} : { MOCK_DEPLOY_RAW: options.deployRaw }),
       MOCK_SHOW_JSON: JSON.stringify(options.show ?? { url: "https://backend.example.com/query" }),
       MOCK_SHOW_STATUS: String(options.showStatus ?? 0),
       MOCK_WEBSITES_JSON: options.rawJson ?? JSON.stringify(options.websites ?? []),
@@ -241,3 +244,22 @@ test("_internal/deploy: writes the result as one line without output injection",
   assert.equal(result.outputs["forged-output"], undefined);
   assert.equal(JSON.parse(result.outputs.result).applications[0].url, url);
 });
+
+test("_internal/deploy: publishes the result byte for byte, even when it is not in jq's canonical form", async (context) => {
+  const raw = '{"status": "applied", "count": 1e3, "path": "a\\/b", "applications": []}';
+  const result = await runDeploy(context, "_internal/deploy", { deployRaw: raw });
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.outputs.result, raw);
+});
+
+for (const [name, raw] of [
+  ["pretty-printed over several lines", '{\n  "status": "applied"\n}'],
+  ["two values on one line", '{"a":1} {"b":2}'],
+  ["a JSON value that is not an object", "42"],
+]) {
+  test(`_internal/deploy: writes no result when the deploy output is ${name}`, async (context) => {
+    const result = await runDeploy(context, "_internal/deploy", { deployRaw: raw });
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.outputs.result, undefined);
+  });
+}
