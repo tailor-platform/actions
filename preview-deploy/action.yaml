@@ -57,10 +57,10 @@ outputs:
     description: Full workspace name (e.g. "my-app-pr-42")
     value: ${{ steps.workspace.outputs.workspace-name }}
   app-url:
-    description: Application URL (GraphQL endpoint) of the preview workspace
+    description: Deprecated; will be removed in the next major version. Application URL (GraphQL endpoint) of the preview workspace
     value: ${{ steps.deploy.outputs.app-url }}
   frontend-urls:
-    description: JSON object mapping all static website names in the workspace to URLs; {} when none exist
+    description: Deprecated; will be removed in the next major version. JSON object mapping all static website names in the workspace to URLs; {} when none exist
     value: ${{ steps.frontends.outputs.frontend-urls }}
 
 runs:
