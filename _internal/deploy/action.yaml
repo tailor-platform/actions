@@ -34,11 +34,8 @@ runs:
       env:
         TAILOR_PLATFORM_WORKSPACE_ID: ${{ inputs.workspace-id }}
       run: |
-        OUTPUT=$($TAILOR_RUN tailor deploy --yes --json)
-        RESULT=$(printf '%s\n' "$OUTPUT" | awk 'NF { line = $0 } END { print line }')
-        if printf '%s' "$RESULT" | jq -es 'length == 1 and (.[0] | type) == "object"' > /dev/null 2>&1; then
-          printf 'result=%s\n' "$RESULT" >> "$GITHUB_OUTPUT"
-        fi
+        RESULT=$($TAILOR_RUN tailor deploy --yes --json)
+        printf 'result=%s\n' "$RESULT" >> "$GITHUB_OUTPUT"
 
     - name: Resolve app URL
       id: show
