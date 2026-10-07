@@ -12,6 +12,8 @@ const execute = promisify(execFile);
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const actions = ["deploy", "preview-deploy", "_internal/deploy"];
 const web = { name: "web", url: "https://web.example.com" };
+const deployArguments = (actionName) =>
+  actionName === "_internal/deploy" ? ["tailor", "deploy", "--yes", "--json"] : ["tailor", "deploy", "--yes"];
 
 async function runDeploy(context, actionName, options = {}) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "deploy-outputs-"));
@@ -34,7 +36,13 @@ appendFileSync(process.env.MOCK_CALLS, JSON.stringify({
 }) + "\\n");
 if (args[0] !== "tailor") process.exit(2);
 if (args[1] === "deploy") {
-  process.stdout.write("Deployment complete (SDK without hook outputs)\\n");
+  if (args.includes("--json") && process.env.MOCK_DEPLOY_RAW !== undefined) {
+    process.stdout.write(process.env.MOCK_DEPLOY_RAW + "\\n");
+  } else if (args.includes("--json")) {
+    process.stdout.write((process.env.MOCK_DEPLOY_JSON ?? '{"status":"applied"}') + "\\n");
+  } else {
+    process.stdout.write("Deployment complete (SDK without hook outputs)\\n");
+  }
   process.exit(Number(process.env.MOCK_DEPLOY_STATUS));
 }
 if (args[1] === "show") {
@@ -83,6 +91,8 @@ process.exit(2);
       GITHUB_OUTPUT: outputFile,
       MOCK_CALLS: callsFile,
       MOCK_DEPLOY_STATUS: String(options.deployStatus ?? 0),
+      ...(options.deployJson === undefined ? {} : { MOCK_DEPLOY_JSON: JSON.stringify(options.deployJson) }),
+      ...(options.deployRaw === undefined ? {} : { MOCK_DEPLOY_RAW: options.deployRaw }),
       MOCK_SHOW_JSON: JSON.stringify(options.show ?? { url: "https://backend.example.com/query" }),
       MOCK_SHOW_STATUS: String(options.showStatus ?? 0),
       MOCK_WEBSITES_JSON: options.rawJson ?? JSON.stringify(options.websites ?? []),
@@ -117,11 +127,11 @@ for (const actionName of actions) {
     assert.equal(result.action.outputs["app-url"].value, actionName === "_internal/deploy"
       ? "${{ steps.show.outputs.app-url }}" : "${{ steps.deploy.outputs.app-url }}");
     assert.deepEqual(result.calls, [
-      { args: ["tailor", "deploy", "--yes"], cwd: result.project, workspace: "workspace-123", config },
+      { args: deployArguments(actionName), cwd: result.project, workspace: "workspace-123", config },
       { args: ["tailor", "show", "--json"], cwd: result.project, workspace: "workspace-123", config },
       { args: ["tailor", "staticwebsite", "list", "--json"], cwd: result.project, workspace: "workspace-123", config },
     ]);
-    assert.match(result.stdout, /SDK without hook outputs/);
+    if (actionName !== "_internal/deploy") assert.match(result.stdout, /SDK without hook outputs/);
   });
 
   test(`${actionName}: returns {} when the workspace has no sites`, async (context) => {
@@ -135,7 +145,7 @@ for (const actionName of actions) {
     const url = 'https://web.example.com/?x="quoted"&y=1\nother=bad';
     const result = await runDeploy(context, actionName, { websites: [{ name, url }] });
     assert.equal(result.code, 0, result.stderr);
-    assert.equal(result.output.trimEnd().split("\n").length, 2);
+    assert.equal(result.output.trimEnd().split("\n").length, actionName === "_internal/deploy" ? 3 : 2);
     assert.deepEqual(JSON.parse(result.outputs["frontend-urls"]), { [name]: url });
   });
 
@@ -179,4 +189,58 @@ test("public workspace outputs retain their existing sources", async () => {
   assert.equal(deploy.outputs["workspace-id"].value, "${{ inputs.workspace-id }}");
   assert.equal(preview.outputs["workspace-id"].value, "${{ steps.workspace.outputs.workspace-id }}");
   assert.equal(preview.outputs["workspace-name"].value, "${{ steps.workspace.outputs.workspace-name }}");
+});
+
+const deployed = {
+  summary: { create: 1 },
+  status: "applied",
+  workspaceId: "workspace-123",
+  applications: [{
+    name: "backend",
+    url: "https://backend.example.com/query",
+    aiGateways: [],
+    staticWebsites: { "default-web": { name: "default-web", url: "https://default-web.example.com" } },
+    auth: { namespace: "auth", oauth2Clients: [{ name: "default", clientId: "client-id" }] },
+  }],
+  deployedHooks: [{ pluginId: "@tailor-platform/frontend", outputs: { frontends: [] } }],
+};
+
+test("_internal/deploy: publishes the tailor deploy --json result as it is", async (context) => {
+  const result = await runDeploy(context, "_internal/deploy", { deployJson: deployed });
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.outputs.result, JSON.stringify(deployed));
+  assert.equal(result.action.outputs.result.value, "${{ steps.deploy.outputs.result }}");
+});
+
+test("_internal/deploy: keeps app-url and frontend-urls on their own lookups", async (context) => {
+  const result = await runDeploy(context, "_internal/deploy", { deployJson: deployed, websites: [web] });
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.outputs["app-url"], "https://backend.example.com/query");
+  assert.deepEqual(JSON.parse(result.outputs["frontend-urls"]), { web: web.url });
+  assert.equal(result.calls.length, 3);
+});
+
+test("_internal/deploy: passes through the result of an SDK that predates applications", async (context) => {
+  const older = { summary: {}, status: "applied" };
+  const result = await runDeploy(context, "_internal/deploy", { deployJson: older, websites: [web] });
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.outputs.result, JSON.stringify(older));
+  assert.deepEqual(JSON.parse(result.outputs["frontend-urls"]), { web: web.url });
+});
+
+test("_internal/deploy: writes the result as one line without output injection", async (context) => {
+  const url = 'https://web.example.com/?x="quoted"\nforged-output=bad';
+  const hostile = { ...deployed, applications: [{ ...deployed.applications[0], url }] };
+  const result = await runDeploy(context, "_internal/deploy", { deployJson: hostile });
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.output.trimEnd().split("\n").length, 3);
+  assert.equal(result.outputs["forged-output"], undefined);
+  assert.equal(JSON.parse(result.outputs.result).applications[0].url, url);
+});
+
+test("_internal/deploy: publishes the result byte for byte, whatever its spacing and number format", async (context) => {
+  const raw = '{"status": "applied", "count": 1e3, "path": "a\\/b", "applications": []}';
+  const result = await runDeploy(context, "_internal/deploy", { deployRaw: raw });
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.outputs.result, raw);
 });
