@@ -37,6 +37,7 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
+        GH_ENTERPRISE_TOKEN: ${{ inputs.github-token }}
         WORKSPACE_ID: ${{ inputs.workspace-id }}
         WORKSPACE_NAME: ${{ inputs.workspace-name }}
         STATUS: ${{ inputs.status }}
@@ -46,6 +47,7 @@ runs:
         PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: |
+        export GH_HOST="${GITHUB_SERVER_URL#*://}"
         if [ -z "$PR_NUMBER" ]; then
           echo "::notice::Not a pull_request event — skipping preview comment"
           exit 0

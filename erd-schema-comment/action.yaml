@@ -40,11 +40,13 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
+        GH_ENTERPRISE_TOKEN: ${{ inputs.github-token }}
         RUN_ID: ${{ inputs.run-id }}
         SERVER_URL: ${{ github.server_url }}
         REPO: ${{ github.repository }}
       run: |
         set -euo pipefail
+        export GH_HOST="${GITHUB_SERVER_URL#*://}"
         LINKS=$(gh api --paginate --slurp "repos/$REPO/actions/runs/$RUN_ID/artifacts" | \
           jq --arg server_url "$SERVER_URL" --arg repo "$REPO" --arg run_id "$RUN_ID" \
           '[ .[].artifacts[] | select(.name | endswith(".html")) ] | sort_by(.name) |

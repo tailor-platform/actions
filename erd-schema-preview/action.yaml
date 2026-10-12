@@ -201,10 +201,12 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
+        GH_ENTERPRISE_TOKEN: ${{ inputs.github-token }}
         RUN_ID: ${{ steps.find-base.outputs.run-id }}
         ARTIFACT_NAME: ${{ inputs.base-artifact-name }}
       run: |
         set -euo pipefail
+        export GH_HOST="${GITHUB_SERVER_URL#*://}"
         log="$RUNNER_TEMP/erd-schema-preview-download.log"
         if gh run download "$RUN_ID" --repo "${{ github.repository }}" \
           --name "$ARTIFACT_NAME" --dir "$RUNNER_TEMP/erd-schema-preview/base" >"$log" 2>&1; then
