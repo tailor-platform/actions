@@ -187,6 +187,7 @@ export async function determineRelevance({
 async function main() {
   const {
     GH_TOKEN,
+    GITHUB_API_URL = "https://api.github.com",
     GITHUB_REPOSITORY,
     SHA_BASE,
     SHA_HEAD,
@@ -201,7 +202,7 @@ async function main() {
 
   async function compareCommits(base, head) {
     const res = await fetch(
-      `https://api.github.com/repos/${GITHUB_REPOSITORY}/compare/${base}...${head}`,
+      `${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/compare/${base}...${head}`,
       { headers: { Authorization: `Bearer ${GH_TOKEN}`, Accept: "application/vnd.github+json" } },
     );
     if (!res.ok) {
