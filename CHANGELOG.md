@@ -1,5 +1,14 @@
 # tailor-platform-actions
 
+## 2.5.1
+
+### Patch Changes
+
+- d5a30a6: Keep workspace package manifests and lockfiles together when auditing dependencies. Snapshot and restore child manifests, verify frozen installation before returning a bounded repo-relative changed-files output, and use that output in the automated PR workflow.
+- 9bd658d: Preserve base advisory comparison for normal PR checks. When the base lockfile cannot be audited, restore HEAD and require a clean full audit at the configured severity. Before publishing an audit fix, require both frozen installation and a successful final full audit; roll back all workspace files and emit no outputs if verification fails.
+  
+  Treat a failed `pnpm audit` that prints an error report (for example a registry outage) as a failed audit instead of an audit with no advisories, so the broken-base fallback and the HEAD audit no longer pass silently.
+
 ## 2.5.0
 
 ### Minor Changes
