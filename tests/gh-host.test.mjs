@@ -12,6 +12,7 @@ const executeFile = promisify(execFile);
 // gh sends GH_TOKEN only to github.com and *.ghe.com, and targets github.com unless GH_HOST names
 // another host, so a step on GitHub Enterprise Server needs both GH_HOST and GH_ENTERPRISE_TOKEN.
 const ghHostExport = 'export GH_HOST="${GITHUB_SERVER_URL#*://}"';
+const ghTokenInput = "${{ inputs.github-token }}";
 const ghCommandPattern = /(?:^|[\s;&|(])gh\s+[a-z]/;
 
 async function shippedActionFiles() {
@@ -37,6 +38,19 @@ async function ghSteps() {
   return steps;
 }
 
+function assertGhTokenEnv(step, label) {
+  assert.equal(
+    step.env?.GH_TOKEN,
+    ghTokenInput,
+    `${label} must pass inputs.github-token as GH_TOKEN`,
+  );
+  assert.equal(
+    step.env?.GH_ENTERPRISE_TOKEN,
+    ghTokenInput,
+    `${label} must pass inputs.github-token as GH_ENTERPRISE_TOKEN`,
+  );
+}
+
 test("every step that runs gh targets the workflow's own GitHub host", async () => {
   const steps = await ghSteps();
   const files = new Set(steps.map(({ file }) => file));
@@ -50,18 +64,29 @@ test("every step that runs gh targets the workflow's own GitHub host", async () 
 
   for (const { file, name, step, lines, firstGhLine } of steps) {
     const label = `${file} (${name})`;
-    assert.ok(step.env?.GH_TOKEN, `${label} must set GH_TOKEN`);
-    assert.equal(
-      step.env.GH_ENTERPRISE_TOKEN,
-      step.env.GH_TOKEN,
-      `${label} must pass the same token as GH_ENTERPRISE_TOKEN`,
-    );
+    assertGhTokenEnv(step, label);
     const exportLine = lines.findIndex((line) => line.trim() === ghHostExport);
     assert.ok(
       exportLine !== -1 && exportLine < firstGhLine,
       `${label} must run \`${ghHostExport}\` before its first gh command`,
     );
   }
+});
+
+test("rejects matching token variables that do not read the github-token input", () => {
+  assert.throws(
+    () =>
+      assertGhTokenEnv(
+        {
+          env: {
+            GH_TOKEN: "${{ inputs.missing-token }}",
+            GH_ENTERPRISE_TOKEN: "${{ inputs.missing-token }}",
+          },
+        },
+        "fixture",
+      ),
+    /inputs\.github-token/,
+  );
 });
 
 test("GH_HOST is the host of GITHUB_SERVER_URL", async () => {
