@@ -135,7 +135,7 @@ runs:
     # verdict and the PR's true fork point.
     - name: Check relevance
       id: relevance
-      uses: tailor-platform/actions/relevance@09a301b422b2af2923b4ffac174102b0622e07e2
+      uses: tailor-platform/actions/relevance@bed6c5a2dc015d45d78931d9e8989109ec27fc28
       with:
         sha-base: ${{ inputs.sha-base }}
         sha-head: ${{ inputs.sha-head }}
@@ -186,7 +186,7 @@ runs:
     - name: Find base run
       id: find-base
       if: steps.effective-relevance.outputs.relevant != 'false'
-      uses: tailor-platform/actions/find-base-run@09a301b422b2af2923b4ffac174102b0622e07e2
+      uses: tailor-platform/actions/find-base-run@bed6c5a2dc015d45d78931d9e8989109ec27fc28
       with:
         workflow-file: ${{ inputs.export-workflow-file }}
         base-ref: ${{ inputs.base-ref }}
