@@ -6,9 +6,21 @@ description: >-
   erd-schema-preview matrix leg), after uploading each namespace's
   artifact with a name like "<namespace>.html". A namespace erd-schema-preview
   skipped as irrelevant simply has no matching artifact and is naturally
-  omitted — no explicit namespace list required here.
+  omitted on GitHub.com and Enterprise Cloud. On GitHub Enterprise Server, pass candidate
+  names in preview-artifact-names: v3 artifacts are not discoverable
+  through the REST API until the run completes. The comment links to the
+  run page and explains how to download and open the ZIP artifacts.
 
 inputs:
+  preview-artifact-names:
+    description: >-
+      JSON array of candidate preview artifact names (e.g.
+      ["tailordb.html", "analyticsdb.html"]). Required on GitHub
+      Enterprise Server; ignored on GitHub.com and Enterprise Cloud.
+      Include the names used by the preview jobs; irrelevant namespaces
+      produce no artifact. Pass [] when there are no candidates.
+    required: false
+    default: ""
   base-ref:
     description: >-
       Base branch name to mention in the comment (e.g. "the diff is
@@ -44,13 +56,28 @@ runs:
         RUN_ID: ${{ inputs.run-id }}
         SERVER_URL: ${{ github.server_url }}
         REPO: ${{ github.repository }}
+        PREVIEW_ARTIFACT_NAMES: ${{ inputs.preview-artifact-names }}
       run: |
         set -euo pipefail
         export GH_HOST="${GITHUB_SERVER_URL#*://}"
-        LINKS=$(gh api --paginate --slurp "repos/$REPO/actions/runs/$RUN_ID/artifacts" | \
-          jq --arg server_url "$SERVER_URL" --arg repo "$REPO" --arg run_id "$RUN_ID" \
-          '[ .[].artifacts[] | select(.name | endswith(".html")) ] | sort_by(.name) |
-           [ .[] | {label: (.name | rtrimstr(".html")), url: ($server_url + "/" + $repo + "/actions/runs/" + $run_id + "/artifacts/" + (.id | tostring))} ]')
+        case "$SERVER_URL" in
+          https://github.com|https://*.ghe.com)
+            LINKS=$(gh api --paginate --slurp "repos/$REPO/actions/runs/$RUN_ID/artifacts" | \
+              jq --arg server_url "$SERVER_URL" --arg repo "$REPO" --arg run_id "$RUN_ID" \
+              '[ .[].artifacts[] | select(.name | endswith(".html")) ] | sort_by(.name) |
+               [ .[] | {label: (.name | rtrimstr(".html")), url: ($server_url + "/" + $repo + "/actions/runs/" + $run_id + "/artifacts/" + (.id | tostring))} ]')
+            ;;
+          *)
+            if [ -z "$PREVIEW_ARTIFACT_NAMES" ] || ! printf '%s' "$PREVIEW_ARTIFACT_NAMES" | jq -e \
+              'type == "array" and all(.[]; type == "string" and endswith(".html") and (contains("/") | not))' >/dev/null; then
+              echo "::error::preview-artifact-names must be a JSON array of .html filenames on GitHub Enterprise Server. Use [] when there are no candidates."
+              exit 1
+            fi
+            LINKS=$(printf '%s' "$PREVIEW_ARTIFACT_NAMES" | \
+              jq --arg url "$SERVER_URL/$REPO/actions/runs/$RUN_ID" \
+              'unique | map({label: ., url: $url})')
+            ;;
+        esac
 
         EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
         {
@@ -61,7 +88,7 @@ runs:
 
     - name: Post or update comment
       id: comment
-      uses: tailor-platform/actions/_internal/erd-comment@f6af383640ad4e48d232464d3136a8644e071af8
+      uses: tailor-platform/actions/_internal/erd-comment@57167ea818c5819ead1f422bc53b74294ac5273e
       with:
         links: ${{ steps.list.outputs.links }}
         base-ref: ${{ inputs.base-ref }}

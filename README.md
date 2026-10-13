@@ -18,9 +18,26 @@ Server. Steps that run `gh` or `jq` need them installed on the runner, and actio
 github.com, these included, must be made available on the server (GitHub Connect or
 `actions-sync`).
 
-`erd-schema-export`, `erd-schema-preview`, and `erd-schema-comment` are not supported on GitHub
-Enterprise Server: they upload and link artifacts with `actions/upload-artifact` v4 or later,
-which GitHub Enterprise Server does not support.
+`erd-schema-export` and `erd-schema-preview` automatically use `upload-artifact` v3.2.2 on
+GitHub Enterprise Server, where v4 and later are unsupported. Each preview is a ZIP containing
+a self-contained HTML file. Download the ZIP from the workflow run, extract it, and open the
+HTML locally. GitHub.com and Enterprise Cloud on `*.ghe.com` keep the unzipped HTML previews.
+
+On GitHub Enterprise Server, `erd-schema-comment` requires `preview-artifact-names`, a JSON
+array of candidate filenames matching the preview jobs' `preview-artifact-name` inputs:
+
+```yaml
+- uses: tailor-platform/actions/erd-schema-comment@v2
+  with:
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+    preview-artifact-names: '["tailordb.html", "analyticsdb.html"]'
+```
+
+Run the comment action after the preview jobs finish. It lists candidate names with links
+to the run page because v3 artifacts reach the REST API only after the entire run completes.
+Irrelevant namespaces produce no artifact, so a candidate may be absent from the completed
+run. Pass `[]` when there are no candidates. This input is ignored on GitHub.com and
+Enterprise Cloud, where the comment still discovers and links uploaded artifacts directly.
 
 ## Actions
 

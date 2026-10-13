@@ -30,6 +30,7 @@ jobs:
       - run: pnpm test:cli-bin-contract
       - run: pnpm test:gh-host
       - run: pnpm test:erd-upload
+      - run: pnpm test:erd-preview
       - run: pnpm test:deploy-outputs
       - run: pnpm test:drift-check
       - run: pnpm test:plan
