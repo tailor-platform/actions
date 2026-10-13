@@ -14,7 +14,11 @@ const executeFile = promisify(execFile);
 // another host, so a step on GitHub Enterprise Server needs both GH_HOST and GH_ENTERPRISE_TOKEN.
 const ghHostExport = 'export GH_HOST="${GITHUB_SERVER_URL#*://}"';
 const ghTokenInput = "${{ inputs.github-token }}";
-const ghCommandPattern = /(?:^|[\s;&|(])gh\s+[a-z]/;
+const ghCommandPattern = /(?:^|[\s;&|(])gh(?:\s|$)/;
+
+function firstGhCommandLine(lines) {
+  return lines.findIndex((line) => ghCommandPattern.test(line));
+}
 
 async function shippedActionFiles(directory = repositoryRoot) {
   const { stdout } = await executeFile("git", ["ls-files", "-z"], { cwd: directory });
@@ -32,7 +36,7 @@ async function ghSteps() {
     for (const step of action.runs?.steps ?? []) {
       if (typeof step.run !== "string") continue;
       const lines = step.run.split("\n").filter((line) => !line.trim().startsWith("#"));
-      const firstGhLine = lines.findIndex((line) => ghCommandPattern.test(line));
+      const firstGhLine = firstGhCommandLine(lines);
       if (firstGhLine === -1) continue;
       steps.push({ file, name: step.name ?? step.id, step, lines, firstGhLine });
     }
@@ -106,6 +110,16 @@ test("discovers only action definitions tracked by Git", async (context) => {
   await executeFile("git", ["add", "tracked/action.yaml"], { cwd: temporaryRepository });
 
   assert.deepEqual(await shippedActionFiles(temporaryRepository), ["tracked/action.yaml"]);
+});
+
+test("detects gh commands with leading options or a continued subcommand", () => {
+  for (const script of [
+    'gh --repo "$GITHUB_REPOSITORY" api repos/acme/widgets',
+    'gh -R "$GITHUB_REPOSITORY" api repos/acme/widgets',
+    "gh \\\n  api repos/acme/widgets",
+  ]) {
+    assert.notEqual(firstGhCommandLine(script.split("\n")), -1, script);
+  }
 });
 
 test("GH_HOST is the host of GITHUB_SERVER_URL", async () => {
