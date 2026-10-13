@@ -10,18 +10,6 @@ SDK's `tailor` CLI. If you're still on the SDK's pre-rename `tailor-sdk` CLI, us
 instead; that line is maintained on the [`maintenance/v1`](https://github.com/tailor-platform/actions/tree/maintenance/v1)
 branch, not `main`.
 
-## GitHub Enterprise Server
-
-Actions that call the GitHub API, directly or through `gh`, use the API of the host the
-workflow runs on (`GITHUB_API_URL`, `GITHUB_SERVER_URL`), so they can run on GitHub Enterprise
-Server. Steps that run `gh` or `jq` need them installed on the runner, and actions hosted on
-github.com, these included, must be made available on the server (GitHub Connect or
-`actions-sync`).
-
-`erd-schema-export`, `erd-schema-preview`, and `erd-schema-comment` are not supported on GitHub
-Enterprise Server: they upload and link artifacts with `actions/upload-artifact` v4 or later,
-which GitHub Enterprise Server does not support.
-
 ## Actions
 
 ### [`deploy`](deploy/README.md)
