@@ -41,6 +41,7 @@ runs:
       env:
         LINKS: ${{ inputs.links }}
         BASE_REF: ${{ inputs.base-ref }}
+        SERVER_URL: ${{ github.server_url }}
       run: |
         MARKER="<!-- tailor-erd-preview -->"
 
@@ -62,8 +63,17 @@ runs:
         else
           DIFF_NOTE=""
           [ -n "$BASE_REF" ] && DIFF_NOTE=" Each viewer can switch between the current schema and a diff against base branch \`$BASE_REF\`."
-          LIST=$(printf '%s' "$LINKS" | jq -r '.[] | "- **\(.label)**: [view](\(.url))"')
-          BODY="${MARKER}"$'\n'"## 🗺️ ERD preview"$'\n\n'"Self-contained ERD viewer HTML built for this run.${DIFF_NOTE}"$'\n'"${LIST}"
+          case "$SERVER_URL" in
+            https://github.com|https://*.ghe.com)
+              LIST=$(printf '%s' "$LINKS" | jq -r '.[] | "- **\(.label)**: [view](\(.url))"')
+              DESCRIPTION="Self-contained ERD viewer HTML built for this run."
+              ;;
+            *)
+              LIST=$(printf '%s' "$LINKS" | jq -r '.[] | "- **\(.label)**: [run](\(.url))"')
+              DESCRIPTION="These are candidate ERD viewer artifact names; irrelevant namespaces produce no artifact. After the run completes, download the ZIP from the run page, extract it, and open the HTML locally."
+              ;;
+          esac
+          BODY="${MARKER}"$'\n'"## 🗺️ ERD preview"$'\n\n'"${DESCRIPTION}${DIFF_NOTE}"$'\n'"${LIST}"
         fi
 
         EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
