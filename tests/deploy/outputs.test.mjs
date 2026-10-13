@@ -244,3 +244,16 @@ test("_internal/deploy: publishes the result byte for byte, whatever its spacing
   assert.equal(result.code, 0, result.stderr);
   assert.equal(result.outputs.result, raw);
 });
+
+test("_internal/deploy: annotates the run with the exit code when the deployment fails, as --json suppresses the SDK's own annotation", async (context) => {
+  const result = await runDeploy(context, "_internal/deploy", { deployStatus: 7 });
+  assert.equal(result.code, 7);
+  assert.match(result.stdout, /^::error title=tailor deploy::.*exit code 7/m);
+  assert.equal(result.output, "");
+});
+
+test("_internal/deploy: emits no annotation when the deployment succeeds", async (context) => {
+  const result = await runDeploy(context, "_internal/deploy");
+  assert.equal(result.code, 0, result.stderr);
+  assert.doesNotMatch(result.stdout, /::error/);
+});

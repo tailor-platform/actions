@@ -34,7 +34,12 @@ runs:
       env:
         TAILOR_PLATFORM_WORKSPACE_ID: ${{ inputs.workspace-id }}
       run: |
-        RESULT=$($TAILOR_RUN tailor deploy --yes --json)
+        CODE=0
+        RESULT=$($TAILOR_RUN tailor deploy --yes --json) || CODE=$?
+        if [ "$CODE" -ne 0 ]; then
+          echo "::error title=tailor deploy::tailor deploy failed with exit code $CODE; the SDK's JSON error is in this step's log"
+          exit "$CODE"
+        fi
         printf 'result=%s\n' "$RESULT" >> "$GITHUB_OUTPUT"
 
     - name: Resolve app URL
