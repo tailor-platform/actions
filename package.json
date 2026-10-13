@@ -12,6 +12,7 @@
     "test:create-signed-pr": "node --test create-signed-pr/*.test.mjs",
     "test:cli-bin-contract": "node --test tests/cli-bin-contract.test.mjs",
     "test:gh-host": "node --test tests/gh-host.test.mjs",
+    "test:erd-upload": "node --test tests/erd-upload.test.mjs",
     "test:drift-check": "node --test drift-check/*.test.mjs",
     "changeset": "changeset",
     "test:plan": "node --test plan/*.test.mjs",
