@@ -59,7 +59,7 @@ runs:
         PREVIEW_ARTIFACT_NAMES: ${{ inputs.preview-artifact-names }}
       run: |
         set -euo pipefail
-        export GH_HOST="${GITHUB_SERVER_URL#*://}"
+        export GH_HOST="${SERVER_URL#*://}"
         case "$SERVER_URL" in
           https://github.com|https://*.ghe.com)
             LINKS=$(gh api --paginate --slurp "repos/$REPO/actions/runs/$RUN_ID/artifacts" | \

@@ -63,16 +63,14 @@ runs:
         else
           DIFF_NOTE=""
           [ -n "$BASE_REF" ] && DIFF_NOTE=" Each viewer can switch between the current schema and a diff against base branch \`$BASE_REF\`."
-          case "$SERVER_URL" in
-            https://github.com|https://*.ghe.com)
-              LIST=$(printf '%s' "$LINKS" | jq -r '.[] | "- **\(.label)**: [view](\(.url))"')
-              DESCRIPTION="Self-contained ERD viewer HTML built for this run."
-              ;;
-            *)
-              LIST=$(printf '%s' "$LINKS" | jq -r '.[] | "- **\(.label)**: [run](\(.url))"')
-              DESCRIPTION="These are candidate ERD viewer artifact names; irrelevant namespaces produce no artifact. After the run completes, download the ZIP from the run page, extract it, and open the HTML locally."
-              ;;
-          esac
+          GHES=$(bash "${{ github.action_path }}/../lib/is-ghes.sh" "$SERVER_URL")
+          if [ "$GHES" = "false" ]; then
+            LIST=$(printf '%s' "$LINKS" | jq -r '.[] | "- **\(.label)**: [view](\(.url))"')
+            DESCRIPTION="Self-contained ERD viewer HTML built for this run."
+          else
+            LIST=$(printf '%s' "$LINKS" | jq -r '.[] | "- **\(.label)**: [run](\(.url))"')
+            DESCRIPTION="These are candidate ERD viewer artifact names; irrelevant namespaces produce no artifact. After the run completes, download the ZIP from the run page, extract it, and open the HTML locally."
+          fi
           BODY="${MARKER}"$'\n'"## 🗺️ ERD preview"$'\n\n'"${DESCRIPTION}${DIFF_NOTE}"$'\n'"${LIST}"
         fi
 
