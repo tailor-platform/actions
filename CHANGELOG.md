@@ -1,5 +1,16 @@
 # tailor-platform-actions
 
+## 2.6.0
+
+### Minor Changes
+
+- 02a0e1b: Deprecate the `app-url` and `frontend-urls` outputs of `deploy` and `preview-deploy`. They keep their current values and will be removed in the next major version.
+- f42007b: Add `ttl` to preview-deploy and `prune-expired` (with `organization-id` and `folder-id`) to preview-cleanup. With `ttl`, a preview workspace records an expiry that every push to the PR restarts, and with `prune-expired: "true"` every PR close also deletes this app's other `{prefix}-pr-{number}` workspaces in the same folder or organization root whose expiry has passed, so a preview whose own cleanup never ran no longer lingers. A PR that sat idle past `ttl` gets a fresh workspace on its next push, and closing it after its workspace was pruned no longer fails. Both inputs are off by default and existing workflows behave as before.
+
+### Patch Changes
+
+- 108ca2d: Fix preview-deploy and preview-cleanup not finding the workspace ID recorded in the PR comment when jq rejects the `(?P<id>…)` named-group syntax, as the jq 1.7.1 and 1.8.2 release binaries do. `try` hid the error, so an existing preview workspace went unrecognized: a later push tried to create it again and closing the PR skipped deleting it. The group is now written `(?<id>…)`, which those jq versions accept.
+
 ## 2.5.1
 
 ### Patch Changes
