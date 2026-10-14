@@ -75,7 +75,7 @@ runs:
             fi
             LINKS=$(printf '%s' "$PREVIEW_ARTIFACT_NAMES" | \
               jq --arg url "$SERVER_URL/$REPO/actions/runs/$RUN_ID" \
-              'unique | map({label: ., url: $url})')
+              'unique | map({label: rtrimstr(".html"), url: $url})')
             ;;
         esac
 

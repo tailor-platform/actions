@@ -71,8 +71,8 @@ test("GHES comments list candidate artifact names without querying unfinished-ru
   assert.equal(result.error, undefined);
   assert.equal(result.calls, "");
   assert.deepEqual(JSON.parse(outputValue(result.rawOutput, "links")), [
-    { label: "analyticsdb.html", url: "https://ghes.example.com/acme/widgets/actions/runs/99" },
-    { label: "tailordb.html", url: "https://ghes.example.com/acme/widgets/actions/runs/99" },
+    { label: "analyticsdb", url: "https://ghes.example.com/acme/widgets/actions/runs/99" },
+    { label: "tailordb", url: "https://ghes.example.com/acme/widgets/actions/runs/99" },
   ]);
   assert.equal(comment.runs.steps.find((step) => step.id === "list").env.PREVIEW_ARTIFACT_NAMES, "${{ inputs.preview-artifact-names }}");
 });
