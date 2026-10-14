@@ -11,6 +11,34 @@ inputs:
       The same prefix used in preview-deploy. Used to locate the PR comment
       that holds the workspace ID.
     required: true
+  prune-expired:
+    description: >-
+      Set to "true" to also delete this app's other preview workspaces whose
+      expiry (the `ttl` input of preview-deploy) has passed, right after the
+      per-PR workspace is deleted. Workspaces without a recorded expiry are
+      never deleted this way. Runs even when deleting the per-PR workspace
+      failed. Needs `folder-id`, `organization-id`, or the
+      TAILOR_PLATFORM_FOLDER_ID / TAILOR_PLATFORM_ORGANIZATION_ID environment
+      variable; with none of them the sweep is skipped with a warning.
+    required: false
+    default: "false"
+  organization-id:
+    description: >-
+      Organization whose root (workspaces outside any folder) is swept when
+      `folder-id` is empty. Use the same value as preview-deploy. Defaults to
+      the TAILOR_PLATFORM_ORGANIZATION_ID environment variable. Only used when
+      `prune-expired` is "true".
+    required: false
+    default: ""
+  folder-id:
+    description: >-
+      Folder swept for expired preview workspaces. Use the same value as
+      preview-deploy. Defaults to the TAILOR_PLATFORM_FOLDER_ID environment
+      variable. Takes precedence over `organization-id`, matching where
+      preview-deploy creates the workspace. Only used when `prune-expired` is
+      "true".
+    required: false
+    default: ""
   working-directory:
     description: Working directory for the project (for monorepo setups)
     required: false
@@ -66,7 +94,7 @@ runs:
             '[ .[][] | select(.user.type == "Bot" and (.body | startswith($m))) ] | first | .body // empty')
 
         WORKSPACE_ID=$(echo "$COMMENT" | \
-          jq -rR '(try capture("<!-- tailor-preview: [^ ]+ id=(?P<id>[a-f0-9-]+)") | .id) // empty')
+          jq -rR '(try capture("<!-- tailor-preview: [^ ]+ id=(?<id>[a-f0-9-]+)") | .id) // empty')
 
         if [ -z "$WORKSPACE_ID" ]; then
           echo "::warning::No preview workspace ID found in PR comment — skipping deletion"
@@ -74,7 +102,14 @@ runs:
         fi
 
         echo "Deleting preview workspace: $WORKSPACE_NAME ($WORKSPACE_ID)"
-        $TAILOR_RUN tailor workspace delete --workspace-id "$WORKSPACE_ID" --yes
+        if DELETE_OUTPUT=$($TAILOR_RUN tailor workspace delete --workspace-id "$WORKSPACE_ID" --yes 2>&1); then
+          printf '%s\n' "$DELETE_OUTPUT"
+        elif printf '%s' "$DELETE_OUTPUT" | grep -qiE 'not_found|workspace .*not found'; then
+          echo "::warning::Preview workspace $WORKSPACE_ID no longer exists (expired and pruned?) — nothing to delete"
+        else
+          printf '%s\n' "$DELETE_OUTPUT" >&2
+          exit 1
+        fi
 
         echo "workspace-id=$WORKSPACE_ID" >> "$GITHUB_OUTPUT"
         echo "workspace-name=$WORKSPACE_NAME" >> "$GITHUB_OUTPUT"
@@ -106,3 +141,28 @@ runs:
         marker-prefix: "<!-- tailor-preview: ${{ steps.delete.outputs.workspace-name }} "
         body: ${{ steps.body.outputs.body }}
         github-token: ${{ inputs.github-token }}
+
+    - name: Prune expired preview workspaces
+      id: prune
+      if: ${{ !cancelled() && inputs.prune-expired == 'true' }}
+      shell: bash
+      env:
+        NAME_PREFIX: ${{ inputs.workspace-name-prefix }}
+        ORG_ID: ${{ inputs.organization-id }}
+        FOLDER_ID: ${{ inputs.folder-id }}
+      run: |
+        ORG_ID="${ORG_ID:-${TAILOR_PLATFORM_ORGANIZATION_ID:-}}"
+        FOLDER_ID="${FOLDER_ID:-${TAILOR_PLATFORM_FOLDER_ID:-}}"
+        if [ -n "$FOLDER_ID" ]; then
+          LOCATION=(--folder-id "$FOLDER_ID")
+        elif [ -n "$ORG_ID" ]; then
+          LOCATION=(--organization-root "$ORG_ID")
+        else
+          echo "::warning::prune-expired needs folder-id or organization-id — skipping the sweep of expired preview workspaces"
+          exit 0
+        fi
+
+        NAME_PATTERN="$(printf '%s' "$NAME_PREFIX" | sed 's/[][\.*^$(){}?+|/]/\\&/g')-pr-[0-9]+"
+
+        echo "Pruning expired preview workspaces matching: $NAME_PATTERN"
+        $TAILOR_RUN tailor workspace prune --expired --yes --limit 0 "${LOCATION[@]}" --name "$NAME_PATTERN"
