@@ -77,9 +77,11 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
+        GH_ENTERPRISE_TOKEN: ${{ inputs.github-token }}
         NAME_PREFIX: ${{ inputs.workspace-name-prefix }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
       run: |
+        export GH_HOST="${GITHUB_SERVER_URL#*://}"
         if [ -z "$PR_NUMBER" ]; then
           echo "::error::preview-cleanup must run on a pull_request event"
           exit 1

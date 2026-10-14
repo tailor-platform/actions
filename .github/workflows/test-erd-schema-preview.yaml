@@ -102,6 +102,10 @@ jobs:
           preview-artifact-name: test-erd-schema-preview-no-base-${{ github.run_id }}.html
           preview-retention-days: "1"
           always-relevant-paths: |
+            erd-schema-export/
+            erd-schema-preview/
+            erd-schema-comment/
+            tests/erd-schema-preview/
             .github/workflows/test-erd-schema-preview.yaml
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -278,6 +282,10 @@ jobs:
           preview-artifact-name: tailordb.html
           preview-retention-days: "1"
           always-relevant-paths: |
+            erd-schema-export/
+            erd-schema-preview/
+            erd-schema-comment/
+            tests/erd-schema-preview/
             .github/workflows/test-erd-schema-preview.yaml
           github-token: ${{ secrets.GITHUB_TOKEN }}
 

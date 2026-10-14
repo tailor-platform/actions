@@ -50,6 +50,7 @@ export async function findBaseRun({ forkSha, runs, compareStatus }) {
 async function main() {
   const {
     GH_TOKEN,
+    GITHUB_API_URL = "https://api.github.com",
     GITHUB_REPOSITORY,
     WORKFLOW_FILE,
     BASE_REF,
@@ -72,7 +73,7 @@ async function main() {
   }
 
   async function githubApi(path) {
-    const res = await fetch(`https://api.github.com/${path}`, {
+    const res = await fetch(`${GITHUB_API_URL}/${path}`, {
       headers: { Authorization: `Bearer ${GH_TOKEN}`, Accept: "application/vnd.github+json" },
     });
     if (!res.ok) {

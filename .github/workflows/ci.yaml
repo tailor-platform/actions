@@ -28,6 +28,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test:cli-bin-contract
+      - run: pnpm test:gh-host
       - run: pnpm test:deploy-outputs
       - run: pnpm test:drift-check
       - run: pnpm test:plan

@@ -1,5 +1,7 @@
+import { fileURLToPath } from "node:url";
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import { runScript } from "../tests/run-script.mjs";
 import { findBaseRun } from "./find-base-run.mjs";
 
 describe("findBaseRun", () => {
@@ -63,5 +65,31 @@ describe("findBaseRun", () => {
     const compareStatus = async (base) => (base === "c1" ? "ahead" : "behind");
     const result = await findBaseRun({ forkSha: "fork", runs, compareStatus });
     assert.equal(result.runId, "1");
+  });
+});
+
+describe("find-base-run.mjs as a script", () => {
+  test("calls the runs and compare APIs under GITHUB_API_URL, as on GitHub Enterprise Server", async (context) => {
+    const { requests, output } = await runScript(context, {
+      script: fileURLToPath(new URL("./find-base-run.mjs", import.meta.url)),
+      responses: {
+        "/api/v3/repos/acme/widgets/actions/workflows/erd.yml/runs": {
+          workflow_runs: [{ id: 42, head_sha: "run-sha" }],
+        },
+        "/api/v3/repos/acme/widgets/compare/run-sha...fork-sha": { status: "ahead" },
+      },
+      env: {
+        GH_TOKEN: "test-token",
+        GITHUB_REPOSITORY: "acme/widgets",
+        WORKFLOW_FILE: "erd.yml",
+        BASE_REF: "main",
+        FORK_SHA: "fork-sha",
+      },
+    });
+    assert.deepEqual(requests, [
+      "/api/v3/repos/acme/widgets/actions/workflows/erd.yml/runs",
+      "/api/v3/repos/acme/widgets/compare/run-sha...fork-sha",
+    ]);
+    assert.equal(output, "run-id=42\n");
   });
 });

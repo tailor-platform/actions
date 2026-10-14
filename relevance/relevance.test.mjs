@@ -2,9 +2,10 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import { runScript } from "../tests/run-script.mjs";
 import {
   ZERO_SHA,
   parseRelevantPaths,
@@ -290,5 +291,28 @@ describe("determineRelevance with path patterns", () => {
       ]),
     });
     assert.equal(result.relevant, true);
+  });
+});
+
+describe("relevance.mjs as a script", () => {
+  test("calls the compare API under GITHUB_API_URL, as on GitHub Enterprise Server", async (context) => {
+    const { requests, output } = await runScript(context, {
+      script: fileURLToPath(new URL("./relevance.mjs", import.meta.url)),
+      responses: {
+        "/api/v3/repos/acme/widgets/compare/base-sha...head-sha": {
+          files: [{ filename: "apps/api/index.ts" }],
+          merge_base_commit: { sha: "fork-sha" },
+        },
+      },
+      env: {
+        GH_TOKEN: "test-token",
+        GITHUB_REPOSITORY: "acme/widgets",
+        SHA_BASE: "base-sha",
+        SHA_HEAD: "head-sha",
+        PATH_PATTERNS: "apps/**",
+      },
+    });
+    assert.deepEqual(requests, ["/api/v3/repos/acme/widgets/compare/base-sha...head-sha"]);
+    assert.equal(output, "fork-sha=fork-sha\nrelevant=true\n");
   });
 });

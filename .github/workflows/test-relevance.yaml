@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "relevance/**"
+      - "tests/run-script.mjs"
       - ".github/workflows/test-relevance.yaml"
   push:
     branches:

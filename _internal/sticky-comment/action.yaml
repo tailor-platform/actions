@@ -38,10 +38,12 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
+        GH_ENTERPRISE_TOKEN: ${{ inputs.github-token }}
         MARKER_PREFIX: ${{ inputs.marker-prefix }}
         BODY: ${{ inputs.body }}
         PR_NUMBER: ${{ inputs.pr-number || github.event.pull_request.number }}
       run: |
+        export GH_HOST="${GITHUB_SERVER_URL#*://}"
         if [ -z "$PR_NUMBER" ]; then
           echo "::notice::sticky-comment: not a pull_request event — skipping"
           exit 0

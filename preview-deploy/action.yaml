@@ -89,6 +89,7 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
+        GH_ENTERPRISE_TOKEN: ${{ inputs.github-token }}
         NAME_PREFIX: ${{ inputs.workspace-name-prefix }}
         REGION: ${{ inputs.region }}
         ORG_ID: ${{ inputs.organization-id }}
@@ -96,6 +97,7 @@ runs:
         TTL: ${{ inputs.ttl }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
       run: | # zizmor: ignore[github-env]
+        export GH_HOST="${GITHUB_SERVER_URL#*://}"
         if [ -z "$PR_NUMBER" ]; then
           echo "::error::preview-deploy must run on a pull_request event"
           exit 1

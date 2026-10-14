@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "find-base-run/**"
+      - "tests/run-script.mjs"
       - ".github/workflows/test-find-base-run.yaml"
   push:
     branches:
