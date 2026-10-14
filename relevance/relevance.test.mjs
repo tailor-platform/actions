@@ -1,12 +1,11 @@
-import { execFile, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createServer } from "node:http";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { promisify } from "node:util";
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import { runScript } from "../tests/run-script.mjs";
 import {
   ZERO_SHA,
   parseRelevantPaths,
@@ -14,9 +13,6 @@ import {
   matchesPathPatterns,
   determineRelevance,
 } from "./relevance.mjs";
-
-const runScript = (script, env) =>
-  promisify(execFile)(process.execPath, [script], { env: { PATH: process.env.PATH, ...env }, timeout: 10000 });
 
 describe("parseRelevantPaths", () => {
   test("empty input yields no entries", () => {
@@ -299,38 +295,24 @@ describe("determineRelevance with path patterns", () => {
 });
 
 describe("relevance.mjs as a script", () => {
-  test("calls the compare API under GITHUB_API_URL, as on GitHub Enterprise Server", async () => {
-    const requests = [];
-    const server = createServer((req, res) => {
-      requests.push(req.url);
-      if (req.url === "/api/v3/repos/acme/widgets/compare/base-sha...head-sha") {
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(
-          JSON.stringify({ files: [{ filename: "apps/api/index.ts" }], merge_base_commit: { sha: "fork-sha" } }),
-        );
-        return;
-      }
-      res.writeHead(404).end();
-    });
-    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-    const dir = mkdtempSync(join(tmpdir(), "relevance-main-"));
-    const outputFile = join(dir, "output");
-    writeFileSync(outputFile, "");
-    try {
-      await runScript(fileURLToPath(new URL("./relevance.mjs", import.meta.url)), {
-        GITHUB_API_URL: `http://127.0.0.1:${server.address().port}/api/v3`,
+  test("calls the compare API under GITHUB_API_URL, as on GitHub Enterprise Server", async (context) => {
+    const { requests, output } = await runScript(context, {
+      script: fileURLToPath(new URL("./relevance.mjs", import.meta.url)),
+      responses: {
+        "/api/v3/repos/acme/widgets/compare/base-sha...head-sha": {
+          files: [{ filename: "apps/api/index.ts" }],
+          merge_base_commit: { sha: "fork-sha" },
+        },
+      },
+      env: {
         GH_TOKEN: "test-token",
         GITHUB_REPOSITORY: "acme/widgets",
         SHA_BASE: "base-sha",
         SHA_HEAD: "head-sha",
         PATH_PATTERNS: "apps/**",
-        GITHUB_OUTPUT: outputFile,
-      });
-      assert.deepEqual(requests, ["/api/v3/repos/acme/widgets/compare/base-sha...head-sha"]);
-      assert.equal(readFileSync(outputFile, "utf8"), "fork-sha=fork-sha\nrelevant=true\n");
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-      await new Promise((resolve) => server.close(resolve));
-    }
+      },
+    });
+    assert.deepEqual(requests, ["/api/v3/repos/acme/widgets/compare/base-sha...head-sha"]);
+    assert.equal(output, "fork-sha=fork-sha\nrelevant=true\n");
   });
 });

@@ -1,16 +1,8 @@
-import { execFile } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createServer } from "node:http";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import { runScript } from "../tests/run-script.mjs";
 import { findBaseRun } from "./find-base-run.mjs";
-
-const runScript = (script, env) =>
-  promisify(execFile)(process.execPath, [script], { env: { PATH: process.env.PATH, ...env }, timeout: 10000 });
 
 describe("findBaseRun", () => {
   test("no runs at all returns empty with a distinct reason", async () => {
@@ -77,45 +69,27 @@ describe("findBaseRun", () => {
 });
 
 describe("find-base-run.mjs as a script", () => {
-  test("calls the runs and compare APIs under GITHUB_API_URL, as on GitHub Enterprise Server", async () => {
-    const requests = [];
-    const server = createServer((req, res) => {
-      const { pathname } = new URL(req.url, "http://localhost");
-      requests.push(pathname);
-      const json = (body) => {
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify(body));
-      };
-      if (pathname === "/api/v3/repos/acme/widgets/actions/workflows/erd.yml/runs") {
-        return json({ workflow_runs: [{ id: 42, head_sha: "run-sha" }] });
-      }
-      if (pathname === "/api/v3/repos/acme/widgets/compare/run-sha...fork-sha") {
-        return json({ status: "ahead" });
-      }
-      res.writeHead(404).end();
-    });
-    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-    const dir = mkdtempSync(join(tmpdir(), "find-base-run-main-"));
-    const outputFile = join(dir, "output");
-    writeFileSync(outputFile, "");
-    try {
-      await runScript(fileURLToPath(new URL("./find-base-run.mjs", import.meta.url)), {
-        GITHUB_API_URL: `http://127.0.0.1:${server.address().port}/api/v3`,
+  test("calls the runs and compare APIs under GITHUB_API_URL, as on GitHub Enterprise Server", async (context) => {
+    const { requests, output } = await runScript(context, {
+      script: fileURLToPath(new URL("./find-base-run.mjs", import.meta.url)),
+      responses: {
+        "/api/v3/repos/acme/widgets/actions/workflows/erd.yml/runs": {
+          workflow_runs: [{ id: 42, head_sha: "run-sha" }],
+        },
+        "/api/v3/repos/acme/widgets/compare/run-sha...fork-sha": { status: "ahead" },
+      },
+      env: {
         GH_TOKEN: "test-token",
         GITHUB_REPOSITORY: "acme/widgets",
         WORKFLOW_FILE: "erd.yml",
         BASE_REF: "main",
         FORK_SHA: "fork-sha",
-        GITHUB_OUTPUT: outputFile,
-      });
-      assert.deepEqual(requests, [
-        "/api/v3/repos/acme/widgets/actions/workflows/erd.yml/runs",
-        "/api/v3/repos/acme/widgets/compare/run-sha...fork-sha",
-      ]);
-      assert.equal(readFileSync(outputFile, "utf8"), "run-id=42\n");
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-      await new Promise((resolve) => server.close(resolve));
-    }
+      },
+    });
+    assert.deepEqual(requests, [
+      "/api/v3/repos/acme/widgets/actions/workflows/erd.yml/runs",
+      "/api/v3/repos/acme/widgets/compare/run-sha...fork-sha",
+    ]);
+    assert.equal(output, "run-id=42\n");
   });
 });
