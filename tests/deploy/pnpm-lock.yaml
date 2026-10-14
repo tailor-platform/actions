@@ -657,6 +657,7 @@ packages:
   '@toiroakr/lines-db@0.12.7':
     resolution: {integrity: sha512-R/J0arYqwwpEXQqpoRXtxT4U0hliMqCtN2v4RDgCfUcRtdLvhxD29y8TcmIPCHf86fVgN7xcMyuY7dOaoREFOw==}
     engines: {node: '>=22.12.0'}
+    deprecated: This package has moved to lines-db. Install lines-db instead; add @lines-db/studio if you use Studio. Update imports from @toiroakr/lines-db to lines-db.
     hasBin: true
 
   '@toiroakr/read-multiline@0.4.1':
