@@ -12,19 +12,44 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const executeFile = promisify(execFile);
 const action = parse(await fs.readFile(path.join(root, "_internal/erd-export/action.yaml"), "utf8"));
 const comment = parse(await fs.readFile(path.join(root, "_internal/erd-comment/action.yaml"), "utf8"));
-
-for (const [server, ghes] of [
+const actionPath = "${{ github.action_path }}";
+const hostCheck = `bash "${actionPath}/../lib/is-ghes.sh"`;
+const hosts = [
   ["https://github.com", "false"],
   ["https://octo.ghe.com", "false"],
   ["https://ghes.example.com", "true"],
-]) {
+];
+
+const runFrom = (directory, step) => step.run.replaceAll(actionPath, path.join(root, directory));
+
+for (const [server, ghes] of hosts) {
+  test(`is-ghes classifies ${server}`, async () => {
+    const { stdout } = await executeFile("bash", [path.join(root, "_internal/lib/is-ghes.sh"), server], {
+      env: { PATH: process.env.PATH },
+    });
+    assert.equal(stdout, `${ghes}\n`);
+  });
+}
+
+test("ERD export and comment classify the host with the shared script", () => {
+  for (const step of [
+    action.runs.steps.find((step) => step.id === "artifact-backend"),
+    comment.runs.steps.find((step) => step.id === "build"),
+  ]) {
+    assert.ok(step, "expected the host-dependent step");
+    assert.ok(step.run.includes(hostCheck), `${step.id} must call the shared host check`);
+    assert.ok(!step.run.includes("ghe.com"), `${step.id} must not classify the host itself`);
+  }
+});
+
+for (const [server, ghes] of hosts) {
   test(`ERD export selects the artifact backend for ${server}`, async (context) => {
     const backend = action.runs.steps.find((step) => step.id === "artifact-backend");
     assert.ok(backend, "expected an artifact backend selector");
     const temp = await fs.mkdtemp(path.join(os.tmpdir(), "erd-upload-"));
     context.after(() => fs.rm(temp, { recursive: true, force: true }));
     const output = path.join(temp, "output");
-    await executeFile("bash", ["-e", "-o", "pipefail", "-c", backend.run], {
+    await executeFile("bash", ["-e", "-o", "pipefail", "-c", runFrom("_internal/erd-export", backend)], {
       env: { PATH: process.env.PATH, GITHUB_SERVER_URL: server, GITHUB_OUTPUT: output },
     });
     assert.equal(await fs.readFile(output, "utf8"), `ghes=${ghes}\n`);
@@ -45,12 +70,13 @@ for (const [server, ghes] of [
   });
 }
 
-for (const server of ["https://github.com", "https://octo.ghe.com", "https://ghes.example.com"]) {
+for (const [server, ghes] of hosts) {
   test(`ERD comment explains how to open viewers on ${server}`, async (context) => {
     const temp = await fs.mkdtemp(path.join(os.tmpdir(), "erd-comment-"));
     context.after(() => fs.rm(temp, { recursive: true, force: true }));
     const output = path.join(temp, "output");
-    await executeFile("bash", ["-e", "-o", "pipefail", "-c", comment.runs.steps.find((step) => step.id === "build").run], {
+    const build = comment.runs.steps.find((step) => step.id === "build");
+    await executeFile("bash", ["-e", "-o", "pipefail", "-c", runFrom("_internal/erd-comment", build)], {
       env: {
         PATH: process.env.PATH,
         SERVER_URL: server,
@@ -62,7 +88,7 @@ for (const server of ["https://github.com", "https://octo.ghe.com", "https://ghe
     const body = await fs.readFile(output, "utf8");
     assert.ok(body.includes("tailordb.html"));
     assert.ok(body.includes("base branch `main`"));
-    if (server === "https://ghes.example.com") {
+    if (ghes === "true") {
       assert.ok(body.includes("ZIP"));
       assert.ok(body.includes("candidate"));
       assert.ok(body.includes("[run]"));

@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "_internal/erd-export/**"
+      - "_internal/lib/**"
       - "tests/erd-export/**"
       - ".github/workflows/test-erd-export.yaml"
   push:

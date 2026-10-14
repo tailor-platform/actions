@@ -67,10 +67,8 @@ runs:
       id: artifact-backend
       shell: bash
       run: |
-        case "$GITHUB_SERVER_URL" in
-          https://github.com|https://*.ghe.com) echo "ghes=false" >> "$GITHUB_OUTPUT" ;;
-          *) echo "ghes=true" >> "$GITHUB_OUTPUT" ;;
-        esac
+        GHES=$(bash "${{ github.action_path }}/../lib/is-ghes.sh" "$GITHUB_SERVER_URL")
+        echo "ghes=$GHES" >> "$GITHUB_OUTPUT"
 
     - name: Export
       id: export
