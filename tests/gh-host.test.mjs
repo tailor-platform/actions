@@ -12,12 +12,21 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 const executeFile = promisify(execFile);
 // gh sends GH_TOKEN only to github.com and *.ghe.com, and targets github.com unless GH_HOST names
 // another host, so a step on GitHub Enterprise Server needs both GH_HOST and GH_ENTERPRISE_TOKEN.
-const ghHostExport = 'export GH_HOST="${GITHUB_SERVER_URL#*://}"';
+const ghHostExport = (variable) => `export GH_HOST="\${${variable}#*://}"`;
+const serverUrlExpression = "${{ github.server_url }}";
 const ghTokenInput = "${{ inputs.github-token }}";
 const ghCommandPattern = /(?:^|[\s;&|(])gh(?:\s|$)/;
 
 function firstGhCommandLine(lines) {
   return lines.findIndex((line) => ghCommandPattern.test(line));
+}
+
+function ghHostExportLine(step, lines) {
+  const variables = [
+    "GITHUB_SERVER_URL",
+    ...Object.keys(step.env ?? {}).filter((name) => step.env[name] === serverUrlExpression),
+  ];
+  return lines.findIndex((line) => variables.some((variable) => line.trim() === ghHostExport(variable)));
 }
 
 async function shippedActionFiles(directory = repositoryRoot) {
@@ -71,12 +80,20 @@ test("every step that runs gh targets the workflow's own GitHub host", async () 
   for (const { file, name, step, lines, firstGhLine } of steps) {
     const label = `${file} (${name})`;
     assertGhTokenEnv(step, label);
-    const exportLine = lines.findIndex((line) => line.trim() === ghHostExport);
+    const exportLine = ghHostExportLine(step, lines);
     assert.ok(
       exportLine !== -1 && exportLine < firstGhLine,
-      `${label} must run \`${ghHostExport}\` before its first gh command`,
+      `${label} must run \`${ghHostExport("GITHUB_SERVER_URL")}\`, or the same for an env variable set to ${serverUrlExpression}, before its first gh command`,
     );
   }
+});
+
+test("accepts a GH_HOST export only from the workflow's server URL", () => {
+  const lines = [ghHostExport("SERVER_URL")];
+  assert.equal(ghHostExportLine({}, [ghHostExport("GITHUB_SERVER_URL")]), 0);
+  assert.equal(ghHostExportLine({ env: { SERVER_URL: serverUrlExpression } }, lines), 0);
+  assert.equal(ghHostExportLine({ env: { SERVER_URL: "${{ inputs.server-url }}" } }, lines), -1);
+  assert.equal(ghHostExportLine({}, lines), -1);
 });
 
 test("rejects matching token variables that do not read the github-token input", () => {
@@ -122,15 +139,19 @@ test("detects gh commands with leading options or a continued subcommand", () =>
   }
 });
 
-test("GH_HOST is the host of GITHUB_SERVER_URL", async () => {
-  for (const [serverUrl, host] of [
-    ["https://github.com", "github.com"],
-    ["https://ghes.example.com", "ghes.example.com"],
-    ["https://octo.ghe.com", "octo.ghe.com"],
-  ]) {
-    const { stdout } = await executeFile("bash", ["-c", `${ghHostExport}; printf '%s' "$GH_HOST"`], {
-      env: { PATH: process.env.PATH, GITHUB_SERVER_URL: serverUrl },
-    });
-    assert.equal(stdout, host);
+test("GH_HOST is the host of the server URL", async () => {
+  for (const variable of ["GITHUB_SERVER_URL", "SERVER_URL"]) {
+    for (const [serverUrl, host] of [
+      ["https://github.com", "github.com"],
+      ["https://ghes.example.com", "ghes.example.com"],
+      ["https://octo.ghe.com", "octo.ghe.com"],
+    ]) {
+      const { stdout } = await executeFile(
+        "bash",
+        ["-c", `${ghHostExport(variable)}; printf '%s' "$GH_HOST"`],
+        { env: { PATH: process.env.PATH, [variable]: serverUrl } },
+      );
+      assert.equal(stdout, host);
+    }
   }
 });
