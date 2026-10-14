@@ -132,6 +132,26 @@ test("public ERD actions pin the GHES-capable internal definitions", async () =>
   }
 });
 
+test("ERD actions share one cloud host pattern", async () => {
+  const patterns = {};
+  for (const [file, id] of [
+    ["erd-schema-preview/action.yaml", "artifact-backend"],
+    ["erd-schema-comment/action.yaml", "list"],
+    ["_internal/erd-export/action.yaml", "artifact-backend"],
+    ["_internal/erd-comment/action.yaml", "build"],
+  ]) {
+    const action = parse(await fs.readFile(path.join(root, file), "utf8"));
+    const run = action.runs.steps.find((step) => step.id === id)?.run;
+    assert.ok(run, `missing ${id} step in ${file}`);
+    const matches = [...run.matchAll(/case "\$(?:GITHUB_)?SERVER_URL" in\n\s*([^\n)]+)\)/g)];
+    assert.equal(matches.length, 1, `${file} must classify the host once`);
+    patterns[file] = matches[0][1];
+  }
+  for (const [file, pattern] of Object.entries(patterns)) {
+    assert.equal(pattern, patterns["erd-schema-preview/action.yaml"], `${file} diverges from erd-schema-preview`);
+  }
+});
+
 for (const [server, ghes] of [["https://github.com", "false"], ["https://octo.ghe.com", "false"], ["https://ghes.example.com", "true"]]) {
   test(`preview uploads use the right backend on ${server}`, async (context) => {
     const backend = preview.runs.steps.find((step) => step.id === "artifact-backend");
