@@ -60,24 +60,22 @@ runs:
       run: |
         set -euo pipefail
         export GH_HOST="${SERVER_URL#*://}"
-        case "$SERVER_URL" in
-          https://github.com|https://*.ghe.com)
-            LINKS=$(gh api --paginate --slurp "repos/$REPO/actions/runs/$RUN_ID/artifacts" | \
-              jq --arg server_url "$SERVER_URL" --arg repo "$REPO" --arg run_id "$RUN_ID" \
-              '[ .[].artifacts[] | select(.name | endswith(".html")) ] | sort_by(.name) |
-               [ .[] | {label: (.name | rtrimstr(".html")), url: ($server_url + "/" + $repo + "/actions/runs/" + $run_id + "/artifacts/" + (.id | tostring))} ]')
-            ;;
-          *)
-            if [ -z "$PREVIEW_ARTIFACT_NAMES" ] || ! printf '%s' "$PREVIEW_ARTIFACT_NAMES" | jq -e \
-              'type == "array" and all(.[]; type == "string" and endswith(".html") and (contains("/") | not))' >/dev/null; then
-              echo "::error::preview-artifact-names must be a JSON array of .html filenames on GitHub Enterprise Server. Use [] when there are no candidates."
-              exit 1
-            fi
-            LINKS=$(printf '%s' "$PREVIEW_ARTIFACT_NAMES" | \
-              jq --arg url "$SERVER_URL/$REPO/actions/runs/$RUN_ID" \
-              'unique | map({label: rtrimstr(".html"), url: $url})')
-            ;;
-        esac
+        GHES=$(bash "${{ github.action_path }}/../_internal/lib/is-ghes.sh" "$SERVER_URL")
+        if [ "$GHES" = "false" ]; then
+          LINKS=$(gh api --paginate --slurp "repos/$REPO/actions/runs/$RUN_ID/artifacts" | \
+            jq --arg server_url "$SERVER_URL" --arg repo "$REPO" --arg run_id "$RUN_ID" \
+            '[ .[].artifacts[] | select(.name | endswith(".html")) ] | sort_by(.name) |
+             [ .[] | {label: (.name | rtrimstr(".html")), url: ($server_url + "/" + $repo + "/actions/runs/" + $run_id + "/artifacts/" + (.id | tostring))} ]')
+        else
+          if [ -z "$PREVIEW_ARTIFACT_NAMES" ] || ! printf '%s' "$PREVIEW_ARTIFACT_NAMES" | jq -e \
+            'type == "array" and all(.[]; type == "string" and endswith(".html") and (contains("/") | not))' >/dev/null; then
+            echo "::error::preview-artifact-names must be a JSON array of .html filenames on GitHub Enterprise Server. Use [] when there are no candidates."
+            exit 1
+          fi
+          LINKS=$(printf '%s' "$PREVIEW_ARTIFACT_NAMES" | \
+            jq --arg url "$SERVER_URL/$REPO/actions/runs/$RUN_ID" \
+            'unique | map({label: rtrimstr(".html"), url: $url})')
+        fi
 
         EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
         {
@@ -88,7 +86,7 @@ runs:
 
     - name: Post or update comment
       id: comment
-      uses: tailor-platform/actions/_internal/erd-comment@57167ea818c5819ead1f422bc53b74294ac5273e
+      uses: tailor-platform/actions/_internal/erd-comment@ee77773a7d5f7ae8aaef1359a08ef3e6c6d51da1
       with:
         links: ${{ steps.list.outputs.links }}
         base-ref: ${{ inputs.base-ref }}

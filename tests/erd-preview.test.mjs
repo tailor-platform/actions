@@ -12,6 +12,9 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const executeFile = promisify(execFile);
 const preview = parse(await fs.readFile(path.join(root, "erd-schema-preview/action.yaml"), "utf8"));
 const comment = parse(await fs.readFile(path.join(root, "erd-schema-comment/action.yaml"), "utf8"));
+const actionPath = "${{ github.action_path }}";
+
+const runFrom = (directory, step) => step.run.replaceAll(actionPath, path.join(root, directory));
 
 function outputValue(source, name) {
   const lines = source.split("\n");
@@ -51,7 +54,7 @@ async function runList(context, { server, names = "", fixture = [{ artifacts: []
   assert.equal(resolved.trim(), gh);
   let error;
   try {
-    await executeFile("bash", ["-e", "-o", "pipefail", "-c", comment.runs.steps.find((step) => step.id === "list").run], { env });
+    await executeFile("bash", ["-e", "-o", "pipefail", "-c", runFrom("erd-schema-comment", comment.runs.steps.find((step) => step.id === "list"))], { env });
   } catch (failure) {
     error = failure;
   }
@@ -132,8 +135,7 @@ test("public ERD actions pin the GHES-capable internal definitions", async () =>
   }
 });
 
-test("ERD actions share one cloud host pattern", async () => {
-  const patterns = {};
+test("ERD actions classify the host with the shared script", async () => {
   for (const [file, id] of [
     ["erd-schema-preview/action.yaml", "artifact-backend"],
     ["erd-schema-comment/action.yaml", "list"],
@@ -143,12 +145,11 @@ test("ERD actions share one cloud host pattern", async () => {
     const action = parse(await fs.readFile(path.join(root, file), "utf8"));
     const run = action.runs.steps.find((step) => step.id === id)?.run;
     assert.ok(run, `missing ${id} step in ${file}`);
-    const matches = [...run.matchAll(/case "\$(?:GITHUB_)?SERVER_URL" in\n\s*([^\n)]+)\)/g)];
-    assert.equal(matches.length, 1, `${file} must classify the host once`);
-    patterns[file] = matches[0][1];
-  }
-  for (const [file, pattern] of Object.entries(patterns)) {
-    assert.equal(pattern, patterns["erd-schema-preview/action.yaml"], `${file} diverges from erd-schema-preview`);
+    const scripts = [...run.matchAll(/bash "\$\{\{ github\.action_path \}\}\/([^"]+)"/g)].map((match) =>
+      path.join(root, path.dirname(file), match[1]),
+    );
+    assert.deepEqual(scripts, [path.join(root, "_internal/lib/is-ghes.sh")], `${file} must call the shared host check once`);
+    assert.ok(!run.includes("ghe.com"), `${file} must not classify the host itself`);
   }
 });
 
@@ -159,7 +160,7 @@ for (const [server, ghes] of [["https://github.com", "false"], ["https://octo.gh
     const temp = await fs.mkdtemp(path.join(os.tmpdir(), "erd-preview-upload-"));
     context.after(() => fs.rm(temp, { recursive: true, force: true }));
     const output = path.join(temp, "output");
-    await executeFile("bash", ["-e", "-o", "pipefail", "-c", backend.run], {
+    await executeFile("bash", ["-e", "-o", "pipefail", "-c", runFrom("erd-schema-preview", backend)], {
       env: { PATH: process.env.PATH, GITHUB_SERVER_URL: server, GITHUB_OUTPUT: output },
     });
     assert.equal(await fs.readFile(output, "utf8"), `ghes=${ghes}\n`);

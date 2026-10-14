@@ -100,14 +100,12 @@ runs:
       id: artifact-backend
       shell: bash
       run: |
-        case "$GITHUB_SERVER_URL" in
-          https://github.com|https://*.ghe.com) echo "ghes=false" >> "$GITHUB_OUTPUT" ;;
-          *) echo "ghes=true" >> "$GITHUB_OUTPUT" ;;
-        esac
+        GHES=$(bash "${{ github.action_path }}/../_internal/lib/is-ghes.sh" "$GITHUB_SERVER_URL")
+        echo "ghes=$GHES" >> "$GITHUB_OUTPUT"
 
     - name: Export head schema
       id: head-export
-      uses: tailor-platform/actions/_internal/erd-export@57167ea818c5819ead1f422bc53b74294ac5273e
+      uses: tailor-platform/actions/_internal/erd-export@ee77773a7d5f7ae8aaef1359a08ef3e6c6d51da1
       with:
         namespace: ${{ inputs.namespace }}
         package-manager: ${{ inputs.package-manager }}

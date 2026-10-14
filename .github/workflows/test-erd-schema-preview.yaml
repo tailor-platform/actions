@@ -6,6 +6,7 @@ on:
       - "erd-schema-export/**"
       - "erd-schema-preview/**"
       - "erd-schema-comment/**"
+      - "_internal/lib/**"
       - "tests/erd-schema-preview/**"
       - ".github/workflows/test-erd-schema-preview.yaml"
   workflow_dispatch:
