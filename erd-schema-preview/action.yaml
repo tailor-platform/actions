@@ -6,7 +6,9 @@ description: >-
   point (not the base branch's moving tip, which would mix in unrelated
   changes merged after the PR branched) and upload it as a self-contained
   HTML artifact. Skips rendering entirely when irrelevant — leaves no
-  artifact for this namespace, so erd-schema-comment naturally omits it.
+  artifact for this namespace. On GitHub Enterprise Server, uploads a ZIP
+  containing the HTML; erd-schema-comment lists candidate artifact names
+  supplied by the caller instead of discovering them during the run.
   Pair with erd-schema-export (run on pushes to your base branch) and
   erd-schema-comment (aggregates every namespace's artifact into one PR
   comment). Requires Node.js, the package manager, and dependencies to be
@@ -94,9 +96,16 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Select artifact backend
+      id: artifact-backend
+      shell: bash
+      run: |
+        GHES=$(bash "${{ github.action_path }}/../_internal/lib/is-ghes.sh" "$GITHUB_SERVER_URL")
+        echo "ghes=$GHES" >> "$GITHUB_OUTPUT"
+
     - name: Export head schema
       id: head-export
-      uses: tailor-platform/actions/_internal/erd-export@053ee1c31460fc04639c466e5f483ea3150a9a31
+      uses: tailor-platform/actions/_internal/erd-export@ee77773a7d5f7ae8aaef1359a08ef3e6c6d51da1
       with:
         namespace: ${{ inputs.namespace }}
         package-manager: ${{ inputs.package-manager }}
@@ -273,10 +282,22 @@ runs:
     # input is ignored in this mode) — so the rendered output above is
     # written directly to preview-artifact-name, not $NAMESPACE.html.
     - name: Upload preview artifact
-      if: steps.effective-relevance.outputs.relevant != 'false'
+      id: upload-cloud
+      if: steps.effective-relevance.outputs.relevant != 'false' && steps.artifact-backend.outputs.ghes == 'false'
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         path: ${{ runner.temp }}/erd-schema-preview/out/${{ inputs.preview-artifact-name }}
         if-no-files-found: error
         archive: false
+        retention-days: ${{ inputs.preview-retention-days }}
+
+    - name: Upload preview artifact on GitHub Enterprise Server
+      id: upload-ghes
+      if: steps.effective-relevance.outputs.relevant != 'false' && steps.artifact-backend.outputs.ghes == 'true'
+      # GHES requires upload-artifact v3.2.2; v4+ uses a different artifact service.
+      uses: actions/upload-artifact@c6a366c94c3e0affe28c06c8df20a878f24da3cf
+      with:
+        name: ${{ inputs.preview-artifact-name }}
+        path: ${{ runner.temp }}/erd-schema-preview/out/${{ inputs.preview-artifact-name }}
+        if-no-files-found: error
         retention-days: ${{ inputs.preview-retention-days }}

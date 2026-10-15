@@ -49,7 +49,7 @@ runs:
   steps:
     - name: Export and upload
       id: export
-      uses: tailor-platform/actions/_internal/erd-export@053ee1c31460fc04639c466e5f483ea3150a9a31
+      uses: tailor-platform/actions/_internal/erd-export@ee77773a7d5f7ae8aaef1359a08ef3e6c6d51da1
       with:
         namespace: ${{ inputs.namespace }}
         package-manager: ${{ inputs.package-manager }}
