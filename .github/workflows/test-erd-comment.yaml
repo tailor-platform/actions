@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "_internal/erd-comment/**"
+      - "_internal/lib/**"
       - ".github/workflows/test-erd-comment.yaml"
   workflow_dispatch:
     inputs:

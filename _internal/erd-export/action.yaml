@@ -63,6 +63,13 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Select artifact backend
+      id: artifact-backend
+      shell: bash
+      run: |
+        GHES=$(bash "${{ github.action_path }}/../lib/is-ghes.sh" "$GITHUB_SERVER_URL")
+        echo "ghes=$GHES" >> "$GITHUB_OUTPUT"
+
     - name: Export
       id: export
       shell: bash
@@ -151,8 +158,20 @@ runs:
         } >>"$GITHUB_OUTPUT"
 
     - name: Upload artifact
-      if: inputs.upload == 'true' && steps.export.outputs.exported == 'true'
+      id: upload-cloud
+      if: inputs.upload == 'true' && steps.export.outputs.exported == 'true' && steps.artifact-backend.outputs.ghes == 'false'
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ steps.export.outputs.html-path }}
+        if-no-files-found: error
+        retention-days: ${{ inputs.retention-days }}
+
+    - name: Upload artifact on GitHub Enterprise Server
+      id: upload-ghes
+      if: inputs.upload == 'true' && steps.export.outputs.exported == 'true' && steps.artifact-backend.outputs.ghes == 'true'
+      # GHES requires upload-artifact v3.2.2; v4+ uses a different artifact service.
+      uses: actions/upload-artifact@c6a366c94c3e0affe28c06c8df20a878f24da3cf
       with:
         name: ${{ inputs.artifact-name }}
         path: ${{ steps.export.outputs.html-path }}

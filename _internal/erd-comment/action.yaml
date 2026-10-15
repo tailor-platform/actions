@@ -41,6 +41,7 @@ runs:
       env:
         LINKS: ${{ inputs.links }}
         BASE_REF: ${{ inputs.base-ref }}
+        SERVER_URL: ${{ github.server_url }}
       run: |
         MARKER="<!-- tailor-erd-preview -->"
 
@@ -62,8 +63,15 @@ runs:
         else
           DIFF_NOTE=""
           [ -n "$BASE_REF" ] && DIFF_NOTE=" Each viewer can switch between the current schema and a diff against base branch \`$BASE_REF\`."
-          LIST=$(printf '%s' "$LINKS" | jq -r '.[] | "- **\(.label)**: [view](\(.url))"')
-          BODY="${MARKER}"$'\n'"## 🗺️ ERD preview"$'\n\n'"Self-contained ERD viewer HTML built for this run.${DIFF_NOTE}"$'\n'"${LIST}"
+          GHES=$(bash "${{ github.action_path }}/../lib/is-ghes.sh" "$SERVER_URL")
+          if [ "$GHES" = "false" ]; then
+            LIST=$(printf '%s' "$LINKS" | jq -r '.[] | "- **\(.label)**: [view](\(.url))"')
+            DESCRIPTION="Self-contained ERD viewer HTML built for this run."
+          else
+            LIST=$(printf '%s' "$LINKS" | jq -r '.[] | "- **\(.label)**: [run](\(.url))"')
+            DESCRIPTION="These are candidate ERD viewer artifact names; irrelevant namespaces produce no artifact. After the run completes, download the ZIP from the run page, extract it, and open the HTML locally."
+          fi
+          BODY="${MARKER}"$'\n'"## 🗺️ ERD preview"$'\n\n'"${DESCRIPTION}${DIFF_NOTE}"$'\n'"${LIST}"
         fi
 
         EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
@@ -75,7 +83,7 @@ runs:
 
     - name: Post or update comment
       id: post
-      uses: tailor-platform/actions/_internal/sticky-comment@d203a37c87b7a69c6040611c33e9e50c1d564ed1
+      uses: tailor-platform/actions/_internal/sticky-comment@bed6c5a2dc015d45d78931d9e8989109ec27fc28
       with:
         marker-prefix: "<!-- tailor-erd-preview -->"
         body: ${{ steps.build.outputs.body }}

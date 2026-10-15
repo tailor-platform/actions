@@ -187,7 +187,7 @@ runs:
 
     - name: Post sticky plan comment
       if: inputs.workspace-id != '' && github.event_name == 'pull_request' && inputs.github-token != ''
-      uses: tailor-platform/actions/_internal/sticky-comment@d203a37c87b7a69c6040611c33e9e50c1d564ed1
+      uses: tailor-platform/actions/_internal/sticky-comment@bed6c5a2dc015d45d78931d9e8989109ec27fc28
       with:
         marker-prefix: ${{ steps.comment-body.outputs.marker }}
         body: ${{ steps.comment-body.outputs.body }}
