@@ -12,6 +12,16 @@ push. See its own `CLAUDE.md` for that branch's release steps. Its CI (`ci.yaml`
 `test-*.yaml`) runs on PRs against it and on pushes to it, the same way it does on
 `main`.
 
+## Workflow Lockfile
+
+After changing `uses:` in a workflow or an `action.yaml`, run
+`pnpm actions:lock:update` and commit `.github/workflows/actions.lock`; `ci.yaml`'s
+`actions-lock` job fails until you do. Plain `gh actions-lock`, which the lockfile
+header suggests, rewrites the SHA pins that ghalint and zizmor require to tags.
+`maintenance/v1` has no lockfile, so leave `actions.lock` and the `actions-lock` job
+out of backports to it: main's lockfile lists main's dependencies, so on
+`maintenance/v1` it would block the jobs that pin different versions.
+
 ## Release Procedure
 
 Releases on `main` (the v2 line) are automated with [Changesets](https://github.com/changesets/changesets).
