@@ -1,0 +1,28 @@
+name: Test Setup Action
+
+on:
+  pull_request:
+    paths:
+      - "setup/**"
+      - ".github/workflows/test-setup.yaml"
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  test-bun:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: "Test: sets up Bun"
+        uses: $/setup
+        with:
+          package-manager: bun
+
+      - name: "Verify: bun is on PATH"
+        run: bun --version

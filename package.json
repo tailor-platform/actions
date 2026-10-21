@@ -18,7 +18,10 @@
     "test:drift-check": "node --test drift-check/*.test.mjs",
     "changeset": "changeset",
     "test:plan": "node --test plan/*.test.mjs",
-    "test:tag-guard": "node --test tag-guard/*.test.mjs"
+    "test:tag-guard": "node --test tag-guard/*.test.mjs",
+    "actions:lock:install": "gh extension install github/gh-actions-lock --pin \"$(node -p \"require('./renovate.json').constraints.ghActionsLock\")\" --force",
+    "actions:lock:update": "pnpm run actions:lock:install && gh actions-lock --no-narrow",
+    "actions:lock:check": "pnpm run actions:lock:install && gh actions-lock --verify"
   },
   "devDependencies": {
     "@changesets/cli": "3.0.3",
