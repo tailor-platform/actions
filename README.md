@@ -361,7 +361,7 @@ jobs:
 |------|-------------|
 | `workspace-id` | Workspace ID of the preview deployment |
 | `workspace-name` | Full workspace name (e.g. `my-app-pr-42`) |
-| `expires-at` | When the workspace becomes prunable, as UTC ISO 8601 (e.g. `2026-10-27T12:00:00Z`). Pass it to `preview-comment`'s `expires-at`. Empty when `ttl` is empty or the expiry could not be recorded on this push (a reused workspace then keeps the expiry it already had). |
+| `expires-at` | When the workspace becomes prunable, as the CLI records it (e.g. `2026-10-27T12:00:00.000Z`), read back with `tailor workspace get` (CLI 2.16.0 or later) after the workspace is created or its expiry extended. Pass it to `preview-comment`'s `expires-at`. Empty when the workspace has no expiry or the CLI could not read it; a push whose extension failed still reports the expiry the workspace had. |
 | `app-url` | **Deprecated**, will be removed in the next major version. Application URL (GraphQL endpoint) of the preview workspace |
 | `frontend-urls` | **Deprecated**, will be removed in the next major version. JSON object mapping all static website names in the workspace to URLs, e.g. `{"web":"https://web.example.com"}`. `{}` when no static websites exist. |
 
@@ -381,7 +381,7 @@ With `expires-at` the comment gains an `Expires` row that lists the expiry once 
 | `workspace-name` | Yes | | Workspace name (from `preview-deploy` output) |
 | `status` | Yes | | Deployment status: `success`, `failure`, or `deleted` |
 | `app-url` | No | | Application URL to show in the comment |
-| `expires-at` | No | | When the workspace becomes prunable, as ISO 8601; fractional seconds and a `+hh:mm` offset are accepted (the `expires-at` output of `preview-deploy`). Adds an `Expires` row. Empty adds no row, and no row is added when `status` is `deleted`. The comment is rebuilt on every push, so on a push where `preview-deploy` could not record the expiry (its output is empty) the row is gone until a later push records it. |
+| `expires-at` | No | | When the workspace becomes prunable, as ISO 8601; fractional seconds and a `+hh:mm` offset are accepted (the `expires-at` output of `preview-deploy`). Adds an `Expires` row. Empty adds no row, and no row is added when `status` is `deleted`. A value that is not ISO 8601 is skipped with a warning. |
 | `timezones` | No | `UTC` | IANA timezone names to show the expiry in, separated by commas or newlines, shown one under the other in the order given (e.g. `UTC,Asia/Tokyo`). An unknown name is skipped with a warning; if none is valid, `UTC` is used. Only used with `expires-at`. |
 | `github-token` | Yes | | GitHub token with `pull-requests: write` |
 | `mention` | No | | Set to `"true"` to @mention the commit author (falls back to PR author if commit is by a bot) |

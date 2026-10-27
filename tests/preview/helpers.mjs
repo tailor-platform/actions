@@ -43,18 +43,15 @@ const failure = (name) => {
   process.stderr.write(process.env["MOCK_" + name + "_STDERR"] ?? "");
   process.exit(status);
 };
-const delay = (name) => new Promise((resolve) => setTimeout(resolve, Number(process.env["MOCK_" + name + "_DELAY_MS"] ?? 0)));
 if (args[0] === "tailor" && args[1] === "workspace" && args[2] === "create") {
-  await delay("CREATE");
   process.stdout.write(JSON.stringify({ id: process.env.MOCK_CREATED_ID }));
   failure("CREATE");
 }
 if (args[0] === "tailor" && args[1] === "workspace" && args[2] === "get") {
   failure("GET");
-  process.stdout.write(JSON.stringify({ id: args[4] }));
+  process.stdout.write(JSON.stringify({ id: args[4], expiresAt: JSON.parse(process.env.MOCK_EXPIRES_AT_JSON ?? "null") }));
 }
 if (args[0] === "tailor" && args[1] === "workspace" && args[2] === "ttl") {
-  await delay("TTL_SET");
   failure("TTL_SET");
 }
 if (args[0] === "tailor" && args[1] === "workspace" && args[2] === "delete") failure("DELETE");

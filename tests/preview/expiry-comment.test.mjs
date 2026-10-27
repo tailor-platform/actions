@@ -1,8 +1,4 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
-import { rm } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import test from "node:test";
 import { loadAction, runStep } from "./helpers.mjs";
 
@@ -81,7 +77,23 @@ const outputValue = (output, name) =>
     .find((line) => line.startsWith(`${name}=`))
     ?.slice(name.length + 1);
 
-const secondsFromNow = (iso) => (Date.parse(iso) - Date.now()) / 1000;
+const recorded = "2026-11-03T12:00:00.000Z";
+const recordedExpiry = { MOCK_EXPIRES_AT_JSON: JSON.stringify(recorded) };
+
+const deploy = async (context, { env = {}, comments = [], mock = {} } = {}) => {
+  const action = await loadAction("preview-deploy");
+  const result = await runStep(context, {
+    action,
+    stepId: "workspace",
+    env: { ...deployEnv, ...env },
+    comments,
+    mock,
+  });
+  assert.equal(result.code, 0, result.stderr);
+  return result;
+};
+
+const subcommand = (call) => call.slice(1, 3).join(" ");
 
 test("preview-deploy: declares the expires-at output", async () => {
   const action = await loadAction("preview-deploy");
@@ -91,156 +103,65 @@ test("preview-deploy: declares the expires-at output", async () => {
   );
 });
 
-test("preview-deploy: outputs the expiry as UTC ISO 8601, counted from now, for a new workspace", async (context) => {
-  const action = await loadAction("preview-deploy");
-  const result = await runStep(context, {
-    action,
-    stepId: "workspace",
-    env: { ...deployEnv, TTL: "7d" },
-  });
-  assert.equal(result.code, 0, result.stderr);
-  const value = outputValue(result.output, "expires-at");
-  assert.match(value, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
-  assert(Math.abs(secondsFromNow(value) - 7 * 24 * 3600) < 120, value);
+test("preview-deploy: outputs the expiry the CLI reports for a new workspace", async (context) => {
+  const result = await deploy(context, { env: { TTL: "7d" }, mock: recordedExpiry });
+  assert.equal(outputValue(result.output, "expires-at"), recorded);
 });
 
-for (const [ttl, seconds] of [
-  ["45s", 45],
-  ["30m", 30 * 60],
-  ["24h", 24 * 3600],
-  ["010m", 10 * 60],
-  ["08h", 8 * 3600],
-  ["09d", 9 * 24 * 3600],
-]) {
-  test(`preview-deploy: reads the ttl unit in ${ttl}`, async (context) => {
-    const action = await loadAction("preview-deploy");
-    const result = await runStep(context, {
-      action,
-      stepId: "workspace",
-      env: { ...deployEnv, TTL: ttl },
-    });
-    assert.equal(result.code, 0, result.stderr);
-    const value = outputValue(result.output, "expires-at");
-    assert(Math.abs(secondsFromNow(value) - seconds) < 120, value);
-  });
-}
+test("preview-deploy: reads the expiry back after create, not before", async (context) => {
+  const result = await deploy(context, { env: { TTL: "7d" }, mock: recordedExpiry });
+  const subcommands = result.calls.map(subcommand);
+  assert(subcommands.lastIndexOf("workspace get") > subcommands.indexOf("workspace create"), subcommands.join(","));
+});
 
-const slowCliMs = 4000;
+test("preview-deploy: outputs the expiry the CLI reports once ttl set has extended a reused workspace", async (context) => {
+  const result = await deploy(context, { env: { TTL: "7d" }, comments: [existingComment], mock: recordedExpiry });
+  const subcommands = result.calls.map(subcommand);
+  assert(subcommands.lastIndexOf("workspace get") > subcommands.indexOf("workspace ttl"), subcommands.join(","));
+  assert.equal(outputValue(result.output, "expires-at"), recorded);
+});
 
-test("preview-deploy: takes the expiry before ttl set runs, so a slow command does not push it later than the one recorded", async (context) => {
-  const action = await loadAction("preview-deploy");
-  const result = await runStep(context, {
-    action,
-    stepId: "workspace",
-    env: { ...deployEnv, TTL: "45s" },
+test("preview-deploy: still outputs the expiry a reused workspace already records when extending it fails", async (context) => {
+  const result = await deploy(context, {
+    env: { TTL: "7d" },
     comments: [existingComment],
-    mock: { MOCK_TTL_SET_DELAY_MS: String(slowCliMs) },
+    mock: { ...recordedExpiry, MOCK_TTL_SET_STATUS: "1", MOCK_TTL_SET_STDERR: "boom" },
   });
-  const finishedAt = Date.now();
-  assert.equal(result.code, 0, result.stderr);
-  const value = outputValue(result.output, "expires-at");
-  assert(Date.parse(value) - finishedAt < 45_000 - slowCliMs / 2, value);
+  assert.equal(outputValue(result.output, "expires-at"), recorded);
+  assert.match(result.stdout, /::warning::.*extend the expiry/);
 });
 
-test("preview-deploy: takes the expiry before create runs, so a slow command does not push it later than the one recorded", async (context) => {
-  const action = await loadAction("preview-deploy");
-  const result = await runStep(context, {
-    action,
-    stepId: "workspace",
-    env: { ...deployEnv, TTL: "45s" },
-    mock: { MOCK_CREATE_DELAY_MS: String(slowCliMs) },
+test("preview-deploy: outputs the expiry create left after it could not confirm it and ttl set ran again", async (context) => {
+  const result = await deploy(context, {
+    env: { TTL: "7d" },
+    mock: { ...recordedExpiry, MOCK_CREATE_STATUS: "1", MOCK_CREATE_STDERR: "could not confirm" },
   });
-  const finishedAt = Date.now();
-  assert.equal(result.code, 0, result.stderr);
-  const value = outputValue(result.output, "expires-at");
-  assert(Date.parse(value) - finishedAt < 45_000 - slowCliMs / 2, value);
+  assert(result.calls.map(subcommand).includes("workspace ttl"));
+  assert.equal(outputValue(result.output, "expires-at"), recorded);
 });
 
-for (const ttl of [
-  "7",
-  "d",
-  "7days",
-  "7d ",
-  "-7d",
-  "7.5h",
-  "a[$(MARKER)]d",
-  "0+a[$(MARKER)]m",
-  "1,a[$(MARKER)]h",
+test("preview-deploy: reports the expiry a workspace records even when ttl is empty", async (context) => {
+  const result = await deploy(context, { comments: [existingComment], mock: recordedExpiry });
+  assert.equal(outputValue(result.output, "expires-at"), recorded);
+});
+
+for (const [name, json] of [
+  ["null for a workspace with no expiry", "null"],
+  ["invalid for an expiry the CLI could not decode", '"invalid"'],
+  ["unavailable for an expiry the CLI could not read", '"unavailable"'],
 ]) {
-  test(`preview-deploy: gives no expiry for the invalid ttl ${JSON.stringify(ttl)} and runs nothing hidden in it`, async (context) => {
-    const marker = path.join(os.tmpdir(), `expiry-ttl-injected-${process.pid}-${Date.now()}`);
-    context.after(() => rm(marker, { force: true }));
-    const action = await loadAction("preview-deploy");
-    const result = await runStep(context, {
-      action,
-      stepId: "workspace",
-      env: { ...deployEnv, TTL: ttl.replace("MARKER", `touch ${marker}`) },
-    });
-    assert.equal(result.code, 0, result.stderr);
-    assert.equal(existsSync(marker), false);
+  test(`preview-deploy: outputs an empty expiry when the CLI reports ${name}`, async (context) => {
+    const result = await deploy(context, { env: { TTL: "7d" }, mock: { MOCK_EXPIRES_AT_JSON: json } });
     assert.equal(outputValue(result.output, "expires-at"), "");
   });
 }
 
-test("preview-deploy: outputs an empty expiry when ttl is empty", async (context) => {
-  const action = await loadAction("preview-deploy");
-  const result = await runStep(context, { action, stepId: "workspace", env: deployEnv });
-  assert.equal(result.code, 0, result.stderr);
+test("preview-deploy: outputs an empty expiry with a warning when reading it back fails, without failing the deploy", async (context) => {
+  const result = await deploy(context, {
+    env: { TTL: "7d" },
+    mock: { MOCK_GET_STATUS: "1", MOCK_GET_STDERR: "boom" },
+  });
   assert.equal(outputValue(result.output, "expires-at"), "");
-});
-
-test("preview-deploy: outputs the new expiry when it extends the one of a reused workspace", async (context) => {
-  const action = await loadAction("preview-deploy");
-  const result = await runStep(context, {
-    action,
-    stepId: "workspace",
-    env: { ...deployEnv, TTL: "7d" },
-    comments: [existingComment],
-  });
-  assert.equal(result.code, 0, result.stderr);
-  const value = outputValue(result.output, "expires-at");
-  assert(Math.abs(secondsFromNow(value) - 7 * 24 * 3600) < 120, value);
-});
-
-test("preview-deploy: outputs an empty expiry when extending a reused workspace fails, since the old one still applies", async (context) => {
-  const action = await loadAction("preview-deploy");
-  const result = await runStep(context, {
-    action,
-    stepId: "workspace",
-    env: { ...deployEnv, TTL: "7d" },
-    comments: [existingComment],
-    mock: { MOCK_TTL_SET_STATUS: "1", MOCK_TTL_SET_STDERR: "boom" },
-  });
-  assert.equal(result.code, 0, result.stderr);
-  assert.equal(outputValue(result.output, "expires-at"), "");
-});
-
-test("preview-deploy: outputs the expiry set again after create could not confirm it", async (context) => {
-  const action = await loadAction("preview-deploy");
-  const result = await runStep(context, {
-    action,
-    stepId: "workspace",
-    env: { ...deployEnv, TTL: "7d" },
-    mock: { MOCK_CREATE_STATUS: "1", MOCK_CREATE_STDERR: "could not confirm" },
-  });
-  assert.equal(result.code, 0, result.stderr);
-  const value = outputValue(result.output, "expires-at");
-  assert(Math.abs(secondsFromNow(value) - 7 * 24 * 3600) < 120, value);
-});
-
-test("preview-deploy: outputs an empty expiry when create could not confirm it and setting it again fails", async (context) => {
-  const action = await loadAction("preview-deploy");
-  const result = await runStep(context, {
-    action,
-    stepId: "workspace",
-    env: { ...deployEnv, TTL: "7d" },
-    mock: {
-      MOCK_CREATE_STATUS: "1",
-      MOCK_CREATE_STDERR: "could not confirm",
-      MOCK_TTL_SET_STATUS: "1",
-      MOCK_TTL_SET_STDERR: "boom",
-    },
-  });
-  assert.equal(result.code, 0, result.stderr);
-  assert.equal(outputValue(result.output, "expires-at"), "");
+  assert.match(result.stdout, /::warning::.*read the expiry/);
+  assert.equal(outputValue(result.output, "workspace-id"), "ws-new");
 });

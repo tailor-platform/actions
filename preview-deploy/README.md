@@ -8,7 +8,7 @@ Create or reuse a per-PR workspace, then deploy the application and its frontend
 |------|-------|-------------|
 | `workspace-id` | String | Workspace ID of the preview deployment. |
 | `workspace-name` | String | Full workspace name, for example `my-app-pr-42`. |
-| `expires-at` | String | When the workspace becomes prunable, as UTC ISO 8601 (for example `2026-10-27T12:00:00Z`), or an empty string when `ttl` is empty or the expiry could not be recorded on this push. Pass it to `preview-comment`'s `expires-at` to show it in the PR comment. |
+| `expires-at` | String | When the workspace becomes prunable, as the CLI records it (for example `2026-10-27T12:00:00.000Z`), read back with `tailor workspace get` (CLI 2.16.0 or later), or an empty string when the workspace has no expiry or the CLI could not read it. Pass it to `preview-comment`'s `expires-at` to show it in the PR comment. |
 | `app-url` | String | **Deprecated**, will be removed in the next major version. Backend application URL (GraphQL endpoint), or an empty string if unavailable. |
 | `frontend-urls` | JSON object string | **Deprecated**, will be removed in the next major version. Static website URLs keyed by site name, for example `{"web":"https://web.example.com"}`. |
 
