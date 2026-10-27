@@ -46,6 +46,12 @@ test("expiryRow: carries the date across midnight in a timezone ahead of UTC", (
   assert.equal(row, "| Expires | 2026-10-28 05:00 Asia/Tokyo |");
 });
 
+test("expiryRow: reads a leap day in a leap year", () => {
+  const { row, warnings } = expiryRow({ expiresAt: "2028-02-29T12:00:00Z", timezones: "UTC", status: "success" });
+  assert.equal(row, "| Expires | 2028-02-29 12:00 UTC |");
+  assert.deepEqual(warnings, []);
+});
+
 for (const [value, shown] of [
   ["2026-10-27T12:00:00.000Z", "2026-10-27 12:00 UTC"],
   ["2026-10-27T12:00:00.123456Z", "2026-10-27 12:00 UTC"],
@@ -62,7 +68,17 @@ for (const [value, shown] of [
   });
 }
 
-for (const value of ["next tuesday", "2026-10-27", "2026-10-27T21:00:00+9", "2026-10-27T12:00:00", "2026-13-27T12:00:00Z"]) {
+for (const value of [
+  "next tuesday",
+  "2026-10-27",
+  "2026-10-27T21:00:00+9",
+  "2026-10-27T12:00:00",
+  "2026-13-27T12:00:00Z",
+  "2026-02-29T12:00:00Z",
+  "2026-04-31T12:00:00Z",
+  "2026-10-27T24:00:00Z",
+  "2026-10-27T12:00:00+24:00",
+]) {
   test(`expiryRow: skips the malformed expires-at ${JSON.stringify(value)} with a warning`, () => {
     const { row, warnings } = expiryRow({ expiresAt: value, timezones: "UTC", status: "success" });
     assert.equal(row, "");

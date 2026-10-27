@@ -2,7 +2,15 @@
 import { appendFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-const ISO_8601 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
+const ISO_8601 = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+// `new Date` moves 2026-02-29 to March 1 and 24:00 to the next day, so the fields as written must survive a round trip.
+const isRealTime = (fields) => {
+  const [year, month, day, hour, minute, second] = fields.map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  const normalized = [date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate(), date.getUTCHours(), date.getUTCMinutes(), date.getUTCSeconds()];
+  return normalized.every((value, index) => value === Number(fields[index]));
+};
 
 // A value is echoed inside a `::warning::` workflow command, so anything that could end the line or start another command is replaced.
 const printable = (value) => value.replace(/[^A-Za-z0-9_ /+:.-]/g, "?");
@@ -38,7 +46,8 @@ export function expiryRow({ expiresAt, timezones, status }) {
   const warnings = [];
   if (!expiresAt || status === "deleted") return { row: "", warnings };
 
-  const instant = ISO_8601.test(expiresAt) ? new Date(expiresAt) : new Date(NaN);
+  const fields = ISO_8601.exec(expiresAt)?.slice(1);
+  const instant = fields && isRealTime(fields) ? new Date(expiresAt) : new Date(NaN);
   if (Number.isNaN(instant.getTime())) {
     warnings.push(
       `Ignoring expires-at '${printable(expiresAt)}': expected ISO 8601 such as 2026-10-27T12:00:00Z (fractional seconds and a +hh:mm offset are accepted)`,
@@ -57,7 +66,7 @@ export function expiryRow({ expiresAt, timezones, status }) {
   return { row: `| Expires | ${zones.map((zone) => `${formatIn(instant, zone)} ${zone}`).join("<br>")} |`, warnings };
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const { row, warnings } = expiryRow({
     expiresAt: process.env.EXPIRES_AT ?? "",
     timezones: process.env.TIMEZONES ?? "",
