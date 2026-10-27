@@ -324,6 +324,7 @@ jobs:
           workspace-name-prefix: my-app
           region: us-west
           organization-id: ${{ vars.TAILOR_PLATFORM_ORGANIZATION_ID }}
+          ttl: 7d
           platform-client-id: ${{ secrets.TAILOR_PLATFORM_MACHINE_USER_CLIENT_ID }}
           platform-client-secret: ${{ secrets.TAILOR_PLATFORM_MACHINE_USER_CLIENT_SECRET }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -333,6 +334,8 @@ jobs:
           workspace-name: ${{ steps.preview.outputs.workspace-name }}
           status: ${{ job.status }}
           app-url: ${{ steps.preview.outputs.app-url }}
+          expires-at: ${{ steps.preview.outputs.expires-at }}
+          timezones: UTC,Asia/Tokyo
           github-token: ${{ secrets.GITHUB_TOKEN }}
           mention: "true"
 ```
@@ -358,6 +361,7 @@ jobs:
 |------|-------------|
 | `workspace-id` | Workspace ID of the preview deployment |
 | `workspace-name` | Full workspace name (e.g. `my-app-pr-42`) |
+| `expires-at` | When the workspace becomes prunable, as UTC ISO 8601 (e.g. `2026-10-27T12:00:00Z`). Pass it to `preview-comment`'s `expires-at`. Empty when `ttl` is empty or the expiry could not be recorded on this push (a reused workspace then keeps the expiry it already had). |
 | `app-url` | **Deprecated**, will be removed in the next major version. Application URL (GraphQL endpoint) of the preview workspace |
 | `frontend-urls` | **Deprecated**, will be removed in the next major version. JSON object mapping all static website names in the workspace to URLs, e.g. `{"web":"https://web.example.com"}`. `{}` when no static websites exist. |
 
@@ -365,7 +369,9 @@ jobs:
 
 ### [`preview-comment`](preview-comment/action.yaml)
 
-Post or update a PR comment with preview deployment status, workspace ID, app URL, and optional @mention. Typically called after `preview-deploy`. The comment is keyed by workspace name so multiple preview environments can coexist on one PR.
+Post or update a PR comment with preview deployment status, workspace ID, app URL, expiry, and optional @mention. Typically called after `preview-deploy`. The comment is keyed by workspace name so multiple preview environments can coexist on one PR.
+
+With `expires-at` the comment gains an `Expires` row, for example `2026-10-27 12:00 UTC / 2026-10-27 21:00 Asia/Tokyo` for `timezones: UTC,Asia/Tokyo`. The comment is updated on every push, so the row follows the expiry that `preview-deploy`'s `ttl` restarts.
 
 #### Inputs
 
@@ -375,6 +381,8 @@ Post or update a PR comment with preview deployment status, workspace ID, app UR
 | `workspace-name` | Yes | | Workspace name (from `preview-deploy` output) |
 | `status` | Yes | | Deployment status: `success`, `failure`, or `deleted` |
 | `app-url` | No | | Application URL to show in the comment |
+| `expires-at` | No | | When the workspace becomes prunable, as UTC ISO 8601 (the `expires-at` output of `preview-deploy`). Adds an `Expires` row. Empty adds no row, and no row is added when `status` is `deleted`. |
+| `timezones` | No | `UTC` | IANA timezone names to show the expiry in, separated by commas or newlines, shown in the order given (e.g. `UTC,Asia/Tokyo`). An unknown name is skipped with a warning; if none is valid, `UTC` is used. Only used with `expires-at`. |
 | `github-token` | Yes | | GitHub token with `pull-requests: write` |
 | `mention` | No | | Set to `"true"` to @mention the commit author (falls back to PR author if commit is by a bot) |
 

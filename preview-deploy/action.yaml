@@ -66,6 +66,13 @@ outputs:
   workspace-name:
     description: Full workspace name (e.g. "my-app-pr-42")
     value: ${{ steps.workspace.outputs.workspace-name }}
+  expires-at:
+    description: >-
+      Instant at which the workspace becomes prunable, as UTC ISO 8601 (e.g.
+      2026-10-27T12:00:00Z), for the `expires-at` input of preview-comment.
+      Empty when `ttl` is empty or the expiry could not be recorded on this
+      push (a reused workspace then keeps the expiry it already had).
+    value: ${{ steps.workspace.outputs.expires-at }}
   app-url:
     description: Deprecated; will be removed in the next major version. Application URL (GraphQL endpoint) of the preview workspace
     value: ${{ steps.deploy.outputs.app-url }}
@@ -117,14 +124,33 @@ runs:
             '[ .[][] | select(.user.type == "Bot" and (.body | startswith($m))) ] | first | .body // empty' | \
           jq -rR '(try capture("<!-- tailor-preview: [^ ]+ id=(?<id>[a-f0-9-]+)") | .id) // empty')
 
+        # The CLI counts the ttl from now and does not print the expiry, so work it
+        # out here. GNU date reads `-d @epoch` and BSD date `-r epoch`.
+        ttl_expiry() {
+          local amount="${1%?}" seconds
+          case "${1: -1}" in
+            s) seconds=$amount ;;
+            m) seconds=$((amount * 60)) ;;
+            h) seconds=$((amount * 3600)) ;;
+            d) seconds=$((amount * 86400)) ;;
+          esac
+          local at=$(($(date +%s) + seconds))
+          date -u -d "@$at" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null ||
+            date -u -r "$at" +%Y-%m-%dT%H:%M:%SZ
+        }
+
+        EXPIRES_AT=""
         WORKSPACE_ID=""
         if [ -n "$EXISTING_ID" ]; then
           if GET_OUTPUT=$($TAILOR_RUN tailor workspace get --workspace-id "$EXISTING_ID" --json 2>&1); then
             echo "Found existing preview workspace: $EXISTING_ID"
             WORKSPACE_ID="$EXISTING_ID"
             if [ -n "$TTL" ]; then
-              $TAILOR_RUN tailor workspace ttl set --workspace-id "$WORKSPACE_ID" --ttl "$TTL" ||
+              if $TAILOR_RUN tailor workspace ttl set --workspace-id "$WORKSPACE_ID" --ttl "$TTL"; then
+                EXPIRES_AT=$(ttl_expiry "$TTL") || EXPIRES_AT=""
+              else
                 echo "::warning::Could not extend the expiry of preview workspace $WORKSPACE_ID — it may be pruned sooner than $TTL after this push"
+              fi
             fi
           elif printf '%s' "$GET_OUTPUT" | grep -qiE 'not_found|workspace .*not found'; then
             echo "::warning::Preview workspace $EXISTING_ID recorded in the PR comment no longer exists (expired and pruned?) — creating a new one"
@@ -148,17 +174,25 @@ runs:
             echo "::error::Failed to create preview workspace '$WORKSPACE_NAME'"
             exit 1
           fi
-          if [ "$CREATE_STATUS" -ne 0 ]; then
+          if [ "$CREATE_STATUS" -eq 0 ]; then
+            if [ -n "$TTL" ]; then
+              EXPIRES_AT=$(ttl_expiry "$TTL") || EXPIRES_AT=""
+            fi
+          else
             echo "::warning::workspace create exited with $CREATE_STATUS after creating $WORKSPACE_ID (the expiry could not be confirmed) — setting it again"
             if [ -n "$TTL" ]; then
-              $TAILOR_RUN tailor workspace ttl set --workspace-id "$WORKSPACE_ID" --ttl "$TTL" ||
+              if $TAILOR_RUN tailor workspace ttl set --workspace-id "$WORKSPACE_ID" --ttl "$TTL"; then
+                EXPIRES_AT=$(ttl_expiry "$TTL") || EXPIRES_AT=""
+              else
                 echo "::warning::Could not set the expiry of preview workspace $WORKSPACE_ID — it may never be pruned"
+              fi
             fi
           fi
         fi
 
         echo "workspace-id=$WORKSPACE_ID" >> "$GITHUB_OUTPUT"
         echo "workspace-name=$WORKSPACE_NAME" >> "$GITHUB_OUTPUT"
+        echo "expires-at=$EXPIRES_AT" >> "$GITHUB_OUTPUT"
         echo "TAILOR_PLATFORM_WORKSPACE_ID=$WORKSPACE_ID" >> "$GITHUB_ENV"
 
     - name: Deploy
