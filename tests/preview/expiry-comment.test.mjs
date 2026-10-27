@@ -250,6 +250,32 @@ test("preview-deploy: takes the expiry before create runs, so a slow command doe
   assert(Date.parse(value) - finishedAt < 45_000 - slowCliMs / 2, value);
 });
 
+for (const ttl of [
+  "7",
+  "d",
+  "7days",
+  "7d ",
+  "-7d",
+  "7.5h",
+  "a[$(MARKER)]d",
+  "0+a[$(MARKER)]m",
+  "1,a[$(MARKER)]h",
+]) {
+  test(`preview-deploy: gives no expiry for the invalid ttl ${JSON.stringify(ttl)} and runs nothing hidden in it`, async (context) => {
+    const marker = path.join(os.tmpdir(), `expiry-ttl-injected-${process.pid}-${Date.now()}`);
+    context.after(() => rm(marker, { force: true }));
+    const action = await loadAction("preview-deploy");
+    const result = await runStep(context, {
+      action,
+      stepId: "workspace",
+      env: { ...deployEnv, TTL: ttl.replace("MARKER", `touch ${marker}`) },
+    });
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(existsSync(marker), false);
+    assert.equal(outputValue(result.output, "expires-at"), "");
+  });
+}
+
 test("preview-deploy: outputs an empty expiry when ttl is empty", async (context) => {
   const action = await loadAction("preview-deploy");
   const result = await runStep(context, { action, stepId: "workspace", env: deployEnv });

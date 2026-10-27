@@ -9,8 +9,14 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: test-preview-comment-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
+    # The token of a fork PR is read-only, so posting the comment would fail
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

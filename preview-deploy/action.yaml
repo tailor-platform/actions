@@ -129,6 +129,7 @@ runs:
         # run later than the recorded one. `10#` keeps 010 from reading as octal, as
         # the CLI reads it. GNU date reads `-d @epoch` and BSD date `-r epoch`.
         ttl_expiry() {
+          [[ "$1" =~ ^[0-9]+[smhd]$ ]] || return 1
           local amount="10#${1%?}" seconds
           case "${1: -1}" in
             s) seconds=$amount ;;
