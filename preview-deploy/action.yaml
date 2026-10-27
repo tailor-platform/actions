@@ -124,10 +124,12 @@ runs:
             '[ .[][] | select(.user.type == "Bot" and (.body | startswith($m))) ] | first | .body // empty' | \
           jq -rR '(try capture("<!-- tailor-preview: [^ ]+ id=(?<id>[a-f0-9-]+)") | .id) // empty')
 
-        # The CLI counts the ttl from now and does not print the expiry, so work it
-        # out here. GNU date reads `-d @epoch` and BSD date `-r epoch`.
+        # The CLI records now + ttl from the moment it runs and does not print it, so
+        # work it out here, and take it before the CLI call: a value taken after would
+        # run later than the recorded one. `10#` keeps 010 from reading as octal, as
+        # the CLI reads it. GNU date reads `-d @epoch` and BSD date `-r epoch`.
         ttl_expiry() {
-          local amount="${1%?}" seconds
+          local amount="10#${1%?}" seconds
           case "${1: -1}" in
             s) seconds=$amount ;;
             m) seconds=$((amount * 60)) ;;
@@ -146,8 +148,9 @@ runs:
             echo "Found existing preview workspace: $EXISTING_ID"
             WORKSPACE_ID="$EXISTING_ID"
             if [ -n "$TTL" ]; then
+              PLANNED_EXPIRES_AT=$(ttl_expiry "$TTL") || PLANNED_EXPIRES_AT=""
               if $TAILOR_RUN tailor workspace ttl set --workspace-id "$WORKSPACE_ID" --ttl "$TTL"; then
-                EXPIRES_AT=$(ttl_expiry "$TTL") || EXPIRES_AT=""
+                EXPIRES_AT="$PLANNED_EXPIRES_AT"
               else
                 echo "::warning::Could not extend the expiry of preview workspace $WORKSPACE_ID — it may be pruned sooner than $TTL after this push"
               fi
@@ -168,6 +171,10 @@ runs:
           [ -n "$FOLDER_ID" ] && CREATE_ARGS+=(--folder-id "$FOLDER_ID")
           [ -n "$TTL" ] && CREATE_ARGS+=(--ttl "$TTL")
           CREATE_STATUS=0
+          PLANNED_EXPIRES_AT=""
+          if [ -n "$TTL" ]; then
+            PLANNED_EXPIRES_AT=$(ttl_expiry "$TTL") || PLANNED_EXPIRES_AT=""
+          fi
           CREATE_OUTPUT=$($TAILOR_RUN tailor "${CREATE_ARGS[@]}") || CREATE_STATUS=$?
           WORKSPACE_ID=$(printf '%s' "$CREATE_OUTPUT" | jq -r '.id // empty' 2>/dev/null || true)
           if [ -z "$WORKSPACE_ID" ]; then
@@ -175,14 +182,13 @@ runs:
             exit 1
           fi
           if [ "$CREATE_STATUS" -eq 0 ]; then
-            if [ -n "$TTL" ]; then
-              EXPIRES_AT=$(ttl_expiry "$TTL") || EXPIRES_AT=""
-            fi
+            EXPIRES_AT="$PLANNED_EXPIRES_AT"
           else
             echo "::warning::workspace create exited with $CREATE_STATUS after creating $WORKSPACE_ID (the expiry could not be confirmed) — setting it again"
             if [ -n "$TTL" ]; then
+              PLANNED_EXPIRES_AT=$(ttl_expiry "$TTL") || PLANNED_EXPIRES_AT=""
               if $TAILOR_RUN tailor workspace ttl set --workspace-id "$WORKSPACE_ID" --ttl "$TTL"; then
-                EXPIRES_AT=$(ttl_expiry "$TTL") || EXPIRES_AT=""
+                EXPIRES_AT="$PLANNED_EXPIRES_AT"
               else
                 echo "::warning::Could not set the expiry of preview workspace $WORKSPACE_ID — it may never be pruned"
               fi

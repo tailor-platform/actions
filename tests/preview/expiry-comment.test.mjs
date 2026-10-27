@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
+import { rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import { loadAction, runStep } from "./helpers.mjs";
 
@@ -105,11 +109,25 @@ test("preview-comment: falls back to UTC when timezones is empty", async (contex
   assert.equal(expiresRow(output), "| Expires | 2026-10-27 12:00 UTC |");
 });
 
-test("preview-comment: rejects a timezone with shell metacharacters without running it", async (context) => {
+for (const directory of ["America", "Etc"]) {
+  test(`preview-comment: skips ${directory}, a region directory that is not a timezone`, async (context) => {
+    const { output, stdout } = await buildComment(context, {
+      EXPIRES_AT: expiresAt,
+      TIMEZONES: `UTC,${directory}`,
+    });
+    assert.equal(expiresRow(output), "| Expires | 2026-10-27 12:00 UTC |");
+    assert.match(stdout, new RegExp(`::warning::.*${directory}`));
+  });
+}
+
+test("preview-comment: does not run a command hidden in a timezone name", async (context) => {
+  const marker = path.join(os.tmpdir(), `expiry-injected-${process.pid}-${Date.now()}`);
+  context.after(() => rm(marker, { force: true }));
   const { output, stdout } = await buildComment(context, {
     EXPIRES_AT: expiresAt,
-    TIMEZONES: "UTC,$(touch /tmp/pwned)",
+    TIMEZONES: `UTC,$(touch ${marker})`,
   });
+  assert.equal(existsSync(marker), false);
   assert.equal(expiresRow(output), "| Expires | 2026-10-27 12:00 UTC |");
   assert.match(stdout, /::warning::/);
 });
@@ -184,6 +202,9 @@ for (const [ttl, seconds] of [
   ["45s", 45],
   ["30m", 30 * 60],
   ["24h", 24 * 3600],
+  ["010m", 10 * 60],
+  ["08h", 8 * 3600],
+  ["09d", 9 * 24 * 3600],
 ]) {
   test(`preview-deploy: reads the ttl unit in ${ttl}`, async (context) => {
     const action = await loadAction("preview-deploy");
@@ -197,6 +218,37 @@ for (const [ttl, seconds] of [
     assert(Math.abs(secondsFromNow(value) - seconds) < 120, value);
   });
 }
+
+const slowCliMs = 4000;
+
+test("preview-deploy: takes the expiry before ttl set runs, so a slow command does not push it later than the one recorded", async (context) => {
+  const action = await loadAction("preview-deploy");
+  const startedAt = Date.now();
+  const result = await runStep(context, {
+    action,
+    stepId: "workspace",
+    env: { ...deployEnv, TTL: "45s" },
+    comments: [existingComment],
+    mock: { MOCK_TTL_SET_DELAY_MS: String(slowCliMs) },
+  });
+  assert.equal(result.code, 0, result.stderr);
+  const value = outputValue(result.output, "expires-at");
+  assert(Date.parse(value) - startedAt < 45_000 + slowCliMs / 2, value);
+});
+
+test("preview-deploy: takes the expiry before create runs, so a slow command does not push it later than the one recorded", async (context) => {
+  const action = await loadAction("preview-deploy");
+  const startedAt = Date.now();
+  const result = await runStep(context, {
+    action,
+    stepId: "workspace",
+    env: { ...deployEnv, TTL: "45s" },
+    mock: { MOCK_CREATE_DELAY_MS: String(slowCliMs) },
+  });
+  assert.equal(result.code, 0, result.stderr);
+  const value = outputValue(result.output, "expires-at");
+  assert(Date.parse(value) - startedAt < 45_000 + slowCliMs / 2, value);
+});
 
 test("preview-deploy: outputs an empty expiry when ttl is empty", async (context) => {
   const action = await loadAction("preview-deploy");
