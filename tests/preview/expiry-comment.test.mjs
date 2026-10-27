@@ -142,6 +142,20 @@ test("preview-comment: shows the expiry for a failed deployment because the work
   assert.equal(expiresRow(output), "| Expires | 2026-10-27 12:00 UTC |");
 });
 
+for (const value of ["2026-10-27T12:00:00.000Z", "2026-10-27T12:00:00.123456Z", "2026-10-27T12:00:00+00:00"]) {
+  test(`preview-comment: reads the UTC expiry ${value} as the same instant as ${expiresAt}`, async (context) => {
+    const { output, stdout } = await buildComment(context, { EXPIRES_AT: value });
+    assert.equal(expiresRow(output), "| Expires | 2026-10-27 12:00 UTC |");
+    assert.doesNotMatch(stdout, /::warning::/);
+  });
+}
+
+test("preview-comment: skips an expires-at in a non-UTC offset with a warning", async (context) => {
+  const { output, stdout } = await buildComment(context, { EXPIRES_AT: "2026-10-27T21:00:00+09:00" });
+  assert.equal(expiresRow(output), undefined);
+  assert.match(stdout, /::warning::.*2026-10-27T21:00:00\+09:00/);
+});
+
 test("preview-comment: skips a malformed expires-at with a warning instead of failing the step", async (context) => {
   const { output, stdout } = await buildComment(context, { EXPIRES_AT: "next tuesday" });
   assert.equal(expiresRow(output), undefined);

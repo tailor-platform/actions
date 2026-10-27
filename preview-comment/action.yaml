@@ -101,12 +101,12 @@ runs:
         TABLE="| | |"$'\n'"|---|---|"$'\n'"| Workspace ID | \`${WORKSPACE_ID}\` |"$'\n'"| Status | ${EMOJI} ${STATUS_TEXT} |"
         [ -n "$APP_URL" ] && TABLE="${TABLE}"$'\n'"| App URL | <${APP_URL}> |"
 
-        # GNU date reads `-d @epoch` and BSD date `-r epoch`, so try one, then the other.
         printable() { printf '%s' "${1//[^A-Za-z0-9_ \/+:.-]/?}"; }
         iso_to_epoch() {
           date -u -d "$1" +%s 2>/dev/null ||
             date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$1" +%s 2>/dev/null
         }
+        # GNU date reads `-d @epoch` and BSD date `-r epoch`, so try one, then the other.
         epoch_in_zone() {
           TZ="$2" date -d "@$1" '+%Y-%m-%d %H:%M' 2>/dev/null ||
             TZ="$2" date -r "$1" '+%Y-%m-%d %H:%M'
@@ -118,11 +118,11 @@ runs:
 
         if [ -n "$EXPIRES_AT" ] && [ "$STATUS" != "deleted" ]; then
           EXPIRES_EPOCH=""
-          if [[ "$EXPIRES_AT" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
-            EXPIRES_EPOCH=$(iso_to_epoch "$EXPIRES_AT") || EXPIRES_EPOCH=""
+          if [[ "$EXPIRES_AT" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|\+00:00)$ ]]; then
+            EXPIRES_EPOCH=$(iso_to_epoch "${EXPIRES_AT:0:19}Z") || EXPIRES_EPOCH=""
           fi
           if [ -z "$EXPIRES_EPOCH" ]; then
-            echo "::warning::Ignoring expires-at '$(printable "$EXPIRES_AT")': expected UTC ISO 8601 such as 2026-10-27T12:00:00Z"
+            echo "::warning::Ignoring expires-at '$(printable "$EXPIRES_AT")': expected UTC ISO 8601 such as 2026-10-27T12:00:00Z (fractional seconds and +00:00 are accepted)"
           else
             EXPIRES_TEXT=""
             while IFS= read -r ZONE; do
