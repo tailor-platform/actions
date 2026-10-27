@@ -334,7 +334,6 @@ jobs:
           workspace-name: ${{ steps.preview.outputs.workspace-name }}
           status: ${{ job.status }}
           app-url: ${{ steps.preview.outputs.app-url }}
-          expires-at: ${{ steps.preview.outputs.expires-at }}
           timezones: UTC,Asia/Tokyo
           github-token: ${{ secrets.GITHUB_TOKEN }}
           mention: "true"
@@ -361,7 +360,6 @@ jobs:
 |------|-------------|
 | `workspace-id` | Workspace ID of the preview deployment |
 | `workspace-name` | Full workspace name (e.g. `my-app-pr-42`) |
-| `expires-at` | When the workspace becomes prunable, as the CLI records it (e.g. `2026-10-27T12:00:00.000Z`), read back with `tailor workspace get` (CLI 2.16.0 or later) after the workspace is created or its expiry extended. Pass it to `preview-comment`'s `expires-at`. Empty when the workspace has no expiry or the CLI could not read it; a push whose extension failed still reports the expiry the workspace had. |
 | `app-url` | **Deprecated**, will be removed in the next major version. Application URL (GraphQL endpoint) of the preview workspace |
 | `frontend-urls` | **Deprecated**, will be removed in the next major version. JSON object mapping all static website names in the workspace to URLs, e.g. `{"web":"https://web.example.com"}`. `{}` when no static websites exist. |
 
@@ -371,7 +369,7 @@ jobs:
 
 Post or update a PR comment with preview deployment status, workspace ID, app URL, expiry, and optional @mention. Typically called after `preview-deploy`. The comment is keyed by workspace name so multiple preview environments can coexist on one PR.
 
-With `expires-at` the comment gains an `Expires` row that lists the expiry once per timezone, one under the other. `timezones: UTC,Asia/Tokyo` gives the cell `2026-10-27 12:00 UTC` and, on the next line, `2026-10-27 21:00 Asia/Tokyo`. The comment is updated on every push, so the row follows the expiry that `preview-deploy`'s `ttl` restarts. The expiry is formatted with Node.js, so the runner needs `node` on its `PATH` when `expires-at` is given, as it has on GitHub-hosted runners.
+When the workspace has an expiry (`ttl` given to `preview-deploy`), the comment gains an `Expires` row that lists it once per timezone, one under the other. `timezones: UTC,Asia/Tokyo` gives the cell `2026-10-27 12:00 UTC` and, on the next line, `2026-10-27 21:00 Asia/Tokyo`. The comment is rebuilt on every push, so the row follows the expiry that each push restarts. `preview-comment` reads the expiry itself with `tailor workspace get --json` (CLI 2.16.0 or later), using the `tailor` runner and login that `preview-deploy` set up earlier in the same job; without them, or for a workspace with no expiry, the row is left out. No row is shown when `status` is `deleted`.
 
 #### Inputs
 
@@ -381,8 +379,8 @@ With `expires-at` the comment gains an `Expires` row that lists the expiry once 
 | `workspace-name` | Yes | | Workspace name (from `preview-deploy` output) |
 | `status` | Yes | | Deployment status: `success`, `failure`, or `deleted` |
 | `app-url` | No | | Application URL to show in the comment |
-| `expires-at` | No | | When the workspace becomes prunable, as ISO 8601; fractional seconds and a `+hh:mm` offset are accepted (the `expires-at` output of `preview-deploy`). Adds an `Expires` row. Empty adds no row, and no row is added when `status` is `deleted`. A value that is not ISO 8601 is skipped with a warning. |
-| `timezones` | No | `UTC` | IANA timezone names to show the expiry in, separated by commas or newlines, shown one under the other in the order given (e.g. `UTC,Asia/Tokyo`). An unknown name is skipped with a warning; if none is valid, `UTC` is used. Only used with `expires-at`. |
+| `working-directory` | No | `.` | Working directory the `tailor` CLI is run from to read the expiry (for monorepo setups). Same as the one given to `preview-deploy`. |
+| `timezones` | No | `UTC` | IANA timezone names to show the expiry in, separated by commas or newlines, shown one under the other in the order given (e.g. `UTC,Asia/Tokyo`). An unknown name is skipped with a warning; if none is valid, `UTC` is used. Only used when the workspace has an expiry. |
 | `github-token` | Yes | | GitHub token with `pull-requests: write` |
 | `mention` | No | | Set to `"true"` to @mention the commit author (falls back to PR author if commit is by a bot) |
 

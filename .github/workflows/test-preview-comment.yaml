@@ -55,6 +55,15 @@ jobs:
             exit 1
           fi
 
+      - name: Stub the tailor CLI, which this job has no login for, to report an expiry
+        # TAILOR_RUN is a path under RUNNER_TEMP written by this step, not input.
+        run: | # zizmor: ignore[github-env]
+          cat > "$RUNNER_TEMP/tailor-stub" <<'EOF'
+          #!/usr/bin/env bash
+          echo '{"expiresAt":"2026-11-03T04:55:39.000Z"}'
+          EOF
+          echo "TAILOR_RUN=bash $RUNNER_TEMP/tailor-stub" >> "$GITHUB_ENV"
+
       - name: "Test: update the comment with an expiry in two timezones"
         uses: $/preview-comment
         with:
@@ -62,7 +71,6 @@ jobs:
           workspace-name: ${{ env.WORKSPACE_NAME }}
           status: success
           app-url: https://preview.example.com
-          expires-at: "2026-11-03T04:55:39Z"
           timezones: UTC,Asia/Tokyo
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
