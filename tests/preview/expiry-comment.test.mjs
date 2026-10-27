@@ -101,6 +101,8 @@ for (const [name, json] of [
   ["null for a workspace with no expiry", "null"],
   ["invalid for an expiry the CLI could not decode", '"invalid"'],
   ["unavailable for an expiry the CLI could not read", '"unavailable"'],
+  ["a date followed by a second line", JSON.stringify("2026-11-03T12:00:00.000Z\nmalformed")],
+  ["a date followed by other text", JSON.stringify("2026-11-03T12:00:00.000Z and more")],
 ]) {
   test(`preview-comment: gives an empty expiry when the CLI reports ${name}`, async (context) => {
     const result = await readExpiry(context, { mock: { MOCK_EXPIRES_AT_JSON: json } });
