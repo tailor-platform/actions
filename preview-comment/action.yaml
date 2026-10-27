@@ -33,7 +33,7 @@ inputs:
     description: >-
       IANA timezone names (e.g. Asia/Tokyo) in which to show the expiry,
       separated by commas or newlines. The expiry is shown once per timezone,
-      in the order given. A name that is not a known timezone is skipped with a
+      one under the other in the order given. A name that is not a known timezone is skipped with a
       warning; when none is valid, UTC is used. Only used with `expires-at`.
     required: false
     default: UTC
@@ -133,7 +133,7 @@ runs:
                 echo "::warning::Skipping timezone '$(printable "$ZONE")': not a known IANA timezone name"
                 continue
               fi
-              EXPIRES_TEXT="${EXPIRES_TEXT:+${EXPIRES_TEXT} / }$(epoch_in_zone "$EXPIRES_EPOCH" "$ZONE") ${ZONE}"
+              EXPIRES_TEXT="${EXPIRES_TEXT:+${EXPIRES_TEXT}<br>}$(epoch_in_zone "$EXPIRES_EPOCH" "$ZONE") ${ZONE}"
             done < <(printf '%s\n' "$TIMEZONES" | tr ',' '\n')
             [ -z "$EXPIRES_TEXT" ] && EXPIRES_TEXT="$(epoch_in_zone "$EXPIRES_EPOCH" UTC) UTC"
             TABLE="${TABLE}"$'\n'"| Expires | ${EXPIRES_TEXT} |"

@@ -56,14 +56,14 @@ test("preview-comment: shows the expiry in UTC by default", async (context) => {
   assert.equal(expiresRow(output), "| Expires | 2026-10-27 12:00 UTC |");
 });
 
-test("preview-comment: shows the expiry once per timezone, in the order given", async (context) => {
+test("preview-comment: shows the expiry once per timezone, one under the other in the order given", async (context) => {
   const { output } = await buildComment(context, {
     EXPIRES_AT: expiresAt,
     TIMEZONES: "UTC,Asia/Tokyo,America/Los_Angeles",
   });
   assert.equal(
     expiresRow(output),
-    "| Expires | 2026-10-27 12:00 UTC / 2026-10-27 21:00 Asia/Tokyo / 2026-10-27 05:00 America/Los_Angeles |",
+    "| Expires | 2026-10-27 12:00 UTC<br>2026-10-27 21:00 Asia/Tokyo<br>2026-10-27 05:00 America/Los_Angeles |",
   );
 });
 
@@ -74,7 +74,7 @@ test("preview-comment: accepts timezones separated by newlines and surrounding s
   });
   assert.equal(
     expiresRow(output),
-    "| Expires | 2026-10-27 21:00 Asia/Tokyo / 2026-10-27 12:00 UTC |",
+    "| Expires | 2026-10-27 21:00 Asia/Tokyo<br>2026-10-27 12:00 UTC |",
   );
 });
 
@@ -223,7 +223,6 @@ const slowCliMs = 4000;
 
 test("preview-deploy: takes the expiry before ttl set runs, so a slow command does not push it later than the one recorded", async (context) => {
   const action = await loadAction("preview-deploy");
-  const startedAt = Date.now();
   const result = await runStep(context, {
     action,
     stepId: "workspace",
@@ -231,23 +230,24 @@ test("preview-deploy: takes the expiry before ttl set runs, so a slow command do
     comments: [existingComment],
     mock: { MOCK_TTL_SET_DELAY_MS: String(slowCliMs) },
   });
+  const finishedAt = Date.now();
   assert.equal(result.code, 0, result.stderr);
   const value = outputValue(result.output, "expires-at");
-  assert(Date.parse(value) - startedAt < 45_000 + slowCliMs / 2, value);
+  assert(Date.parse(value) - finishedAt < 45_000 - slowCliMs / 2, value);
 });
 
 test("preview-deploy: takes the expiry before create runs, so a slow command does not push it later than the one recorded", async (context) => {
   const action = await loadAction("preview-deploy");
-  const startedAt = Date.now();
   const result = await runStep(context, {
     action,
     stepId: "workspace",
     env: { ...deployEnv, TTL: "45s" },
     mock: { MOCK_CREATE_DELAY_MS: String(slowCliMs) },
   });
+  const finishedAt = Date.now();
   assert.equal(result.code, 0, result.stderr);
   const value = outputValue(result.output, "expires-at");
-  assert(Date.parse(value) - startedAt < 45_000 + slowCliMs / 2, value);
+  assert(Date.parse(value) - finishedAt < 45_000 - slowCliMs / 2, value);
 });
 
 test("preview-deploy: outputs an empty expiry when ttl is empty", async (context) => {

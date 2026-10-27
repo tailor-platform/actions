@@ -371,7 +371,7 @@ jobs:
 
 Post or update a PR comment with preview deployment status, workspace ID, app URL, expiry, and optional @mention. Typically called after `preview-deploy`. The comment is keyed by workspace name so multiple preview environments can coexist on one PR.
 
-With `expires-at` the comment gains an `Expires` row, for example `2026-10-27 12:00 UTC / 2026-10-27 21:00 Asia/Tokyo` for `timezones: UTC,Asia/Tokyo`. The comment is updated on every push, so the row follows the expiry that `preview-deploy`'s `ttl` restarts.
+With `expires-at` the comment gains an `Expires` row that lists the expiry once per timezone, one under the other. `timezones: UTC,Asia/Tokyo` gives the cell `2026-10-27 12:00 UTC` and, on the next line, `2026-10-27 21:00 Asia/Tokyo`. The comment is updated on every push, so the row follows the expiry that `preview-deploy`'s `ttl` restarts.
 
 #### Inputs
 
@@ -382,7 +382,7 @@ With `expires-at` the comment gains an `Expires` row, for example `2026-10-27 12
 | `status` | Yes | | Deployment status: `success`, `failure`, or `deleted` |
 | `app-url` | No | | Application URL to show in the comment |
 | `expires-at` | No | | When the workspace becomes prunable, as UTC ISO 8601 (the `expires-at` output of `preview-deploy`). Adds an `Expires` row. Empty adds no row, and no row is added when `status` is `deleted`. The comment is rebuilt on every push, so on a push where `preview-deploy` could not record the expiry (its output is empty) the row is gone until a later push records it. |
-| `timezones` | No | `UTC` | IANA timezone names to show the expiry in, separated by commas or newlines, shown in the order given (e.g. `UTC,Asia/Tokyo`). An unknown name is skipped with a warning; if none is valid, `UTC` is used. Only used with `expires-at`. |
+| `timezones` | No | `UTC` | IANA timezone names to show the expiry in, separated by commas or newlines, shown one under the other in the order given (e.g. `UTC,Asia/Tokyo`). An unknown name is skipped with a warning; if none is valid, `UTC` is used. Only used with `expires-at`. |
 | `github-token` | Yes | | GitHub token with `pull-requests: write` |
 | `mention` | No | | Set to `"true"` to @mention the commit author (falls back to PR author if commit is by a bot) |
 

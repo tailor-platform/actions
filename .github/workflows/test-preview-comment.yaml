@@ -71,7 +71,7 @@ jobs:
             echo "::error::Updating must reuse the comment, not add another"
             exit 1
           fi
-          expected="| Expires | 2026-11-03 04:55 UTC / 2026-11-03 13:55 Asia/Tokyo |"
+          expected="| Expires | 2026-11-03 04:55 UTC<br>2026-11-03 13:55 Asia/Tokyo |"
           if ! jq -e --arg row "$expected" '.[0].body | contains($row)' <<<"$comments" >/dev/null; then
             echo "::error::Expected the row: $expected"
             jq -r '.[0].body' <<<"$comments"
