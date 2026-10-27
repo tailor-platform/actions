@@ -371,7 +371,7 @@ jobs:
 
 Post or update a PR comment with preview deployment status, workspace ID, app URL, expiry, and optional @mention. Typically called after `preview-deploy`. The comment is keyed by workspace name so multiple preview environments can coexist on one PR.
 
-With `expires-at` the comment gains an `Expires` row that lists the expiry once per timezone, one under the other. `timezones: UTC,Asia/Tokyo` gives the cell `2026-10-27 12:00 UTC` and, on the next line, `2026-10-27 21:00 Asia/Tokyo`. The comment is updated on every push, so the row follows the expiry that `preview-deploy`'s `ttl` restarts.
+With `expires-at` the comment gains an `Expires` row that lists the expiry once per timezone, one under the other. `timezones: UTC,Asia/Tokyo` gives the cell `2026-10-27 12:00 UTC` and, on the next line, `2026-10-27 21:00 Asia/Tokyo`. The comment is updated on every push, so the row follows the expiry that `preview-deploy`'s `ttl` restarts. The expiry is formatted with Node.js, so the runner needs `node` on its `PATH` when `expires-at` is given, as it has on GitHub-hosted runners.
 
 #### Inputs
 

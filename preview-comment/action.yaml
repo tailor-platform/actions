@@ -52,6 +52,16 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Format expiry
+      id: expiry
+      if: inputs.expires-at != ''
+      shell: bash
+      env:
+        EXPIRES_AT: ${{ inputs.expires-at }}
+        TIMEZONES: ${{ inputs.timezones }}
+        STATUS: ${{ inputs.status }}
+      run: node "${{ github.action_path }}/expiry.mjs"
+
     - name: Build comment body
       id: build
       shell: bash
@@ -62,8 +72,7 @@ runs:
         WORKSPACE_NAME: ${{ inputs.workspace-name }}
         STATUS: ${{ inputs.status }}
         APP_URL: ${{ inputs.app-url }}
-        EXPIRES_AT: ${{ inputs.expires-at }}
-        TIMEZONES: ${{ inputs.timezones }}
+        EXPIRES_ROW: ${{ steps.expiry.outputs.row }}
         MENTION_ENABLED: ${{ inputs.mention }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
         PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -102,52 +111,7 @@ runs:
         TABLE="| | |"$'\n'"|---|---|"$'\n'"| Workspace ID | \`${WORKSPACE_ID}\` |"$'\n'"| Status | ${EMOJI} ${STATUS_TEXT} |"
         [ -n "$APP_URL" ] && TABLE="${TABLE}"$'\n'"| App URL | <${APP_URL}> |"
 
-        printable() { printf '%s' "${1//[^A-Za-z0-9_ \/+:.-]/?}"; }
-        iso_to_epoch() {
-          date -u -d "$1" +%s 2>/dev/null ||
-            date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$1" +%s 2>/dev/null
-        }
-        # GNU date reads `-d @epoch` and BSD date `-r epoch`, so try one, then the other.
-        epoch_in_zone() {
-          TZ="$2" date -d "@$1" '+%Y-%m-%d %H:%M' 2>/dev/null ||
-            TZ="$2" date -r "$1" '+%Y-%m-%d %H:%M'
-        }
-        zone_is_known() {
-          [[ "$1" =~ ^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$ ]] &&
-            { [ "$1" = "UTC" ] || [ -f "/usr/share/zoneinfo/$1" ]; }
-        }
-
-        if [ -n "$EXPIRES_AT" ] && [ "$STATUS" != "deleted" ]; then
-          EXPIRES_EPOCH=""
-          if [[ "$EXPIRES_AT" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|([+-])([0-9]{2}):([0-9]{2}))$ ]]; then
-            EXPIRES_EPOCH=$(iso_to_epoch "${EXPIRES_AT:0:19}Z") || EXPIRES_EPOCH=""
-            if [ -n "$EXPIRES_EPOCH" ] && [ -n "${BASH_REMATCH[3]}" ]; then
-              OFFSET_SECONDS=$((10#${BASH_REMATCH[4]} * 3600 + 10#${BASH_REMATCH[5]} * 60))
-              if [ "${BASH_REMATCH[3]}" = "+" ]; then
-                EXPIRES_EPOCH=$((EXPIRES_EPOCH - OFFSET_SECONDS))
-              else
-                EXPIRES_EPOCH=$((EXPIRES_EPOCH + OFFSET_SECONDS))
-              fi
-            fi
-          fi
-          if [ -z "$EXPIRES_EPOCH" ]; then
-            echo "::warning::Ignoring expires-at '$(printable "$EXPIRES_AT")': expected ISO 8601 such as 2026-10-27T12:00:00Z (fractional seconds and a +hh:mm offset are accepted)"
-          else
-            EXPIRES_TEXT=""
-            while IFS= read -r ZONE; do
-              ZONE="${ZONE#"${ZONE%%[![:space:]]*}"}"
-              ZONE="${ZONE%"${ZONE##*[![:space:]]}"}"
-              [ -z "$ZONE" ] && continue
-              if ! zone_is_known "$ZONE"; then
-                echo "::warning::Skipping timezone '$(printable "$ZONE")': not a known IANA timezone name"
-                continue
-              fi
-              EXPIRES_TEXT="${EXPIRES_TEXT:+${EXPIRES_TEXT}<br>}$(epoch_in_zone "$EXPIRES_EPOCH" "$ZONE") ${ZONE}"
-            done < <(printf '%s\n' "$TIMEZONES" | tr ',' '\n')
-            [ -z "$EXPIRES_TEXT" ] && EXPIRES_TEXT="$(epoch_in_zone "$EXPIRES_EPOCH" UTC) UTC"
-            TABLE="${TABLE}"$'\n'"| Expires | ${EXPIRES_TEXT} |"
-          fi
-        fi
+        [ -n "$EXPIRES_ROW" ] && TABLE="${TABLE}"$'\n'"${EXPIRES_ROW}"
 
         if [ -n "$MENTION_USER" ]; then
           FOOTER="${MENTION_USER} — ${STATUS_TEXT}. [View run](${RUN_URL})"
