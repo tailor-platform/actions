@@ -1,0 +1,80 @@
+name: Test Preview Comment Action
+
+on:
+  pull_request:
+    paths:
+      - "preview-comment/**"
+      - "_internal/sticky-comment/**"
+      - ".github/workflows/test-preview-comment.yaml"
+
+permissions: {}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      WORKSPACE_NAME: preview-comment-ci-test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: "Test: post a comment without an expiry"
+        uses: $/preview-comment
+        with:
+          workspace-id: 00000000-0000-4000-8000-000000000154
+          workspace-name: ${{ env.WORKSPACE_NAME }}
+          status: success
+          app-url: https://preview.example.com
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "Verify: the comment has no Expires row"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          comments=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" |
+            jq --arg m "<!-- tailor-preview: $WORKSPACE_NAME " '[ .[][] | select(.body | startswith($m)) ]')
+          if [ "$(jq length <<<"$comments")" != "1" ]; then
+            echo "::error::Expected exactly one preview comment for $WORKSPACE_NAME"
+            exit 1
+          fi
+          if jq -e '.[0].body | test("\\| Expires \\|")' <<<"$comments" >/dev/null; then
+            echo "::error::The comment must not have an Expires row without expires-at"
+            jq -r '.[0].body' <<<"$comments"
+            exit 1
+          fi
+
+      - name: "Test: update the comment with an expiry in two timezones"
+        uses: $/preview-comment
+        with:
+          workspace-id: 00000000-0000-4000-8000-000000000154
+          workspace-name: ${{ env.WORKSPACE_NAME }}
+          status: success
+          app-url: https://preview.example.com
+          expires-at: "2026-11-03T04:55:39Z"
+          timezones: UTC,Asia/Tokyo
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "Verify: the same comment now shows the expiry in both timezones"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          comments=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" |
+            jq --arg m "<!-- tailor-preview: $WORKSPACE_NAME " '[ .[][] | select(.body | startswith($m)) ]')
+          if [ "$(jq length <<<"$comments")" != "1" ]; then
+            echo "::error::Updating must reuse the comment, not add another"
+            exit 1
+          fi
+          expected="| Expires | 2026-11-03 04:55 UTC / 2026-11-03 13:55 Asia/Tokyo |"
+          if ! jq -e --arg row "$expected" '.[0].body | contains($row)' <<<"$comments" >/dev/null; then
+            echo "::error::Expected the row: $expected"
+            jq -r '.[0].body' <<<"$comments"
+            exit 1
+          fi
+          jq -r '.[0].body' <<<"$comments"

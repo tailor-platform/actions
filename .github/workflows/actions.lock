@@ -76,6 +76,9 @@ workflows:
         - 'pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413'
         - 'tailor-platform/actions@053ee1c31460fc04639c466e5f483ea3150a9a31'
         - 'tailor-platform/actions@bed6c5a2dc015d45d78931d9e8989109ec27fc28'
+    '.github/workflows/test-preview-comment.yaml':
+        - 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1'
+        - 'tailor-platform/actions@bed6c5a2dc015d45d78931d9e8989109ec27fc28'
     '.github/workflows/test-relevance.yaml':
         - 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1'
         - 'actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1'
