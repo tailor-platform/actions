@@ -20,8 +20,9 @@ inputs:
     default: ""
   expires-at:
     description: >-
-      Instant at which the preview workspace becomes prunable, as UTC ISO 8601
-      (e.g. 2026-10-27T12:00:00Z). Pass the `expires-at` output of
+      Instant at which the preview workspace becomes prunable, as ISO 8601
+      (e.g. 2026-10-27T12:00:00Z; fractional seconds and a +hh:mm offset are
+      accepted). Pass the `expires-at` output of
       preview-deploy. Adds an Expires row to the comment. Empty (default)
       adds no row, and the row is never added when `status` is 'deleted'. The
       comment is rebuilt on every push, so on a push where preview-deploy could
@@ -118,11 +119,19 @@ runs:
 
         if [ -n "$EXPIRES_AT" ] && [ "$STATUS" != "deleted" ]; then
           EXPIRES_EPOCH=""
-          if [[ "$EXPIRES_AT" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|\+00:00)$ ]]; then
+          if [[ "$EXPIRES_AT" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|([+-])([0-9]{2}):([0-9]{2}))$ ]]; then
             EXPIRES_EPOCH=$(iso_to_epoch "${EXPIRES_AT:0:19}Z") || EXPIRES_EPOCH=""
+            if [ -n "$EXPIRES_EPOCH" ] && [ -n "${BASH_REMATCH[3]}" ]; then
+              OFFSET_SECONDS=$((10#${BASH_REMATCH[4]} * 3600 + 10#${BASH_REMATCH[5]} * 60))
+              if [ "${BASH_REMATCH[3]}" = "+" ]; then
+                EXPIRES_EPOCH=$((EXPIRES_EPOCH - OFFSET_SECONDS))
+              else
+                EXPIRES_EPOCH=$((EXPIRES_EPOCH + OFFSET_SECONDS))
+              fi
+            fi
           fi
           if [ -z "$EXPIRES_EPOCH" ]; then
-            echo "::warning::Ignoring expires-at '$(printable "$EXPIRES_AT")': expected UTC ISO 8601 such as 2026-10-27T12:00:00Z (fractional seconds and +00:00 are accepted)"
+            echo "::warning::Ignoring expires-at '$(printable "$EXPIRES_AT")': expected ISO 8601 such as 2026-10-27T12:00:00Z (fractional seconds and a +hh:mm offset are accepted)"
           else
             EXPIRES_TEXT=""
             while IFS= read -r ZONE; do

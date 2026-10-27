@@ -150,10 +150,23 @@ for (const value of ["2026-10-27T12:00:00.000Z", "2026-10-27T12:00:00.123456Z", 
   });
 }
 
-test("preview-comment: skips an expires-at in a non-UTC offset with a warning", async (context) => {
-  const { output, stdout } = await buildComment(context, { EXPIRES_AT: "2026-10-27T21:00:00+09:00" });
+for (const [value, row] of [
+  ["2026-10-27T21:00:00+09:00", "2026-10-27 12:00 UTC"],
+  ["2026-10-27T05:00:00-07:00", "2026-10-27 12:00 UTC"],
+  ["2026-10-27T21:30:00.250+09:30", "2026-10-27 12:00 UTC"],
+  ["2026-10-28T01:00:00+13:00", "2026-10-27 12:00 UTC"],
+]) {
+  test(`preview-comment: converts the offset of ${value} to the instant it denotes`, async (context) => {
+    const { output, stdout } = await buildComment(context, { EXPIRES_AT: value });
+    assert.equal(expiresRow(output), `| Expires | ${row} |`);
+    assert.doesNotMatch(stdout, /::warning::/);
+  });
+}
+
+test("preview-comment: skips an offset that is not hours and minutes with a warning", async (context) => {
+  const { output, stdout } = await buildComment(context, { EXPIRES_AT: "2026-10-27T21:00:00+9" });
   assert.equal(expiresRow(output), undefined);
-  assert.match(stdout, /::warning::.*2026-10-27T21:00:00\+09:00/);
+  assert.match(stdout, /::warning::.*2026-10-27T21:00:00\+9/);
 });
 
 test("preview-comment: skips a malformed expires-at with a warning instead of failing the step", async (context) => {
