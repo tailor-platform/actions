@@ -48,7 +48,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24.21.0
+          node-version: 26.12.1
 
       - name: Run unit tests
         run: node --test lockfile-audit-fix/*.test.mjs
@@ -69,7 +69,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24.21.0
+          node-version: 26.12.1
 
       - name: Build a fixture with no known-vulnerable dependencies
         id: fixture
@@ -121,7 +121,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24.21.0
+          node-version: 26.12.1
 
       - name: Build a fixture with a known-fixable advisory
         id: fixture
@@ -184,7 +184,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24.21.0
+          node-version: 26.12.1
 
       - name: Build a fixture with a stale minimumReleaseAgeExclude disjunction entry
         id: fixture
