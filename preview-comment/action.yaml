@@ -18,6 +18,20 @@ inputs:
     description: Application URL of the deployed preview workspace
     required: false
     default: ""
+  timezones:
+    description: >-
+      IANA timezone names (e.g. Asia/Tokyo) in which to show the expiry,
+      separated by commas or newlines. The expiry is shown once per timezone,
+      one under the other in the order given. A name that is not a known timezone is skipped with a
+      warning; when none is valid, UTC is used. Only used when the workspace has an expiry.
+    required: false
+    default: UTC
+  working-directory:
+    description: >-
+      Working directory the tailor CLI is run from to read the expiry (for
+      monorepo setups). Same as the one given to preview-deploy.
+    required: false
+    default: "."
   github-token:
     description: GitHub token with pull-requests:write permission
     required: true
@@ -32,6 +46,39 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Read workspace expiry
+      id: read-expiry
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        WORKSPACE_ID: ${{ inputs.workspace-id }}
+        STATUS: ${{ inputs.status }}
+      run: |
+        EXPIRES_AT=""
+        if [ "$STATUS" = "deleted" ]; then
+          :
+        elif [ -z "${TAILOR_RUN:-}" ]; then
+          echo "::notice::No tailor runner was set up in this job — the comment will not show when the preview workspace expires"
+        elif GET_OUTPUT=$($TAILOR_RUN tailor workspace get --workspace-id "$WORKSPACE_ID" --json); then
+          # `expiresAt` can also be null, "invalid" or "unavailable", none of which is a date,
+          # and a value with a line break would split the single-line output below.
+          EXPIRES_AT=$(printf '%s' "$GET_OUTPUT" |
+            jq -r '(.expiresAt // "") | select(test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]+)?Z$"))') || EXPIRES_AT=""
+        else
+          echo "::warning::Could not read the expiry of preview workspace $WORKSPACE_ID — the comment will not show it"
+        fi
+        echo "expires-at=$EXPIRES_AT" >> "$GITHUB_OUTPUT"
+
+    - name: Format expiry
+      id: expiry
+      if: steps.read-expiry.outputs.expires-at != ''
+      shell: bash
+      env:
+        EXPIRES_AT: ${{ steps.read-expiry.outputs.expires-at }}
+        TIMEZONES: ${{ inputs.timezones }}
+        STATUS: ${{ inputs.status }}
+      run: node "${{ github.action_path }}/expiry.mjs"
+
     - name: Build comment body
       id: build
       shell: bash
@@ -42,6 +89,7 @@ runs:
         WORKSPACE_NAME: ${{ inputs.workspace-name }}
         STATUS: ${{ inputs.status }}
         APP_URL: ${{ inputs.app-url }}
+        EXPIRES_ROW: ${{ steps.expiry.outputs.row }}
         MENTION_ENABLED: ${{ inputs.mention }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
         PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -79,6 +127,8 @@ runs:
 
         TABLE="| | |"$'\n'"|---|---|"$'\n'"| Workspace ID | \`${WORKSPACE_ID}\` |"$'\n'"| Status | ${EMOJI} ${STATUS_TEXT} |"
         [ -n "$APP_URL" ] && TABLE="${TABLE}"$'\n'"| App URL | <${APP_URL}> |"
+
+        [ -n "$EXPIRES_ROW" ] && TABLE="${TABLE}"$'\n'"${EXPIRES_ROW}"
 
         if [ -n "$MENTION_USER" ]; then
           FOOTER="${MENTION_USER} — ${STATUS_TEXT}. [View run](${RUN_URL})"

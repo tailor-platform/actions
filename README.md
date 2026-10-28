@@ -324,6 +324,7 @@ jobs:
           workspace-name-prefix: my-app
           region: us-west
           organization-id: ${{ vars.TAILOR_PLATFORM_ORGANIZATION_ID }}
+          ttl: 7d
           platform-client-id: ${{ secrets.TAILOR_PLATFORM_MACHINE_USER_CLIENT_ID }}
           platform-client-secret: ${{ secrets.TAILOR_PLATFORM_MACHINE_USER_CLIENT_SECRET }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -333,6 +334,7 @@ jobs:
           workspace-name: ${{ steps.preview.outputs.workspace-name }}
           status: ${{ job.status }}
           app-url: ${{ steps.preview.outputs.app-url }}
+          timezones: UTC,Asia/Tokyo
           github-token: ${{ secrets.GITHUB_TOKEN }}
           mention: "true"
 ```
@@ -365,7 +367,9 @@ jobs:
 
 ### [`preview-comment`](preview-comment/action.yaml)
 
-Post or update a PR comment with preview deployment status, workspace ID, app URL, and optional @mention. Typically called after `preview-deploy`. The comment is keyed by workspace name so multiple preview environments can coexist on one PR.
+Post or update a PR comment with preview deployment status, workspace ID, app URL, expiry, and optional @mention. Typically called after `preview-deploy`. The comment is keyed by workspace name so multiple preview environments can coexist on one PR.
+
+When the workspace has an expiry (`ttl` given to `preview-deploy`), the comment gains an `Expires` row that lists it once per timezone, one under the other. `timezones: UTC,Asia/Tokyo` gives the cell `2026-10-27 12:00 UTC` and, on the next line, `2026-10-27 21:00 Asia/Tokyo`. The comment is rebuilt on every push, so the row follows the expiry that each push restarts. `preview-comment` reads the expiry itself with `tailor workspace get --json` (CLI 2.16.0 or later), using the `tailor` runner and login that `preview-deploy` set up earlier in the same job; without them, or for a workspace with no expiry, the row is left out. No row is shown when `status` is `deleted`.
 
 #### Inputs
 
@@ -375,6 +379,8 @@ Post or update a PR comment with preview deployment status, workspace ID, app UR
 | `workspace-name` | Yes | | Workspace name (from `preview-deploy` output) |
 | `status` | Yes | | Deployment status: `success`, `failure`, or `deleted` |
 | `app-url` | No | | Application URL to show in the comment |
+| `working-directory` | No | `.` | Working directory the `tailor` CLI is run from to read the expiry (for monorepo setups). Same as the one given to `preview-deploy`. |
+| `timezones` | No | `UTC` | IANA timezone names to show the expiry in, separated by commas or newlines, shown one under the other in the order given (e.g. `UTC,Asia/Tokyo`). An unknown name is skipped with a warning; if none is valid, `UTC` is used. Only used when the workspace has an expiry. |
 | `github-token` | Yes | | GitHub token with `pull-requests: write` |
 | `mention` | No | | Set to `"true"` to @mention the commit author (falls back to PR author if commit is by a bot) |
 
