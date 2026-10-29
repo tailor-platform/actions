@@ -1,3 +1,3 @@
 [tools]
 actionlint = "latest"
-node = "v25.9.0"
+node = "26.13.0"
