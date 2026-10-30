@@ -109,7 +109,7 @@ The [`tailor setup`](https://github.com/tailor-platform/sdk) command generates a
 
 ### [`plan`](plan/action.yaml)
 
-Show planned changes by running dry-run against the target workspace. Merges the base branch and runs `tailor deploy --dry-run`, then comments the result on the PR.
+Show planned changes by running dry-run against the target workspace. Merges the base branch and runs `tailor deploy --dry-run`, then comments the result on the PR. The dry-run output is also printed to the job log.
 
 The action targets the workspace by `workspace-id` only. When `workspace-id` is empty (workspace not yet provisioned), the action skips the dry-run and reports that the workspace is not provisioned yet — the job succeeds. This covers the chicken-and-egg situation of running `plan` on a PR before the first deploy.
 
