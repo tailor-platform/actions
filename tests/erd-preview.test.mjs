@@ -27,6 +27,8 @@ const withoutThirdPartyShas = (action) => ({
   },
 });
 
+const thirdPartyUses = (action) => action.runs.steps.map((step) => step.uses).filter((uses) => uses && !uses.startsWith("tailor-platform/actions/"));
+
 function outputValue(source, name) {
   const lines = source.split("\n");
   const start = lines.findIndex((line) => line.startsWith(`${name}<<`));
@@ -143,6 +145,12 @@ test("public ERD actions pin the GHES-capable internal definitions", async () =>
     const { stdout } = await executeFile("git", ["show", `${sha}:_internal/${internal}/action.yaml`], { cwd: root });
     const local = parse(await fs.readFile(path.join(root, `_internal/${internal}/action.yaml`), "utf8"));
     assert.deepEqual(withoutThirdPartyShas(parse(stdout)), withoutThirdPartyShas(local), `${internal} must use the verified implementation`);
+    const pinnedUses = thirdPartyUses(parse(stdout));
+    for (const [index, uses] of thirdPartyUses(local).entries()) {
+      if (uses !== pinnedUses[index]) {
+        console.log(`::warning file=_internal/${internal}/action.yaml::consumers still run ${pinnedUses[index]} from the pinned ${sha.slice(0, 7)}; the working tree has ${uses}. Bump the _internal pins to pick it up.`);
+      }
+    }
   }
 });
 
