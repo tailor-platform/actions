@@ -11,7 +11,7 @@ Create or reuse a per-PR workspace, then deploy the application and its frontend
 | `app-url` | String | **Deprecated**, will be removed in the next major version. Backend application URL (GraphQL endpoint), or an empty string if unavailable. |
 | `frontend-urls` | JSON object string | **Deprecated**, will be removed in the next major version. Static website URLs keyed by site name, for example `{"web":"https://web.example.com"}`. |
 
-`frontend-urls` lists all static websites in the preview workspace after deployment, including sites from comma-separated `TAILOR_PLATFORM_SDK_CONFIG_PATH` configs and existing sites. It is `{}` when no static websites exist and does not depend on `deployedHooks`. See [deploy output behavior](../deploy/README.md#outputs) for details.
+`frontend-urls` lists all static websites in the preview workspace after deployment, including sites from comma-separated `TAILOR_CONFIG_PATH` configs and existing sites. It is `{}` when no static websites exist and does not depend on `deployedHooks`. See [deploy output behavior](../deploy/README.md#outputs) for details.
 
 ## Use a frontend URL in a later job
 

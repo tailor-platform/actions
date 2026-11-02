@@ -32,7 +32,7 @@ appendFileSync(process.env.MOCK_CALLS, JSON.stringify({
   args,
   cwd: process.cwd(),
   workspace: process.env.TAILOR_PLATFORM_WORKSPACE_ID,
-  config: process.env.TAILOR_PLATFORM_SDK_CONFIG_PATH,
+  config: process.env.TAILOR_CONFIG_PATH,
 }) + "\\n");
 if (args[0] !== "tailor") process.exit(2);
 if (args[1] === "deploy") {
@@ -87,7 +87,7 @@ process.exit(2);
       ...process.env,
       TAILOR_RUN: `node ${runner}`,
       TAILOR_PLATFORM_WORKSPACE_ID: "workspace-123",
-      TAILOR_PLATFORM_SDK_CONFIG_PATH: options.config ?? "tailor.config.ts",
+      TAILOR_CONFIG_PATH: options.config ?? "tailor.config.ts",
       GITHUB_OUTPUT: outputFile,
       MOCK_CALLS: callsFile,
       MOCK_DEPLOY_STATUS: String(options.deployStatus ?? 0),
