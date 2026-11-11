@@ -32,7 +32,7 @@ outputs:
     description: Tailor Platform workspace ID
     value: ${{ inputs.workspace-id }}
   app-urls:
-    description: JSON object mapping all application names in the workspace to their GraphQL endpoint URLs; {} when none exist
+    description: JSON object mapping all application names in the workspace to their base URLs; {} when none exist
     value: ${{ steps.applications.outputs.app-urls }}
   app-url:
     description: Deprecated; will be removed in the next major version. Application URL (GraphQL endpoint) of the deployed workspace
