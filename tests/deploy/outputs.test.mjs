@@ -314,11 +314,12 @@ for (const actionName of ["deploy", "preview-deploy"]) {
     ["application JSON is invalid", { applicationsRaw: "not JSON" }],
     ["application JSON is empty", { applicationsRaw: "" }],
   ]) {
-    test(`${actionName}: fails without app-urls when ${name}`, async (context) => {
+    test(`${actionName}: warns and returns an empty application map when ${name}`, async (context) => {
       const result = await runDeploy(context, actionName, options);
-      assert.notEqual(result.code, 0);
-      assert.equal(result.outputs["app-urls"], undefined);
-      assert.equal(result.outputs["frontend-urls"], undefined);
+      assert.equal(result.code, 0, result.stderr);
+      assert.equal(result.outputs["app-urls"], "{}");
+      assert.match(result.stdout, /::warning::Could not resolve application URLs/);
+      assert.equal(result.outputs["frontend-urls"], "{}");
     });
   }
 }

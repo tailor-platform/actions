@@ -76,8 +76,13 @@ runs:
       env:
         TAILOR_PLATFORM_WORKSPACE_ID: ${{ inputs.workspace-id }}
       run: |
-        APPLICATIONS=$($TAILOR_RUN tailor workspace app list --limit 0 --json)
-        APP_URLS=$(printf '%s\n' "$APPLICATIONS" | jq -ce 'map({key: .name, value: ("https://" + .domain)}) | from_entries')
+        if APPLICATIONS=$($TAILOR_RUN tailor workspace app list --limit 0 --json) &&
+          APP_URLS=$(printf '%s\n' "$APPLICATIONS" | jq -ce 'map({key: .name, value: ("https://" + .domain)}) | from_entries'); then
+          :
+        else
+          echo "::warning::Could not resolve application URLs; deployment succeeded but app-urls is unavailable"
+          APP_URLS='{}'
+        fi
         printf 'app-urls=%s\n' "$APP_URLS" >> "$GITHUB_OUTPUT"
 
     - name: Resolve frontend URLs
