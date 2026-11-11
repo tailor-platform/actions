@@ -88,6 +88,7 @@ jobs:
 |------|-------------|
 | `workspace-id` | Workspace ID passed in |
 | `app-urls` | JSON object mapping every application name in the workspace to its base URL, for example `{"core":"https://core.example.com","portal":"https://portal.example.com"}`. `{}` when there are no applications. |
+| `console-urls` | JSON object mapping application names to Console URLs; `{}` when unavailable. Uses `TAILOR_PLATFORM_CONSOLE_URL`, otherwise the origin of `TAILOR_PLATFORM_URL` with its first hostname label replaced by `console`, otherwise `https://console.tailor.tech`. No additional API lookup. |
 | `app-url` | **Deprecated**, will be removed in the next major version. Application URL (GraphQL endpoint) of the deployed workspace. Available to subsequent steps, e.g. for passing to a static website build slot. |
 | `frontend-urls` | **Deprecated**, will be removed in the next major version. JSON object mapping all static website names in the workspace to URLs, e.g. `{"web":"https://web.example.com"}`. `{}` when no static websites exist. |
 
@@ -335,6 +336,7 @@ jobs:
           workspace-name: ${{ steps.preview.outputs.workspace-name }}
           status: ${{ job.status }}
           app-urls: ${{ steps.preview.outputs.app-urls }}
+          console-urls: ${{ steps.preview.outputs.console-urls }}
           timezones: UTC,Asia/Tokyo
           github-token: ${{ secrets.GITHUB_TOKEN }}
           mention: "true"
@@ -362,6 +364,7 @@ jobs:
 | `workspace-id` | Workspace ID of the preview deployment |
 | `workspace-name` | Full workspace name (e.g. `my-app-pr-42`) |
 | `app-urls` | JSON object mapping every application name in the workspace to its base URL, for example `{"core":"https://core.example.com","portal":"https://portal.example.com"}`. `{}` when there are no applications. |
+| `console-urls` | JSON object mapping application names to Console URLs; `{}` when unavailable. Uses `TAILOR_PLATFORM_CONSOLE_URL`, otherwise the origin of `TAILOR_PLATFORM_URL` with its first hostname label replaced by `console`, otherwise `https://console.tailor.tech`. No additional API lookup. |
 | `app-url` | **Deprecated**, will be removed in the next major version. Application URL (GraphQL endpoint) of the preview workspace |
 | `frontend-urls` | **Deprecated**, will be removed in the next major version. JSON object mapping all static website names in the workspace to URLs, e.g. `{"web":"https://web.example.com"}`. `{}` when no static websites exist. |
 
@@ -381,6 +384,7 @@ When the workspace has an expiry (`ttl` given to `preview-deploy`), the comment 
 | `workspace-name` | Yes | | Workspace name (from `preview-deploy` output) |
 | `status` | Yes | | Deployment status: `success`, `failure`, or `deleted` |
 | `app-urls` | No | `{}` | Application names mapped to URLs as a JSON object. Shows one named row per application; takes precedence over `app-url` when non-empty. |
+| `console-urls` | No | `{}` | Application names mapped to Console URLs as a JSON object. Adds one `Console URL (name)` row per application. |
 | `app-url` | No | | Application URL to show when `app-urls` is empty |
 | `working-directory` | No | `.` | Working directory the `tailor` CLI is run from to read the expiry (for monorepo setups). Same as the one given to `preview-deploy`. |
 | `timezones` | No | `UTC` | IANA timezone names to show the expiry in, separated by commas or newlines, shown one under the other in the order given (e.g. `UTC,Asia/Tokyo`). An unknown name is skipped with a warning; if none is valid, `UTC` is used. Only used when the workspace has an expiry. |

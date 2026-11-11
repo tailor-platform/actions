@@ -18,6 +18,10 @@ inputs:
     description: JSON object mapping application names to URLs; takes precedence over app-url when non-empty
     required: false
     default: "{}"
+  console-urls:
+    description: JSON object mapping application names to Console URLs; shows one named row per application
+    required: false
+    default: "{}"
   app-url:
     description: Application URL of the deployed preview workspace
     required: false
@@ -92,6 +96,7 @@ runs:
         WORKSPACE_ID: ${{ inputs.workspace-id }}
         WORKSPACE_NAME: ${{ inputs.workspace-name }}
         STATUS: ${{ inputs.status }}
+        CONSOLE_URLS: ${{ inputs.console-urls }}
         APP_URLS: ${{ inputs.app-urls }}
         APP_URL: ${{ inputs.app-url }}
         EXPIRES_ROW: ${{ steps.expiry.outputs.row }}
@@ -139,6 +144,13 @@ runs:
           TABLE="${TABLE}"$'\n'"${APP_ROWS}"
         elif [ -n "$APP_URL" ]; then
           TABLE="${TABLE}"$'\n'"| App URL | <${APP_URL}> |"
+        fi
+
+        if [ -n "$CONSOLE_URLS" ]; then
+          CONSOLE_ROWS=$(printf '%s\n' "$CONSOLE_URLS" | jq -r 'to_entries | map("| Console URL (\(.key)) | <\(.value)> |") | join("\n")')
+          if [ -n "$CONSOLE_ROWS" ]; then
+            TABLE="${TABLE}"$'\n'"${CONSOLE_ROWS}"
+          fi
         fi
 
         [ -n "$EXPIRES_ROW" ] && TABLE="${TABLE}"$'\n'"${EXPIRES_ROW}"

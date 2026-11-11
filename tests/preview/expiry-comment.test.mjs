@@ -146,6 +146,7 @@ for (const urls of ["", "{}"]) {
 test("preview-comment: omits application rows when neither URL input has URLs", async (context) => {
   const { output } = await buildComment(context, { APP_URLS: "{}", APP_URL: "" });
   assert.doesNotMatch(output, /\| App URL/);
+  assert.doesNotMatch(output, /\| Console URL/);
 });
 
 test("preview-comment: fails when app-urls is invalid JSON", async (context) => {
@@ -157,4 +158,18 @@ test("preview-comment: fails when app-urls is invalid JSON", async (context) => 
   });
   assert.notEqual(result.code, 0);
   assert.equal(result.output, "");
+});
+test("preview-comment: adds console links alongside application URLs", async (context) => {
+  const { output, step } = await buildComment(context, {
+    CONSOLE_URLS: JSON.stringify({ core: "https://console.tailor.tech/workspaces/id/services/applications/core" }),
+  });
+  assert.equal(step.env.CONSOLE_URLS, "${{ inputs.console-urls }}");
+  assert.match(output, /\| Console URL \(core\) \| <https:\/\/console.tailor.tech\/workspaces\/id\/services\/applications\/core> \|/);
+  assert.match(output, /\| App URL \|/);
+});
+
+test("preview-comment: console URLs are optional", async () => {
+  const action = await loadAction("preview-comment");
+  assert.equal(action.inputs["console-urls"].required, false);
+  assert.equal(action.inputs["console-urls"].default, "{}");
 });

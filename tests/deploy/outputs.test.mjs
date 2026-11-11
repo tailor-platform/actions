@@ -95,6 +95,8 @@ process.exit(2);
     env: {
       ...process.env,
       TAILOR_RUN: `node ${runner}`,
+      TAILOR_PLATFORM_CONSOLE_URL: options.consoleUrl ?? "",
+      TAILOR_PLATFORM_URL: options.platformUrl ?? "",
       TAILOR_PLATFORM_WORKSPACE_ID: "workspace-123",
       TAILOR_CONFIG_PATH: options.config ?? "tailor.config.ts",
       GITHUB_OUTPUT: outputFile,
@@ -159,7 +161,7 @@ for (const actionName of actions) {
     const url = 'https://web.example.com/?x="quoted"&y=1\nother=bad';
     const result = await runDeploy(context, actionName, { websites: [{ name, url }] });
     assert.equal(result.code, 0, result.stderr);
-    assert.equal(result.output.trimEnd().split("\n").length, 3);
+    assert.equal(result.output.trimEnd().split("\n").length, actionName === "_internal/deploy" ? 3 : 4);
     assert.deepEqual(JSON.parse(result.outputs["frontend-urls"]), { [name]: url });
   });
 
@@ -306,7 +308,7 @@ for (const actionName of ["deploy", "preview-deploy"]) {
     assert.equal(result.code, 0, result.stderr);
     assert.deepEqual(JSON.parse(result.outputs["app-urls"]), { [name]: `https://${domain}` });
     assert.equal(result.outputs["forged-output"], undefined);
-    assert.equal(result.output.trimEnd().split("\n").length, 3);
+    assert.equal(result.output.trimEnd().split("\n").length, 4);
   });
 
   for (const [name, options] of [
@@ -320,6 +322,35 @@ for (const actionName of ["deploy", "preview-deploy"]) {
       assert.equal(result.outputs["app-urls"], "{}");
       assert.match(result.stdout, /::warning::Could not resolve application URLs/);
       assert.equal(result.outputs["frontend-urls"], "{}");
+    });
+  }
+}
+
+for (const actionName of ["deploy", "preview-deploy"]) {
+  for (const [label, options, base] of [
+    ["default", {}, "https://console.tailor.tech"],
+    ["platform host", { platformUrl: "https://api.dev.example.com:8443/rpc" }, "https://console.dev.example.com:8443"],
+    ["explicit override", { consoleUrl: "https://custom.example.com/root/", platformUrl: "invalid" }, "https://custom.example.com"],
+  ]) {
+    test(`${actionName}: builds console URLs with ${label} without another lookup`, async (context) => {
+      const result = await runDeploy(context, actionName, { ...options, applications: [{ name: "core /?#", domain: "core.example.com" }] });
+      assert.equal(result.code, 0, result.stderr);
+      assert.deepEqual(JSON.parse(result.outputs["console-urls"] ?? "null"), {
+        "core /?#": `${base}/workspaces/workspace-123/services/applications/core%20%2F%3F%23`,
+      });
+      assert.equal(result.action.outputs["console-urls"].value, "${{ steps.applications.outputs.console-urls }}");
+      assert.equal(result.calls.length, 4);
+    });
+  }
+  for (const options of [{}, { appListStatus: 7 }, { consoleUrl: "invalid", applications: [{ name: "core", domain: "core.example.com" }] }]) {
+    test(`${actionName}: returns empty console URLs for ${JSON.stringify(options)}`, async (context) => {
+      const result = await runDeploy(context, actionName, options);
+      assert.equal(result.code, 0, result.stderr);
+      assert.equal(result.outputs["console-urls"], "{}");
+      if (options.consoleUrl) {
+        assert.match(result.stdout, /::warning::Could not resolve console URLs/);
+        assert.deepEqual(JSON.parse(result.outputs["app-urls"]), { core: "https://core.example.com" });
+      }
     });
   }
 }

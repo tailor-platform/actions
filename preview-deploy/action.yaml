@@ -69,6 +69,9 @@ outputs:
   app-urls:
     description: JSON object mapping all application names in the workspace to their base URLs; {} when none exist
     value: ${{ steps.applications.outputs.app-urls }}
+  console-urls:
+    description: JSON object mapping application names to Console URLs; {} when unavailable
+    value: ${{ steps.applications.outputs.console-urls }}
   app-url:
     description: Deprecated; will be removed in the next major version. Application URL (GraphQL endpoint) of the preview workspace
     value: ${{ steps.deploy.outputs.app-url }}
@@ -186,6 +189,29 @@ runs:
           APP_URLS='{}'
         fi
         printf 'app-urls=%s\n' "$APP_URLS" >> "$GITHUB_OUTPUT"
+
+        if CONSOLE_URLS=$(APP_URLS="$APP_URLS" node <<'NODE'
+        let base = process.env.TAILOR_PLATFORM_CONSOLE_URL;
+        if (!base && process.env.TAILOR_PLATFORM_URL) {
+          const platform = new URL(process.env.TAILOR_PLATFORM_URL);
+          platform.hostname = platform.hostname.replace(/^[^.]+/, "console");
+          base = platform.origin;
+        }
+        base ||= "https://console.tailor.tech";
+        const workspace = encodeURIComponent(process.env.TAILOR_PLATFORM_WORKSPACE_ID);
+        const urls = Object.fromEntries(Object.keys(JSON.parse(process.env.APP_URLS)).map(name => [
+          name,
+          new URL(`/workspaces/${workspace}/services/applications/${encodeURIComponent(name)}`, base).href,
+        ]));
+        console.log(JSON.stringify(urls));
+        NODE
+        ); then
+          :
+        else
+          echo "::warning::Could not resolve console URLs; deployment succeeded but console-urls is unavailable"
+          CONSOLE_URLS='{}'
+        fi
+        printf 'console-urls=%s\n' "$CONSOLE_URLS" >> "$GITHUB_OUTPUT"
 
     - name: Resolve frontend URLs
       id: frontends
