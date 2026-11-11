@@ -31,6 +31,9 @@ outputs:
   workspace-id:
     description: Tailor Platform workspace ID
     value: ${{ inputs.workspace-id }}
+  app-urls:
+    description: JSON object mapping all application names in the workspace to their GraphQL endpoint URLs; {} when none exist
+    value: ${{ steps.applications.outputs.app-urls }}
   app-url:
     description: Deprecated; will be removed in the next major version. Application URL (GraphQL endpoint) of the deployed workspace
     value: ${{ steps.deploy.outputs.app-url }}
@@ -65,6 +68,17 @@ runs:
       with:
         workspace-id: ${{ inputs.workspace-id }}
         working-directory: ${{ inputs.working-directory }}
+
+    - name: Resolve application URLs
+      id: applications
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        TAILOR_PLATFORM_WORKSPACE_ID: ${{ inputs.workspace-id }}
+      run: |
+        APPLICATIONS=$($TAILOR_RUN tailor workspace app list --limit 0 --json)
+        APP_URLS=$(printf '%s\n' "$APPLICATIONS" | jq -ce 'map({key: .name, value: ("https://" + .domain)}) | from_entries')
+        printf 'app-urls=%s\n' "$APP_URLS" >> "$GITHUB_OUTPUT"
 
     - name: Resolve frontend URLs
       id: frontends

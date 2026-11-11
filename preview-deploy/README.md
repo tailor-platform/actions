@@ -8,10 +8,15 @@ Create or reuse a per-PR workspace, then deploy the application and its frontend
 |------|-------|-------------|
 | `workspace-id` | String | Workspace ID of the preview deployment. |
 | `workspace-name` | String | Full workspace name, for example `my-app-pr-42`. |
+| `app-urls` | JSON object string | All application URLs in the workspace, keyed by application name, for example `{"core":"https://core.example.com","portal":"https://portal.example.com"}`. `{}` when there are no applications. |
 | `app-url` | String | **Deprecated**, will be removed in the next major version. Backend application URL (GraphQL endpoint), or an empty string if unavailable. |
 | `frontend-urls` | JSON object string | **Deprecated**, will be removed in the next major version. Static website URLs keyed by site name, for example `{"web":"https://web.example.com"}`. |
 
+`app-urls` includes every application in the workspace after deployment, including existing applications and all apps from comma-separated `TAILOR_CONFIG_PATH` configs. The lookup does not load a config file and fetches all pages. A failed application lookup fails the action. Read one URL with `fromJSON(steps.deploy.outputs.app-urls)['core']`, replacing `deploy` with your deployment step ID and `core` with your application name.
+
 `frontend-urls` lists all static websites in the preview workspace after deployment, including sites from comma-separated `TAILOR_CONFIG_PATH` configs and existing sites. It is `{}` when no static websites exist and does not depend on `deployedHooks`. See [deploy output behavior](../deploy/README.md#outputs) for details.
+
+Pass `app-urls: ${{ steps.preview.outputs.app-urls }}` to `preview-comment` to display one named URL row per application. Existing callers passing only `app-url` keep their single URL row.
 
 ## Use a frontend URL in a later job
 

@@ -123,3 +123,38 @@ test("preview-comment: gives an empty expiry with a notice when no tailor runner
   assert.equal(outputValue(result.output, "expires-at"), "");
   assert.match(result.stdout, /::notice::/);
 });
+
+test("preview-comment: shows every named application URL instead of the legacy single URL", async (context) => {
+  const { output, step } = await buildComment(context, {
+    APP_URLS: JSON.stringify({ core: "https://core.example.com", portal: "https://portal.example.com" }),
+    EXPIRES_ROW: expiresRow,
+  });
+  assert.equal(step.env.APP_URLS, "${{ inputs.app-urls }}");
+  assert.match(output, /\| App URL \(core\) \| <https:\/\/core\.example\.com> \|/);
+  assert.match(output, /\| App URL \(portal\) \| <https:\/\/portal\.example\.com> \|/);
+  assert.doesNotMatch(output, /\| App URL \|/);
+  assert.equal(output.split("\n").filter((line) => line.startsWith("| ")).at(-1), expiresRow);
+});
+
+for (const urls of ["", "{}"]) {
+  test(`preview-comment: keeps the legacy URL when app-urls is ${JSON.stringify(urls)}`, async (context) => {
+    const { output } = await buildComment(context, { APP_URLS: urls });
+    assert.match(output, /\| App URL \| <https:\/\/app\.example\.com> \|/);
+  });
+}
+
+test("preview-comment: omits application rows when neither URL input has URLs", async (context) => {
+  const { output } = await buildComment(context, { APP_URLS: "{}", APP_URL: "" });
+  assert.doesNotMatch(output, /\| App URL/);
+});
+
+test("preview-comment: fails when app-urls is invalid JSON", async (context) => {
+  const action = await loadAction("preview-comment");
+  const result = await runStep(context, {
+    action,
+    stepId: "build",
+    env: { ...commentEnv, APP_URLS: "not JSON" },
+  });
+  assert.notEqual(result.code, 0);
+  assert.equal(result.output, "");
+});

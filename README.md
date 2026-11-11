@@ -87,6 +87,7 @@ jobs:
 | Name | Description |
 |------|-------------|
 | `workspace-id` | Workspace ID passed in |
+| `app-urls` | JSON object mapping every application name in the workspace to its GraphQL endpoint URL, for example `{"core":"https://core.example.com","portal":"https://portal.example.com"}`. `{}` when there are no applications. |
 | `app-url` | **Deprecated**, will be removed in the next major version. Application URL (GraphQL endpoint) of the deployed workspace. Available to subsequent steps, e.g. for passing to a static website build slot. |
 | `frontend-urls` | **Deprecated**, will be removed in the next major version. JSON object mapping all static website names in the workspace to URLs, e.g. `{"web":"https://web.example.com"}`. `{}` when no static websites exist. |
 
@@ -333,7 +334,7 @@ jobs:
           workspace-id: ${{ steps.preview.outputs.workspace-id }}
           workspace-name: ${{ steps.preview.outputs.workspace-name }}
           status: ${{ job.status }}
-          app-url: ${{ steps.preview.outputs.app-url }}
+          app-urls: ${{ steps.preview.outputs.app-urls }}
           timezones: UTC,Asia/Tokyo
           github-token: ${{ secrets.GITHUB_TOKEN }}
           mention: "true"
@@ -360,6 +361,7 @@ jobs:
 |------|-------------|
 | `workspace-id` | Workspace ID of the preview deployment |
 | `workspace-name` | Full workspace name (e.g. `my-app-pr-42`) |
+| `app-urls` | JSON object mapping every application name in the workspace to its GraphQL endpoint URL, for example `{"core":"https://core.example.com","portal":"https://portal.example.com"}`. `{}` when there are no applications. |
 | `app-url` | **Deprecated**, will be removed in the next major version. Application URL (GraphQL endpoint) of the preview workspace |
 | `frontend-urls` | **Deprecated**, will be removed in the next major version. JSON object mapping all static website names in the workspace to URLs, e.g. `{"web":"https://web.example.com"}`. `{}` when no static websites exist. |
 
@@ -367,7 +369,7 @@ jobs:
 
 ### [`preview-comment`](preview-comment/action.yaml)
 
-Post or update a PR comment with preview deployment status, workspace ID, app URL, expiry, and optional @mention. Typically called after `preview-deploy`. The comment is keyed by workspace name so multiple preview environments can coexist on one PR.
+Post or update a PR comment with preview deployment status, workspace ID, application URLs, expiry, and optional @mention. Typically called after `preview-deploy`. The comment is keyed by workspace name so multiple preview environments can coexist on one PR.
 
 When the workspace has an expiry (`ttl` given to `preview-deploy`), the comment gains an `Expires` row that lists it once per timezone, one under the other. `timezones: UTC,Asia/Tokyo` gives the cell `2026-10-27 12:00 UTC` and, on the next line, `2026-10-27 21:00 Asia/Tokyo`. The comment is rebuilt on every push, so the row follows the expiry that each push restarts. `preview-comment` reads the expiry itself with `tailor workspace get --json` (CLI 2.16.0 or later), using the `tailor` runner and login that `preview-deploy` set up earlier in the same job; without them, or for a workspace with no expiry, the row is left out. No row is shown when `status` is `deleted`.
 
@@ -378,7 +380,8 @@ When the workspace has an expiry (`ttl` given to `preview-deploy`), the comment 
 | `workspace-id` | Yes | | Workspace ID of the preview deployment |
 | `workspace-name` | Yes | | Workspace name (from `preview-deploy` output) |
 | `status` | Yes | | Deployment status: `success`, `failure`, or `deleted` |
-| `app-url` | No | | Application URL to show in the comment |
+| `app-urls` | No | `{}` | Application names mapped to URLs as a JSON object. Shows one named row per application; takes precedence over `app-url` when non-empty. |
+| `app-url` | No | | Application URL to show when `app-urls` is empty |
 | `working-directory` | No | `.` | Working directory the `tailor` CLI is run from to read the expiry (for monorepo setups). Same as the one given to `preview-deploy`. |
 | `timezones` | No | `UTC` | IANA timezone names to show the expiry in, separated by commas or newlines, shown one under the other in the order given (e.g. `UTC,Asia/Tokyo`). An unknown name is skipped with a warning; if none is valid, `UTC` is used. Only used when the workspace has an expiry. |
 | `github-token` | Yes | | GitHub token with `pull-requests: write` |
