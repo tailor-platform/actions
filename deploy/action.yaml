@@ -20,6 +20,13 @@ inputs:
       relying on an ambient Node, and the locally-installed version is used.
     required: false
     default: ""
+  bundle-cache:
+    description: >-
+      Restore the SDK bundle cache (.tailor/cache) with actions/cache before deploying,
+      and save it afterwards on push, workflow_dispatch, and schedule runs of a branch.
+      Set to "false" to do neither.
+    required: false
+    default: "true"
   platform-client-id:
     description: OAuth2 client ID for Tailor Platform machine user
     required: true
@@ -65,12 +72,44 @@ runs:
           exit 1
         fi
 
+    - name: Resolve bundle cache
+      id: bundle-cache
+      if: inputs.bundle-cache == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: node "$GITHUB_ACTION_PATH/../_internal/lib/bundle-cache.mjs" restore >> "$GITHUB_OUTPUT"
+
+    - name: Restore bundle cache
+      id: bundle-cache-restore
+      if: steps.bundle-cache.outputs.prefix != ''
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.bundle-cache.outputs.path }}
+        key: ${{ steps.bundle-cache.outputs.prefix }}
+
     - name: Deploy
       id: deploy
       uses: tailor-platform/actions/_internal/deploy@053ee1c31460fc04639c466e5f483ea3150a9a31
       with:
         workspace-id: ${{ inputs.workspace-id }}
         working-directory: ${{ inputs.working-directory }}
+
+    - name: Resolve bundle cache key
+      id: bundle-cache-key
+      if: ${{ !cancelled() && steps.bundle-cache.outputs.prefix != '' && startsWith(github.ref, 'refs/heads/') && contains(fromJSON('["push", "workflow_dispatch", "schedule"]'), github.event_name) }}
+      shell: bash
+      env:
+        PREFIX: ${{ steps.bundle-cache.outputs.prefix }}
+        CACHE_PATH: ${{ steps.bundle-cache.outputs.path }}
+      run: node "$GITHUB_ACTION_PATH/../_internal/lib/bundle-cache.mjs" save-key "$PREFIX" "$CACHE_PATH" >> "$GITHUB_OUTPUT"
+
+    - name: Save bundle cache
+      id: bundle-cache-save
+      if: ${{ !cancelled() && steps.bundle-cache-key.outputs.key != '' && steps.bundle-cache-key.outputs.key != steps.bundle-cache-restore.outputs.cache-matched-key }}
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.bundle-cache.outputs.path }}
+        key: ${{ steps.bundle-cache-key.outputs.key }}
 
     - name: Resolve application URLs
       id: applications

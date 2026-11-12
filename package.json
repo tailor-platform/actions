@@ -5,6 +5,7 @@
   "scripts": {
     "test": "actrun workflow run .github/workflows/test-deploy.yaml --dry-run",
     "test:deploy-outputs": "node --test tests/deploy/outputs.test.mjs",
+    "test:bundle-cache": "node --test tests/bundle-cache.test.mjs",
     "test:run": "actrun workflow run .github/workflows/test-deploy.yaml",
     "test:check-licenses": "node --test check-licenses/*.test.mjs",
     "test:lockfile-audit": "node --test lockfile-audit/*.test.mjs",
