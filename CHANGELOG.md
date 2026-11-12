@@ -1,5 +1,22 @@
 # tailor-platform-actions
 
+## 2.9.0
+
+### Minor Changes
+
+- cddaf70: Expose all workspace application base URLs from deploy and preview-deploy through app-urls. If the lookup fails, emit a warning and return {} without failing the deployment.
+  
+  Add an app-urls input to preview-comment. When non-empty, it replaces the App URL row with one named row per application, such as App URL (core). Workflows that pass only app-url need no change.
+  
+  Add console-urls to deploy and preview-deploy, building Console links from the same application list without another API lookup. Pass them to preview-comment through its new console-urls input to add a Console URL (name) row per application. Console URL generation failures emit a warning and return {} without failing the deployment.
+- fa527f1: Persist the SDK bundle cache (`.tailor/cache`) across runs with `actions/cache`, so `tailor deploy` rebuilds only the bundles whose sources changed instead of every bundle on every run. `deploy`, `plan`, and `preview-deploy` restore the cache before bundling. `deploy` and `plan` save it right after bundling, even when the deployment fails, on `push`, `workflow_dispatch`, and `schedule` runs of a branch, and only when the bundles changed; pull request runs restore the cache their base branch saved.
+  
+  This is on by default. Each saved entry counts toward the repository's Actions cache limit. On GitHub Enterprise Server, `actions/cache` must be available on the server like the other github.com actions. Set the new `bundle-cache` input to `false` to turn it off.
+
+### Patch Changes
+
+- ebabc9c: Print the dry-run output to the job log in `plan`. The output went to the step summary and, on pull requests, the PR comment, so the log of a failed plan showed nothing but `Plan dry-run failed with exit code 1`. The log now shows the CLI's error, for example `Error [WORKSPACE_NOT_FOUND]: Workspace "<id>" was not found.`, and with SDK 2.16.0 or later the run also gets the CLI's error annotation next to the `Plan dry-run failed` one.
+
 ## 2.8.0
 
 ### Minor Changes
