@@ -49,6 +49,10 @@ if (args[1] === "show") {
   process.stdout.write(process.env.MOCK_SHOW_JSON);
   process.exit(Number(process.env.MOCK_SHOW_STATUS));
 }
+if (args[1] === "workspace" && args[2] === "app" && args[3] === "list") {
+  process.stdout.write(process.env.MOCK_APPLICATIONS_JSON);
+  process.exit(Number(process.env.MOCK_APP_LIST_STATUS));
+}
 if (args[1] === "staticwebsite" && args[2] === "list") {
   process.stdout.write(process.env.MOCK_WEBSITES_JSON);
   process.exit(Number(process.env.MOCK_LIST_STATUS));
@@ -80,12 +84,19 @@ process.exit(2);
     assert.equal(step["working-directory"], "${{ inputs.working-directory }}");
     assert.equal(step.env.TAILOR_PLATFORM_WORKSPACE_ID, "${{ inputs.workspace-id }}");
   }
-  const script = [...deploySteps, frontendStep].map((step) => step.run).join("\n");
+  const applicationStep = action.runs.steps.find((step) => step.id === "applications");
+  if (applicationStep) {
+    assert.equal(applicationStep["working-directory"], "${{ inputs.working-directory }}");
+    assert.equal(applicationStep.env.TAILOR_PLATFORM_WORKSPACE_ID, frontendStep.env.TAILOR_PLATFORM_WORKSPACE_ID);
+  }
+  const script = [...deploySteps, ...(applicationStep ? [applicationStep] : []), frontendStep].map((step) => step.run).join("\n");
   const result = await execute("bash", ["--noprofile", "--norc", "-eo", "pipefail", "-c", script], {
     cwd: project,
     env: {
       ...process.env,
       TAILOR_RUN: `node ${runner}`,
+      TAILOR_PLATFORM_CONSOLE_URL: options.consoleUrl ?? "",
+      TAILOR_PLATFORM_URL: options.platformUrl ?? "",
       TAILOR_PLATFORM_WORKSPACE_ID: "workspace-123",
       TAILOR_CONFIG_PATH: options.config ?? "tailor.config.ts",
       GITHUB_OUTPUT: outputFile,
@@ -97,6 +108,8 @@ process.exit(2);
       MOCK_SHOW_STATUS: String(options.showStatus ?? 0),
       MOCK_WEBSITES_JSON: options.rawJson ?? JSON.stringify(options.websites ?? []),
       MOCK_LIST_STATUS: String(options.listStatus ?? 0),
+      MOCK_APPLICATIONS_JSON: options.applicationsRaw ?? JSON.stringify(options.applications ?? []),
+      MOCK_APP_LIST_STATUS: String(options.appListStatus ?? 0),
     },
   }).then((result) => ({ ...result, code: 0 }), (error) => error);
   const output = await readFile(outputFile, "utf8");
@@ -129,6 +142,9 @@ for (const actionName of actions) {
     assert.deepEqual(result.calls, [
       { args: deployArguments(actionName), cwd: result.project, workspace: "workspace-123", config },
       { args: ["tailor", "show", "--json"], cwd: result.project, workspace: "workspace-123", config },
+      ...(actionName === "_internal/deploy" ? [] : [
+        { args: ["tailor", "workspace", "app", "list", "--limit", "0", "--json"], cwd: result.project, workspace: "workspace-123", config },
+      ]),
       { args: ["tailor", "staticwebsite", "list", "--json"], cwd: result.project, workspace: "workspace-123", config },
     ]);
     if (actionName !== "_internal/deploy") assert.match(result.stdout, /SDK without hook outputs/);
@@ -145,7 +161,7 @@ for (const actionName of actions) {
     const url = 'https://web.example.com/?x="quoted"&y=1\nother=bad';
     const result = await runDeploy(context, actionName, { websites: [{ name, url }] });
     assert.equal(result.code, 0, result.stderr);
-    assert.equal(result.output.trimEnd().split("\n").length, actionName === "_internal/deploy" ? 3 : 2);
+    assert.equal(result.output.trimEnd().split("\n").length, actionName === "_internal/deploy" ? 3 : 4);
     assert.deepEqual(JSON.parse(result.outputs["frontend-urls"]), { [name]: url });
   });
 
@@ -178,7 +194,7 @@ for (const actionName of actions) {
       const result = await runDeploy(context, actionName, options);
       assert.notEqual(result.code, 0);
       assert.equal(result.outputs["frontend-urls"], undefined);
-      assert.equal(result.calls.length, 3);
+      assert.equal(result.calls.length, actionName === "_internal/deploy" ? 3 : 4);
     });
   }
 }
@@ -257,3 +273,84 @@ test("_internal/deploy: emits no annotation when the deployment succeeds", async
   assert.equal(result.code, 0, result.stderr);
   assert.doesNotMatch(result.stdout, /::error/);
 });
+
+for (const actionName of ["deploy", "preview-deploy"]) {
+  test(`${actionName}: returns all workspace application URLs when multi-config show fails`, async (context) => {
+    const result = await runDeploy(context, actionName, {
+      config: "apps/core/tailor.config.ts,apps/portal/tailor.config.ts",
+      showStatus: 1,
+      applications: [
+        { name: "core", domain: "core.example.com" },
+        { name: "portal", domain: "portal.example.com" },
+        { name: "existing", domain: "existing.example.com" },
+      ],
+    });
+    assert.equal(result.code, 0, result.stderr);
+    assert.deepEqual(result.outputs["app-urls"] && JSON.parse(result.outputs["app-urls"]), {
+      core: "https://core.example.com",
+      portal: "https://portal.example.com",
+      existing: "https://existing.example.com",
+    });
+    assert.equal(result.action.outputs["app-urls"].value, "${{ steps.applications.outputs.app-urls }}");
+    assert.equal(result.outputs["app-url"], "");
+  });
+
+  test(`${actionName}: returns an empty application map for a workspace without applications`, async (context) => {
+    const result = await runDeploy(context, actionName, { showStatus: 1 });
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.outputs["app-urls"], "{}");
+  });
+
+  test(`${actionName}: keeps application URLs on one output line`, async (context) => {
+    const name = 'core\nforged-output=bad"';
+    const domain = 'core.example.com/?x="quoted"\nother=bad';
+    const result = await runDeploy(context, actionName, { applications: [{ name, domain }] });
+    assert.equal(result.code, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.outputs["app-urls"]), { [name]: `https://${domain}` });
+    assert.equal(result.outputs["forged-output"], undefined);
+    assert.equal(result.output.trimEnd().split("\n").length, 4);
+  });
+
+  for (const [name, options] of [
+    ["application lookup fails", { appListStatus: 7 }],
+    ["application JSON is invalid", { applicationsRaw: "not JSON" }],
+    ["application JSON is empty", { applicationsRaw: "" }],
+  ]) {
+    test(`${actionName}: warns and returns an empty application map when ${name}`, async (context) => {
+      const result = await runDeploy(context, actionName, options);
+      assert.equal(result.code, 0, result.stderr);
+      assert.equal(result.outputs["app-urls"], "{}");
+      assert.match(result.stdout, /::warning::Could not resolve application URLs/);
+      assert.equal(result.outputs["frontend-urls"], "{}");
+    });
+  }
+}
+
+for (const actionName of ["deploy", "preview-deploy"]) {
+  for (const [label, options, base] of [
+    ["default", {}, "https://console.tailor.tech"],
+    ["platform host", { platformUrl: "https://api.dev.example.com:8443/rpc" }, "https://console.dev.example.com:8443"],
+    ["explicit override", { consoleUrl: "https://custom.example.com/root/", platformUrl: "invalid" }, "https://custom.example.com"],
+  ]) {
+    test(`${actionName}: builds console URLs with ${label} without another lookup`, async (context) => {
+      const result = await runDeploy(context, actionName, { ...options, applications: [{ name: "core /?#", domain: "core.example.com" }] });
+      assert.equal(result.code, 0, result.stderr);
+      assert.deepEqual(JSON.parse(result.outputs["console-urls"] ?? "null"), {
+        "core /?#": `${base}/workspaces/workspace-123/services/applications/core%20%2F%3F%23`,
+      });
+      assert.equal(result.action.outputs["console-urls"].value, "${{ steps.applications.outputs.console-urls }}");
+      assert.equal(result.calls.length, 4);
+    });
+  }
+  for (const options of [{}, { appListStatus: 7 }, { consoleUrl: "invalid", applications: [{ name: "core", domain: "core.example.com" }] }]) {
+    test(`${actionName}: returns empty console URLs for ${JSON.stringify(options)}`, async (context) => {
+      const result = await runDeploy(context, actionName, options);
+      assert.equal(result.code, 0, result.stderr);
+      assert.equal(result.outputs["console-urls"], "{}");
+      if (options.consoleUrl) {
+        assert.match(result.stdout, /::warning::Could not resolve console URLs/);
+        assert.deepEqual(JSON.parse(result.outputs["app-urls"]), { core: "https://core.example.com" });
+      }
+    });
+  }
+}
