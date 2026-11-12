@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "plan/**"
+      - "_internal/lib/bundle-cache.mjs"
       - "tests/deploy/**"
       - ".github/workflows/test-plan.yaml"
   push:

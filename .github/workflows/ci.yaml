@@ -32,6 +32,7 @@ jobs:
       - run: pnpm test:erd-upload
       - run: pnpm test:erd-preview
       - run: pnpm test:deploy-outputs
+      - run: pnpm test:bundle-cache
       - run: pnpm test:drift-check
       - run: pnpm test:plan
       - run: pnpm test:preview

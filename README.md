@@ -18,6 +18,10 @@ Server. Steps that run `gh` or `jq` need them installed on the runner, and actio
 github.com, these included, must be made available on the server (GitHub Connect or
 `actions-sync`).
 
+`deploy`, `plan`, and `preview-deploy` use `actions/cache` v6 for the [bundle cache](#bundle-cache),
+so make it available on the server as well. Where the server's Actions cache is unavailable,
+restoring and saving the bundle cache only log a warning.
+
 `erd-schema-export` and `erd-schema-preview` automatically use `upload-artifact` v3.2.2 on
 GitHub Enterprise Server, where v4 and later are unsupported. Each preview is a ZIP containing
 a self-contained HTML file. Download the ZIP from the workflow run, extract it, and open the
@@ -79,8 +83,15 @@ jobs:
 |------|----------|---------|-------------|
 | `workspace-id` | Yes | | Workspace ID (from a GitHub Environment variable, e.g. `vars.TAILOR_PLATFORM_WORKSPACE_ID`) |
 | `working-directory` | No | `.` | Working directory (for monorepo setups) |
+| `bundle-cache` | No | `true` | Restore the [bundle cache](#bundle-cache) before deploying, and save it on `push`, `workflow_dispatch`, and `schedule` runs of a branch. `false` does neither. |
 | `platform-client-id` | Yes | | OAuth2 client ID for machine user |
 | `platform-client-secret` | Yes | | OAuth2 client secret for machine user |
+
+#### Bundle cache
+
+`tailor deploy` bundles the application's function code and keeps the bundles in `.tailor/cache` (under `TAILOR_BUILD_OUTPUT_DIR` when set) to skip unchanged ones next time. `deploy`, `plan`, and `preview-deploy` restore that directory with `actions/cache` before bundling. `deploy` and `plan` save it right after bundling, even when the deployment fails, on `push`, `workflow_dispatch`, and `schedule` runs of a branch, and only when the bundles changed. Pull request runs only restore: a cache saved there could be restored only by that pull request, while the one saved on its base branch serves every pull request.
+
+The cache key holds a hash of the lockfile, which the SDK uses to discard the whole cache. Each saved entry counts toward the repository's Actions cache limit. Set `bundle-cache: false` to turn this off.
 
 #### Outputs
 
@@ -155,6 +166,7 @@ jobs:
 | `workspace-id` | No | | Workspace ID to run dry-run against (from a GitHub Environment variable, e.g. `vars.TAILOR_PLATFORM_WORKSPACE_ID`). When empty, the dry-run is skipped and the action reports that the workspace is not provisioned yet. |
 | `label` | No | | Human-readable label for the PR comment heading and marker (e.g. the workspace name). Falls back to `workspace-id`, then `"workspace"`. |
 | `working-directory` | No | `.` | Working directory (for monorepo setups) |
+| `bundle-cache` | No | `true` | Restore the [bundle cache](#bundle-cache) before the dry-run, and save it on `push`, `workflow_dispatch`, and `schedule` runs of a branch. `false` does neither. |
 | `platform-client-id` | Yes | | OAuth2 client ID for machine user |
 | `platform-client-secret` | Yes | | OAuth2 client secret for machine user |
 | `github-token` | No | | GitHub token for commenting on PR, also used to fetch the base branch so the checkout can use `persist-credentials: false`. When omitted, no PR comment is posted (step summary only) and the fetch relies on the credentials the checkout persisted. |
@@ -353,6 +365,7 @@ jobs:
 | `ttl` | No | | Duration (e.g. `7d`, `24h`) after which the workspace can be deleted by `preview-cleanup`'s `prune-expired`. Every push restarts it, so it counts from the last push. Empty records no expiry and leaves an existing workspace's expiry untouched. |
 | `working-directory` | No | `.` | Working directory (for monorepo setups) |
 | `package-manager` | No | | Package manager (`pnpm`, `npm`, `yarn`, or `bun`). Defaults to `npx`. |
+| `bundle-cache` | No | `true` | Restore the [bundle cache](#bundle-cache) that `deploy` or `plan` saved on the base branch before deploying. `false` skips it. |
 | `platform-client-id` | Yes | | OAuth2 client ID for machine user |
 | `platform-client-secret` | Yes | | OAuth2 client secret for machine user |
 | `github-token` | Yes | | GitHub token for reading PR comments to find an existing workspace ID |
