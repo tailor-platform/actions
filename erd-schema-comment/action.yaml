@@ -34,6 +34,12 @@ inputs:
   github-token:
     description: GitHub token with pull-requests:write and actions:read permission
     required: true
+  sticky:
+    description: >-
+      Set to "true" to update the earliest ERD comment in place. Otherwise earlier
+      ones are hidden as outdated and a new comment is posted.
+    required: false
+    default: "false"
   pr-number:
     description: Pull request number. Defaults to the current PR number.
     required: false
@@ -84,11 +90,12 @@ runs:
           echo "$EOF"
         } >>"$GITHUB_OUTPUT"
 
-    - name: Post or update comment
+    - name: Post comment
       id: comment
-      uses: tailor-platform/actions/_internal/erd-comment@ee77773a7d5f7ae8aaef1359a08ef3e6c6d51da1
+      uses: tailor-platform/actions/_internal/erd-comment@77ed899a1c1ce70d82344f406a96930b295847ce
       with:
         links: ${{ steps.list.outputs.links }}
         base-ref: ${{ inputs.base-ref }}
         github-token: ${{ inputs.github-token }}
+        sticky: ${{ inputs.sticky }}
         pr-number: ${{ inputs.pr-number }}
