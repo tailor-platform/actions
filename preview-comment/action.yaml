@@ -45,7 +45,7 @@ inputs:
     required: true
   sticky:
     description: >-
-      Set to "true" to update the earliest preview comment of this workspace in place. Otherwise earlier
+      Set to "true" to update the newest preview comment of this workspace in place. Otherwise earlier
       ones are hidden as outdated and a new comment is posted.
     required: false
     default: "false"
@@ -178,7 +178,7 @@ runs:
 
     - name: Post preview comment
       if: github.event.pull_request.number != ''
-      uses: tailor-platform/actions/_internal/sticky-comment@541e192c7414e9db993da9f9ca6d63cb72f9e70d
+      uses: tailor-platform/actions/_internal/sticky-comment@9dde14278f825531bc127c065f5666d2967ab0a7
       with:
         marker-prefix: "<!-- tailor-preview: ${{ inputs.workspace-name }} "
         body: ${{ steps.build.outputs.body }}

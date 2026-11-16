@@ -52,7 +52,7 @@ inputs:
     required: false
   sticky:
     description: >-
-      Set to "true" to update the earliest plan comment of this label in place. Otherwise earlier
+      Set to "true" to update the newest plan comment of this label in place. Otherwise earlier
       ones are hidden as outdated and a new comment is posted.
     required: false
     default: "false"
@@ -234,7 +234,7 @@ runs:
 
     - name: Post plan comment
       if: inputs.workspace-id != '' && github.event_name == 'pull_request' && inputs.github-token != ''
-      uses: tailor-platform/actions/_internal/sticky-comment@541e192c7414e9db993da9f9ca6d63cb72f9e70d
+      uses: tailor-platform/actions/_internal/sticky-comment@9dde14278f825531bc127c065f5666d2967ab0a7
       with:
         marker-prefix: ${{ steps.comment-body.outputs.marker }}
         body: ${{ steps.comment-body.outputs.body }}
