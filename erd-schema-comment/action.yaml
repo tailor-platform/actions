@@ -92,7 +92,7 @@ runs:
 
     - name: Post comment
       id: comment
-      uses: tailor-platform/actions/_internal/erd-comment@77ed899a1c1ce70d82344f406a96930b295847ce
+      uses: tailor-platform/actions/_internal/erd-comment@f69a748032daa13444a1d32a5d993af12556fb2f
       with:
         links: ${{ steps.list.outputs.links }}
         base-ref: ${{ inputs.base-ref }}
