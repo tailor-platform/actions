@@ -18,25 +18,39 @@ async function loadAction() {
   return parse(await readFile(path.join(repositoryRoot, "_internal/sticky-comment/action.yaml"), "utf8"));
 }
 
-async function runPost(context, { comments = [], sticky, hideStatus = 0 }) {
+async function runPost(context, { comments = [], sticky, hideStatus = 0, postStatus = 0, minimized = [] }) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "sticky-comment-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const callsFile = path.join(directory, "calls");
   const outputFile = path.join(directory, "output");
+  const created = comment(999, `${marker}\nnew body`);
   await Promise.all([
     writeFile(callsFile, ""),
     writeFile(outputFile, ""),
-    writeFile(path.join(directory, "comments.json"), JSON.stringify([comments])),
+    writeFile(path.join(directory, "before.json"), JSON.stringify([comments])),
+    writeFile(path.join(directory, "after.json"), JSON.stringify([[...comments, created]])),
     writeFile(
       path.join(directory, "gh"),
       `#!/usr/bin/env node
-const { appendFileSync, readFileSync } = require("node:fs");
+const { appendFileSync, existsSync, readFileSync, writeFileSync } = require("node:fs");
 const args = process.argv.slice(2);
 const stdin = args.includes("--input") ? readFileSync(0, "utf8") : "";
 appendFileSync(process.env.MOCK_CALLS, JSON.stringify({ args, stdin }) + "\\n");
-if (args[1] === "graphql") process.exit(Number(process.env.MOCK_HIDE_STATUS));
-if (args.includes("--slurp")) process.stdout.write(readFileSync(process.env.MOCK_COMMENTS, "utf8"));
-else if (args.includes("POST")) process.stdout.write(JSON.stringify({ id: 999 }));
+const posted = process.env.MOCK_CALLS + ".posted";
+if (args[1] === "graphql") {
+  const query = args.join(" ");
+  if (query.includes("minimizeComment")) process.exit(Number(process.env.MOCK_HIDE_STATUS));
+  const minimized = process.env.MOCK_MINIMIZED.split(",");
+  const ids = [...query.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+  const nodes = ids.map((id) => ({ id, isMinimized: minimized.includes(id) }));
+  process.stdout.write(JSON.stringify({ data: { nodes } }));
+} else if (args.includes("--slurp")) {
+  process.stdout.write(readFileSync(existsSync(posted) ? process.env.MOCK_AFTER : process.env.MOCK_BEFORE, "utf8"));
+} else if (args.includes("POST")) {
+  if (Number(process.env.MOCK_POST_STATUS) !== 0) process.exit(Number(process.env.MOCK_POST_STATUS));
+  writeFileSync(posted, "");
+  process.stdout.write(JSON.stringify({ id: 999 }));
+}
 `,
     ),
   ]);
@@ -55,8 +69,11 @@ else if (args.includes("POST")) process.stdout.write(JSON.stringify({ id: 999 })
       BODY: `${marker}\nnew body`,
       PR_NUMBER: "42",
       MOCK_CALLS: callsFile,
-      MOCK_COMMENTS: path.join(directory, "comments.json"),
+      MOCK_BEFORE: path.join(directory, "before.json"),
+      MOCK_AFTER: path.join(directory, "after.json"),
       MOCK_HIDE_STATUS: String(hideStatus),
+      MOCK_POST_STATUS: String(postStatus),
+      MOCK_MINIMIZED: minimized.join(","),
       ...(sticky === undefined ? {} : { STICKY: sticky }),
     },
   }).then(
@@ -73,23 +90,28 @@ else if (args.includes("POST")) process.stdout.write(JSON.stringify({ id: 999 })
 const kinds = (calls) =>
   calls.map(({ args }) => {
     if (args.includes("--slurp")) return "list";
-    if (args[1] === "graphql") return "hide";
+    if (args[1] === "graphql") return args.join(" ").includes("minimizeComment") ? "hide" : "query";
     return args.includes("PATCH") ? "patch" : "post";
   });
+
+const hiddenNodes = (calls) =>
+  calls
+    .filter(({ args }) => args[1] === "graphql" && args.join(" ").includes("minimizeComment"))
+    .map(({ args }) => args.find((arg) => arg.startsWith("id=")).slice(3));
 
 test("sticky-comment: sticky input defaults to off", async () => {
   const action = await loadAction();
   assert.equal(action.inputs.sticky.default, "false");
 });
 
-test("sticky-comment: off posts a new comment when no earlier comment carries the marker", async (context) => {
+test("sticky-comment: off posts a new comment and hides nothing when no earlier comment carries the marker", async (context) => {
   const result = await runPost(context, { comments: [comment(1, "unrelated")] });
   assert.equal(result.code, 0, result.stderr);
-  assert.deepEqual(kinds(result.calls), ["list", "post"]);
+  assert.deepEqual(kinds(result.calls), ["list", "post", "list"]);
   assert.match(result.output, /comment-id=999/);
 });
 
-test("sticky-comment: off hides every earlier comment with the marker as outdated, then posts a new one", async (context) => {
+test("sticky-comment: off posts first, then hides every earlier visible bot comment with the marker as outdated", async (context) => {
   const result = await runPost(context, {
     comments: [
       comment(1, `${marker}\nfirst`),
@@ -99,20 +121,38 @@ test("sticky-comment: off hides every earlier comment with the marker as outdate
     ],
   });
   assert.equal(result.code, 0, result.stderr);
-  assert.deepEqual(kinds(result.calls), ["list", "hide", "hide", "post"]);
-  const hidden = result.calls.filter(({ args }) => args[1] === "graphql").map(({ args }) => args.join(" "));
-  for (const [index, nodeId] of ["node-1", "node-3"].entries()) {
-    assert.match(hidden[index], new RegExp(`id=${nodeId}`));
-    assert.match(hidden[index], /minimizeComment/);
-    assert.match(hidden[index], /OUTDATED/);
-  }
+  assert.deepEqual(kinds(result.calls), ["list", "post", "list", "query", "hide", "hide"]);
+  assert.deepEqual(hiddenNodes(result.calls), ["node-1", "node-3"]);
+  const mutation = result.calls.find(({ args }) => args.join(" ").includes("minimizeComment")).args.join(" ");
+  assert.match(mutation, /OUTDATED/);
 });
 
-test("sticky-comment: off still posts the new comment when hiding fails", async (context) => {
+test("sticky-comment: off does not hide a comment that is already hidden", async (context) => {
+  const result = await runPost(context, {
+    comments: [comment(1, `${marker}\nfirst`), comment(3, `${marker}\nsecond`)],
+    minimized: ["node-1"],
+  });
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(hiddenNodes(result.calls), ["node-3"]);
+});
+
+test("sticky-comment: off does not hide a comment newer than the one it posted", async (context) => {
+  const result = await runPost(context, { comments: [comment(1, `${marker}\nfirst`), comment(1000, `${marker}\nconcurrent`)] });
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(hiddenNodes(result.calls), ["node-1"]);
+});
+
+test("sticky-comment: off hides nothing when posting fails, so the earlier comment stays visible", async (context) => {
+  const result = await runPost(context, { comments: [comment(1, `${marker}\nfirst`)], postStatus: 1 });
+  assert.notEqual(result.code, 0);
+  assert.deepEqual(kinds(result.calls), ["list", "post"]);
+});
+
+test("sticky-comment: off still succeeds with a warning when hiding fails", async (context) => {
   const result = await runPost(context, { comments: [comment(1, `${marker}\nfirst`)], hideStatus: 1 });
   assert.equal(result.code, 0, result.stderr);
-  assert.deepEqual(kinds(result.calls), ["list", "hide", "post"]);
   assert.match(result.stdout, /::warning::/);
+  assert.match(result.output, /comment-id=999/);
 });
 
 test("sticky-comment: off reports the newest earlier comment as existing-body", async (context) => {
@@ -123,11 +163,16 @@ test("sticky-comment: off reports the newest earlier comment as existing-body", 
   assert.match(result.output, /existing-body<<.*\n<!-- test-marker -->\nsecond\n/s);
 });
 
-test("sticky-comment: on updates the earlier comment in place without hiding or posting", async (context) => {
-  const result = await runPost(context, { comments: [comment(1, `${marker}\nfirst`)], sticky: "true" });
+test("sticky-comment: on updates the newest earlier comment in place without hiding or posting", async (context) => {
+  const result = await runPost(context, {
+    comments: [comment(1, `${marker}\nfirst`), comment(3, `${marker}\nsecond`)],
+    sticky: "true",
+  });
   assert.equal(result.code, 0, result.stderr);
   assert.deepEqual(kinds(result.calls), ["list", "patch"]);
-  assert.match(result.output, /comment-id=1/);
+  assert.match(result.calls[1].args.join(" "), /comments\/3 /);
+  assert.match(result.output, /comment-id=3/);
+  assert.match(result.output, /existing-body<<.*\n<!-- test-marker -->\nsecond\n/s);
 });
 
 test("sticky-comment: on posts a new comment when none carries the marker", async (context) => {

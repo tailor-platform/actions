@@ -1,9 +1,9 @@
 name: Post PR comment
 description: >-
-  Post a PR comment whose first line is the marker. By default every earlier bot
-  comment whose body starts with marker-prefix is hidden as outdated and a new
-  comment is created. With sticky set to "true" the earliest such comment is
-  updated in place instead.
+  Post a PR comment whose first line is the marker. By default a new comment is
+  created and every earlier visible bot comment whose body starts with
+  marker-prefix is hidden as outdated. With sticky set to "true" the newest such
+  comment is updated in place instead.
   Internal action — use via preview-comment, preview-cleanup, or plan actions.
 
 inputs:
@@ -21,9 +21,9 @@ inputs:
     required: true
   sticky:
     description: >-
-      Set to "true" to update the earliest comment that starts with marker-prefix
-      in place. Otherwise earlier comments with the marker are hidden as outdated
-      and a new comment is posted.
+      Set to "true" to update the newest comment that starts with marker-prefix
+      in place. Otherwise a new comment is posted and the earlier comments with the
+      marker are hidden as outdated.
     required: false
     default: "false"
   pr-number:
@@ -66,17 +66,15 @@ runs:
           exit 1
         fi
 
-        MATCHES=$(gh api --paginate --slurp \
-          "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" | \
-          jq -c --arg m "$MARKER_PREFIX" \
-            '[ .[][] | select(.user.type == "Bot" and (.body | startswith($m))) | {id: .id, node_id: .node_id, body: .body} ]')
+        list_matches() {
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" | \
+            jq -c --arg m "$MARKER_PREFIX" \
+              '[ .[][] | select(.user.type == "Bot" and (.body | startswith($m))) | {id: .id, node_id: .node_id, body: .body} ]'
+        }
 
-        if [ "$STICKY" = "true" ]; then
-          PICK='first'
-        else
-          PICK='last'
-        fi
-        EXISTING_BODY=$(printf '%s' "$MATCHES" | jq -r "$PICK | .body // empty")
+        MATCHES=$(list_matches)
+        EXISTING_BODY=$(printf '%s' "$MATCHES" | jq -r 'last | .body // empty')
 
         EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
         {
@@ -87,21 +85,13 @@ runs:
 
         PAYLOAD=$(jq -n --arg body "$BODY" '{body: $body}')
         if [ "$STICKY" = "true" ]; then
-          EXISTING_ID=$(printf '%s' "$MATCHES" | jq -r 'first | .id // empty')
+          EXISTING_ID=$(printf '%s' "$MATCHES" | jq -r 'last | .id // empty')
           if [ -n "$EXISTING_ID" ]; then
             echo "$PAYLOAD" | gh api "repos/$GITHUB_REPOSITORY/issues/comments/$EXISTING_ID" \
               -X PATCH --input - > /dev/null
             echo "comment-id=$EXISTING_ID" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-        else
-          while read -r NODE_ID; do
-            if ! gh api graphql \
-              -f query='mutation($id: ID!) { minimizeComment(input: {subjectId: $id, classifier: OUTDATED}) { minimizedComment { isMinimized } } }' \
-              -f id="$NODE_ID" > /dev/null; then
-              echo "::warning::sticky-comment: could not hide the earlier comment $NODE_ID"
-            fi
-          done < <(printf '%s' "$MATCHES" | jq -r '.[].node_id')
         fi
 
         COMMENT_ID=$(echo "$PAYLOAD" | gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
@@ -111,3 +101,31 @@ runs:
           exit 1
         fi
         echo "comment-id=$COMMENT_ID" >> "$GITHUB_OUTPUT"
+
+        if [ "$STICKY" = "true" ]; then
+          exit 0
+        fi
+
+        # Hide only after the new comment exists, so a failed post never leaves the PR
+        # without a visible comment. Comments newer than ours belong to a concurrent run.
+        if ! OLDER=$(list_matches | jq -c --argjson id "$COMMENT_ID" '[ .[] | select(.id < $id) | .node_id ]'); then
+          echo "::warning::sticky-comment: could not list the earlier comments to hide"
+          exit 0
+        fi
+        if [ "$(printf '%s' "$OLDER" | jq length)" = "0" ]; then
+          exit 0
+        fi
+        NODE_IDS=$(printf '%s' "$OLDER" | jq -r 'map("\"" + . + "\"") | join(",")')
+        if ! VISIBLE=$(gh api graphql -f query="query { nodes(ids: [$NODE_IDS]) { ... on IssueComment { id isMinimized } } }" | \
+          jq -r '.data.nodes[] | select(.isMinimized == false) | .id'); then
+          echo "::warning::sticky-comment: could not check which earlier comments are hidden"
+          exit 0
+        fi
+        while read -r NODE_ID; do
+          [ -n "$NODE_ID" ] || continue
+          if ! gh api graphql \
+            -f query='mutation($id: ID!) { minimizeComment(input: {subjectId: $id, classifier: OUTDATED}) { minimizedComment { isMinimized } } }' \
+            -f id="$NODE_ID" > /dev/null; then
+            echo "::warning::sticky-comment: could not hide the earlier comment $NODE_ID"
+          fi
+        done <<< "$VISIBLE"
