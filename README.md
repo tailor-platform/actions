@@ -43,6 +43,8 @@ Irrelevant namespaces produce no artifact, so a candidate may be absent from the
 run. Pass `[]` when there are no candidates. This input is ignored on GitHub.com and
 Enterprise Cloud, where the comment still discovers and links uploaded artifacts directly.
 
+Each run hides the earlier ERD comments as outdated and posts a new one. Pass `sticky: true` to update the newest ERD comment in place instead.
+
 ## Actions
 
 ### [`deploy`](deploy/README.md)

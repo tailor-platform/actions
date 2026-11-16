@@ -36,7 +36,7 @@ inputs:
     required: true
   sticky:
     description: >-
-      Set to "true" to update the earliest ERD comment in place. Otherwise earlier
+      Set to "true" to update the newest ERD comment in place. Otherwise earlier
       ones are hidden as outdated and a new comment is posted.
     required: false
     default: "false"
