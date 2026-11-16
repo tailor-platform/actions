@@ -170,6 +170,7 @@ jobs:
 | `platform-client-id` | Yes | | OAuth2 client ID for machine user |
 | `platform-client-secret` | Yes | | OAuth2 client secret for machine user |
 | `github-token` | No | | GitHub token for commenting on PR, also used to fetch the base branch so the checkout can use `persist-credentials: false`. When omitted, no PR comment is posted (step summary only) and the fetch relies on the credentials the checkout persisted. |
+| `sticky` | No | `false` | Set to `true` to update the earliest comment for this `label` in place instead of hiding earlier comments and posting a new one. |
 
 #### Outputs
 
@@ -184,14 +185,14 @@ The action always writes the result to the job's step summary (status emoji, wor
 
 #### PR Comment
 
-When `github-token` is provided and the event is a pull request, the action posts (or updates) a comment with the dry-run output:
+When `github-token` is provided and the event is a pull request, the action posts a comment with the dry-run output:
 
 - ✅ **Success**: Shows the planned changes
 - ❌ **Failure**: Shows the error output
 
 When `workspace-id` is not set, no PR comment is posted — the step summary records the "not yet provisioned" state instead.
 
-The comment is keyed per workspace via a `<!-- tailor-plan: KEY -->` marker (`KEY` is the `label` input if provided, otherwise `workspace-id`, otherwise `"workspace"`), so multiple environments can post separate comments on the same PR. The comment is automatically updated on subsequent runs.
+The comment is keyed per workspace via a `<!-- tailor-plan: KEY -->` marker (`KEY` is the `label` input if provided, otherwise `workspace-id`, otherwise `"workspace"`), so multiple environments can post separate comments on the same PR. On each run the earlier comments with the same marker are hidden as outdated and a new comment is posted, so every run keeps its own comment. Set `sticky: true` to update the earliest comment in place instead.
 
 ---
 
@@ -385,7 +386,7 @@ jobs:
 
 ### [`preview-comment`](preview-comment/action.yaml)
 
-Post or update a PR comment with preview deployment status, workspace ID, application URLs, expiry, and optional @mention. Typically called after `preview-deploy`. The comment is keyed by workspace name so multiple preview environments can coexist on one PR.
+Post a PR comment with preview deployment status, workspace ID, application URLs, expiry, and optional @mention. Typically called after `preview-deploy`. The comment is keyed by workspace name so multiple preview environments can coexist on one PR. Each call hides the earlier comments of the same workspace as outdated and posts a new one; `preview-deploy` and `preview-cleanup` read the workspace ID from the newest of them. Set `sticky: true` to update the earliest comment in place instead.
 
 When the workspace has an expiry (`ttl` given to `preview-deploy`), the comment gains an `Expires` row that lists it once per timezone, one under the other. `timezones: UTC,Asia/Tokyo` gives the cell `2026-10-27 12:00 UTC` and, on the next line, `2026-10-27 21:00 Asia/Tokyo`. The comment is rebuilt on every push, so the row follows the expiry that each push restarts. `preview-comment` reads the expiry itself with `tailor workspace get --json` (CLI 2.16.0 or later), using the `tailor` runner and login that `preview-deploy` set up earlier in the same job; without them, or for a workspace with no expiry, the row is left out. No row is shown when `status` is `deleted`.
 
@@ -402,6 +403,7 @@ When the workspace has an expiry (`ttl` given to `preview-deploy`), the comment 
 | `working-directory` | No | `.` | Working directory the `tailor` CLI is run from to read the expiry (for monorepo setups). Same as the one given to `preview-deploy`. |
 | `timezones` | No | `UTC` | IANA timezone names to show the expiry in, separated by commas or newlines, shown one under the other in the order given (e.g. `UTC,Asia/Tokyo`). An unknown name is skipped with a warning; if none is valid, `UTC` is used. Only used when the workspace has an expiry. |
 | `github-token` | Yes | | GitHub token with `pull-requests: write` |
+| `sticky` | No | `false` | Set to `true` to update the earliest comment for this workspace in place instead of hiding earlier comments and posting a new one. |
 | `mention` | No | | Set to `"true"` to @mention the commit author (falls back to PR author if commit is by a bot) |
 
 ---
@@ -728,7 +730,7 @@ jobs:
 
 ### [`preview-cleanup`](preview-cleanup/action.yaml)
 
-Delete the preview workspace when a PR is closed. Reads the workspace ID from the PR comment posted by `preview-comment` and deletes the workspace. Run on `pull_request` `closed` events.
+Delete the preview workspace when a PR is closed. Reads the workspace ID from the newest PR comment posted by `preview-comment` and deletes the workspace. Run on `pull_request` `closed` events.
 
 #### Usage
 
@@ -768,7 +770,8 @@ jobs:
 | `package-manager` | No | | Package manager (`pnpm`, `npm`, `yarn`, or `bun`). Defaults to `npx`. |
 | `platform-client-id` | Yes | | OAuth2 client ID for machine user |
 | `platform-client-secret` | Yes | | OAuth2 client secret for machine user |
-| `github-token` | Yes | | GitHub token with `pull-requests: write` for reading and updating the PR comment |
+| `github-token` | Yes | | GitHub token with `pull-requests: write` for reading the PR comment and posting the cleanup comment |
+| `sticky` | No | `false` | Set to `true` to update the earliest comment for this workspace in place instead of hiding earlier comments and posting the cleanup comment. |
 
 #### Pruning expired previews
 
@@ -790,7 +793,7 @@ A close-time cleanup that fails, is disabled, or never runs (a PR left open for 
 - A workspace with no recorded expiry (created without `ttl`) is never deleted by the sweep.
 - The sweep runs `workspace prune` with `--limit 0`, so it deletes every expired match. With the CLI default of 20, a backlog of more than 20 would abort the sweep without deleting anything on every later PR close. The name and location filters above are what keep it narrow.
 - With none of `folder-id`, `organization-id`, `TAILOR_PLATFORM_FOLDER_ID` or `TAILOR_PLATFORM_ORGANIZATION_ID`, the sweep is skipped with a warning and the rest of the cleanup is unaffected.
-- If a PR sits idle past `ttl`, its workspace is swept while the PR is still open. The next push to that PR creates a fresh workspace under the same name and updates the PR comment with the new ID. Closing such a PR after the sweep is not an error: `preview-cleanup` reports that the workspace is already gone and still updates the comment.
+- If a PR sits idle past `ttl`, its workspace is swept while the PR is still open. The next push to that PR creates a fresh workspace under the same name and posts a comment with the new ID, which later runs use because they read the newest comment. Closing such a PR after the sweep is not an error: `preview-cleanup` reports that the workspace is already gone and still posts the cleanup comment.
 - A workspace restored after it expired is deleted again by the next sweep unless its expiry is changed with `tailor workspace ttl set` or `ttl clear`.
 
 ---
