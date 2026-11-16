@@ -10,7 +10,7 @@ import { parse } from "yaml";
 const execute = promisify(execFile);
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const commentActions = /_internal\/(sticky-comment|erd-comment)@/;
-const forwarding = ["plan", "preview-comment", "preview-cleanup"];
+const forwarding = ["plan", "preview-comment", "preview-cleanup", "_internal/erd-comment"];
 
 const load = async (name) => parse(await readFile(path.join(repositoryRoot, name, "action.yaml"), "utf8"));
 
