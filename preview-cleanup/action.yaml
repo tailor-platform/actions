@@ -99,7 +99,7 @@ runs:
         COMMENT=$(gh api --paginate --slurp \
           "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" | \
           jq -r --arg m "$MARKER_PREFIX" \
-            '[ .[][] | select(.user.type == "Bot" and (.body | startswith($m))) ] | first | .body // empty')
+            '[ .[][] | select(.user.type == "Bot" and (.body | startswith($m))) ] | last | .body // empty')
 
         WORKSPACE_ID=$(echo "$COMMENT" | \
           jq -rR '(try capture("<!-- tailor-preview: [^ ]+ id=(?<id>[a-f0-9-]+)") | .id) // empty')
