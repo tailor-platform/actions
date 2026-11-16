@@ -50,6 +50,12 @@ inputs:
       When omitted, no PR comment is posted (step summary only) and the fetch
       relies on the credentials the checkout persisted.
     required: false
+  sticky:
+    description: >-
+      Set to "true" to update the newest plan comment of this label in place. Otherwise earlier
+      ones are hidden as outdated and a new comment is posted.
+    required: false
+    default: "false"
 
 outputs:
   workspace-id:
@@ -226,13 +232,14 @@ runs:
           echo "$EOF"
         } >> "$GITHUB_OUTPUT"
 
-    - name: Post sticky plan comment
+    - name: Post plan comment
       if: inputs.workspace-id != '' && github.event_name == 'pull_request' && inputs.github-token != ''
-      uses: tailor-platform/actions/_internal/sticky-comment@bed6c5a2dc015d45d78931d9e8989109ec27fc28
+      uses: tailor-platform/actions/_internal/sticky-comment@9dde14278f825531bc127c065f5666d2967ab0a7
       with:
         marker-prefix: ${{ steps.comment-body.outputs.marker }}
         body: ${{ steps.comment-body.outputs.body }}
         github-token: ${{ inputs.github-token }}
+        sticky: ${{ inputs.sticky }}
 
     - name: Fail on plan error
       if: inputs.workspace-id != ''

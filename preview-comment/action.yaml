@@ -43,6 +43,12 @@ inputs:
   github-token:
     description: GitHub token with pull-requests:write permission
     required: true
+  sticky:
+    description: >-
+      Set to "true" to update the newest preview comment of this workspace in place. Otherwise earlier
+      ones are hidden as outdated and a new comment is posted.
+    required: false
+    default: "false"
   mention:
     description: >-
       Set to "true" to @mention the commit/PR author. Mentions the commit
@@ -170,10 +176,11 @@ runs:
           echo "$EOF"
         } >> "$GITHUB_OUTPUT"
 
-    - name: Post or update preview comment
+    - name: Post preview comment
       if: github.event.pull_request.number != ''
-      uses: tailor-platform/actions/_internal/sticky-comment@bed6c5a2dc015d45d78931d9e8989109ec27fc28
+      uses: tailor-platform/actions/_internal/sticky-comment@9dde14278f825531bc127c065f5666d2967ab0a7
       with:
         marker-prefix: "<!-- tailor-preview: ${{ inputs.workspace-name }} "
         body: ${{ steps.build.outputs.body }}
         github-token: ${{ inputs.github-token }}
+        sticky: ${{ inputs.sticky }}

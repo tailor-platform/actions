@@ -24,10 +24,20 @@ jobs:
       pull-requests: write
     env:
       WORKSPACE_NAME: preview-comment-ci-test
+      STICKY_WORKSPACE_NAME: preview-comment-ci-test-sticky
+      PR_NUMBER: ${{ github.event.pull_request.number }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Remove comments left by earlier runs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" |
+            jq -r '.[][] | select(.body | startswith("<!-- tailor-preview: preview-comment-ci-test")) | .id' |
+            while read -r id; do gh api "repos/$GITHUB_REPOSITORY/issues/comments/$id" -X DELETE; done
 
       - name: "Test: post a comment without an expiry"
         uses: $/preview-comment
@@ -41,7 +51,6 @@ jobs:
       - name: "Verify: the comment has no Expires row"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           comments=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" |
             jq --arg m "<!-- tailor-preview: $WORKSPACE_NAME " '[ .[][] | select(.body | startswith($m)) ]')
@@ -64,7 +73,7 @@ jobs:
           EOF
           echo "TAILOR_RUN=bash $RUNNER_TEMP/tailor-stub" >> "$GITHUB_ENV"
 
-      - name: "Test: update the comment with an expiry in two timezones"
+      - name: "Test: post again with an expiry in two timezones"
         uses: $/preview-comment
         with:
           workspace-id: 00000000-0000-4000-8000-000000000154
@@ -74,15 +83,63 @@ jobs:
           timezones: UTC,Asia/Tokyo
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: "Verify: the same comment now shows the expiry in both timezones"
+      - name: "Verify: the earlier comment is hidden and the new one shows the expiry"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          comments=$(gh api graphql \
+            -f query='query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { comments(first: 100) { nodes { isMinimized body } } } } }' \
+            -f owner="${GITHUB_REPOSITORY%/*}" -f repo="${GITHUB_REPOSITORY#*/}" -F number="$PR_NUMBER" |
+            jq --arg m "<!-- tailor-preview: $WORKSPACE_NAME " '[ .data.repository.pullRequest.comments.nodes[] | select(.body | startswith($m)) ]')
+          if [ "$(jq length <<<"$comments")" != "2" ]; then
+            echo "::error::Expected the earlier comment and one new comment for $WORKSPACE_NAME"
+            exit 1
+          fi
+          if [ "$(jq -r '.[0].isMinimized' <<<"$comments")" != "true" ]; then
+            echo "::error::The earlier comment should be hidden"
+            exit 1
+          fi
+          if [ "$(jq -r '.[1].isMinimized' <<<"$comments")" != "false" ]; then
+            echo "::error::The new comment should not be hidden"
+            exit 1
+          fi
+          expected="| Expires | 2026-11-03 04:55 UTC<br>2026-11-03 13:55 Asia/Tokyo |"
+          if ! jq -e --arg row "$expected" '.[1].body | contains($row)' <<<"$comments" >/dev/null; then
+            echo "::error::Expected the row: $expected"
+            jq -r '.[1].body' <<<"$comments"
+            exit 1
+          fi
+          jq -r '.[1].body' <<<"$comments"
+
+      - name: "Test: post a comment (sticky)"
+        uses: $/preview-comment
+        with:
+          workspace-id: 00000000-0000-4000-8000-000000000155
+          workspace-name: ${{ env.STICKY_WORKSPACE_NAME }}
+          status: success
+          app-url: https://preview.example.com
+          sticky: "true"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "Test: update the comment with an expiry (sticky)"
+        uses: $/preview-comment
+        with:
+          workspace-id: 00000000-0000-4000-8000-000000000155
+          workspace-name: ${{ env.STICKY_WORKSPACE_NAME }}
+          status: success
+          app-url: https://preview.example.com
+          timezones: UTC,Asia/Tokyo
+          sticky: "true"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "Verify: sticky reuses the same comment"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           comments=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" |
-            jq --arg m "<!-- tailor-preview: $WORKSPACE_NAME " '[ .[][] | select(.body | startswith($m)) ]')
+            jq --arg m "<!-- tailor-preview: $STICKY_WORKSPACE_NAME " '[ .[][] | select(.body | startswith($m)) ]')
           if [ "$(jq length <<<"$comments")" != "1" ]; then
-            echo "::error::Updating must reuse the comment, not add another"
+            echo "::error::Updating with sticky must reuse the comment, not add another"
             exit 1
           fi
           expected="| Expires | 2026-11-03 04:55 UTC<br>2026-11-03 13:55 Asia/Tokyo |"
@@ -91,4 +148,12 @@ jobs:
             jq -r '.[0].body' <<<"$comments"
             exit 1
           fi
-          jq -r '.[0].body' <<<"$comments"
+
+      - name: Remove the test comments
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        if: always()
+        run: |
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" |
+            jq -r '.[][] | select(.body | startswith("<!-- tailor-preview: preview-comment-ci-test")) | .id' |
+            while read -r id; do gh api "repos/$GITHUB_REPOSITORY/issues/comments/$id" -X DELETE; done

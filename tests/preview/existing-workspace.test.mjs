@@ -48,3 +48,34 @@ test("preview-cleanup: deletes the workspace recorded in the PR comment", async 
     ["tailor", "workspace", "delete", "--workspace-id", "0a1b2c3d-0000-4000-8000-000000000000", "--yes"],
   ]);
 });
+
+const olderId = "0a1b2c3d-0000-4000-8000-000000000000";
+const newerId = "9f8e7d6c-0000-4000-8000-000000000000";
+const markerComment = (id) => ({ user: { type: "Bot" }, body: `<!-- tailor-preview: my-app-pr-42 id=${id} -->` });
+
+test("preview-deploy: reuses the workspace of the newest marker comment when earlier ones were left behind", async (context) => {
+  const action = await loadAction("preview-deploy");
+  const result = await runStep(context, {
+    action,
+    stepId: "workspace",
+    env: { ...deployEnv, TTL: "" },
+    comments: [markerComment(olderId), markerComment(newerId)],
+  });
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(
+    result.calls.filter((args) => args[2] === "get").map((args) => args[4]),
+    [newerId],
+  );
+});
+
+test("preview-cleanup: deletes the workspace of the newest marker comment when earlier ones were left behind", async (context) => {
+  const action = await loadAction("preview-cleanup");
+  const result = await runStep(context, {
+    action,
+    stepId: "delete",
+    env: { NAME_PREFIX: "my-app", PR_NUMBER: "42" },
+    comments: [markerComment(olderId), markerComment(newerId)],
+  });
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(result.calls, [["tailor", "workspace", "delete", "--workspace-id", newerId, "--yes"]]);
+});
