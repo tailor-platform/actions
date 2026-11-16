@@ -1,10 +1,9 @@
-name: Post ERD preview links as a sticky PR comment
+name: Post ERD preview links as a PR comment
 description: >-
-  Post or update a PR comment linking to ERD viewer artifacts. When links
-  is an empty array, updates the comment to say no relevant ERD changes are
-  in this update instead of posting an empty comment — matching
-  preview-cleanup's convention of updating the sticky comment's status
-  rather than deleting it, so the comment stays a stable place to check.
+  Post a PR comment linking to ERD viewer artifacts. When links is an empty
+  array, the comment says no relevant ERD changes are in this update instead
+  of being left empty. Earlier ERD comments are hidden as outdated, or with
+  sticky set to "true" the newest one is updated in place.
 
 inputs:
   links:
@@ -22,6 +21,12 @@ inputs:
   github-token:
     description: GitHub token with pull-requests:write permission
     required: true
+  sticky:
+    description: >-
+      Set to "true" to update the newest ERD comment in place. Otherwise
+      earlier ERD comments are hidden as outdated and a new one is posted.
+    required: false
+    default: "false"
   pr-number:
     description: Pull request number. Defaults to the current PR number.
     required: false
@@ -81,11 +86,12 @@ runs:
           echo "$EOF"
         } >> "$GITHUB_OUTPUT"
 
-    - name: Post or update comment
+    - name: Post comment
       id: post
-      uses: tailor-platform/actions/_internal/sticky-comment@bed6c5a2dc015d45d78931d9e8989109ec27fc28
+      uses: tailor-platform/actions/_internal/sticky-comment@9dde14278f825531bc127c065f5666d2967ab0a7
       with:
         marker-prefix: "<!-- tailor-erd-preview -->"
         body: ${{ steps.build.outputs.body }}
         github-token: ${{ inputs.github-token }}
+        sticky: ${{ inputs.sticky }}
         pr-number: ${{ inputs.pr-number }}

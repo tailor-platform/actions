@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { promisify } from "node:util";
 import { parse } from "yaml";
+import { classifyPin, thirdPartyUses, withoutThirdPartyShas } from "./internal-pin.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const executeFile = promisify(execFile);
@@ -15,19 +16,6 @@ const comment = parse(await fs.readFile(path.join(root, "erd-schema-comment/acti
 const actionPath = "${{ github.action_path }}";
 
 const runFrom = (directory, step) => step.run.replaceAll(actionPath, path.join(root, directory));
-
-// Renovate bumps third-party pins inside _internal; the pinned commit may lag them without changing behavior.
-const withoutThirdPartyShas = (action) => ({
-  ...action,
-  runs: {
-    ...action.runs,
-    steps: action.runs.steps.map((step) =>
-      step.uses && !step.uses.startsWith("tailor-platform/actions/") ? { ...step, uses: step.uses.replace(/@[0-9a-f]{40}$/, "@<sha>") } : step,
-    ),
-  },
-});
-
-const thirdPartyUses = (action) => action.runs.steps.map((step) => step.uses).filter((uses) => uses && !uses.startsWith("tailor-platform/actions/"));
 
 function outputValue(source, name) {
   const lines = source.split("\n");
@@ -142,10 +130,16 @@ test("public ERD actions pin the GHES-capable internal definitions", async () =>
     assert.ok(ref);
     const sha = ref.split("@")[1];
     assert.match(sha, /^[0-9a-f]{40}$/);
-    const { stdout } = await executeFile("git", ["show", `${sha}:_internal/${internal}/action.yaml`], { cwd: root });
+    const shown = await executeFile("git", ["show", `${sha}:_internal/${internal}/action.yaml`], { cwd: root }).catch(() => null);
+    const pinned = shown ? parse(shown.stdout) : null;
     const local = parse(await fs.readFile(path.join(root, `_internal/${internal}/action.yaml`), "utf8"));
-    assert.deepEqual(withoutThirdPartyShas(parse(stdout)), withoutThirdPartyShas(local), `${internal} must use the verified implementation`);
-    const pinnedUses = thirdPartyUses(parse(stdout));
+    const isAncestor = await executeFile("git", ["merge-base", "--is-ancestor", sha, "HEAD"], { cwd: root }).then(() => true, () => false);
+    const result = classifyPin({ sha, pinned, local, isAncestor });
+    assert.notEqual(result.status, "invalid", `${internal} must use the verified implementation: ${result.reason}`);
+    if (result.status === "behind") {
+      console.log(`::warning file=_internal/${internal}/action.yaml::consumers still run the pinned definition from ${sha.slice(0, 7)}; the working tree has changed since. Bump the _internal pins to pick it up.`);
+    }
+    const pinnedUses = thirdPartyUses(pinned);
     for (const [index, uses] of thirdPartyUses(local).entries()) {
       if (uses !== pinnedUses[index]) {
         console.log(`::warning file=_internal/${internal}/action.yaml::consumers still run ${pinnedUses[index]} from the pinned ${sha.slice(0, 7)}; the working tree has ${uses}. Bump the _internal pins to pick it up.`);
@@ -195,5 +189,31 @@ for (const [server, ghes] of [["https://github.com", "false"], ["https://octo.gh
       assert.ok(upload.uses.startsWith("actions/upload-artifact@"));
       assert.equal(upload.with.archive, false);
     }
+  });
+}
+
+const pinSha = "a".repeat(40);
+const definition = (name) => ({ name, runs: { steps: [{ uses: "actions/upload-artifact@" + "b".repeat(40) }] } });
+
+test("a pinned definition equal to the working tree is a match", () => {
+  assert.equal(classifyPin({ sha: pinSha, pinned: definition("x"), local: definition("x"), isAncestor: true }).status, "match");
+});
+
+test("third-party SHA differences do not break a match", () => {
+  const local = { ...definition("x"), runs: { steps: [{ uses: "actions/upload-artifact@" + "c".repeat(40) }] } };
+  assert.equal(classifyPin({ sha: pinSha, pinned: definition("x"), local, isAncestor: true }).status, "match");
+});
+
+test("a pinned definition behind the working tree is only behind while the pin is in the history", () => {
+  assert.equal(classifyPin({ sha: pinSha, pinned: definition("old"), local: definition("new"), isAncestor: true }).status, "behind");
+});
+
+for (const [name, input] of [
+  ["a pin outside the history", { sha: pinSha, pinned: definition("old"), local: definition("new"), isAncestor: false }],
+  ["a pin that is not a full commit SHA", { sha: "abc1234", pinned: definition("x"), local: definition("x"), isAncestor: true }],
+  ["a pin with no definition at that commit", { sha: pinSha, pinned: null, local: definition("x"), isAncestor: true }],
+]) {
+  test(`${name} is invalid`, () => {
+    assert.equal(classifyPin(input).status, "invalid");
   });
 }

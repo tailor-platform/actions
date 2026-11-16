@@ -36,7 +36,7 @@ workflows:
         - 'tailor-platform/actions@053ee1c31460fc04639c466e5f483ea3150a9a31'
     '.github/workflows/test-erd-comment.yaml':
         - 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1'
-        - 'tailor-platform/actions@bed6c5a2dc015d45d78931d9e8989109ec27fc28'
+        - 'tailor-platform/actions@9dde14278f825531bc127c065f5666d2967ab0a7'
     '.github/workflows/test-erd-export.yaml':
         - 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1'
         - 'actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1'

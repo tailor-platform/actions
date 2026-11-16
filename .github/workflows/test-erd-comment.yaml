@@ -56,7 +56,7 @@ jobs:
             *) echo "::error::Expected comment body to contain the tailordb link"; exit 1 ;;
           esac
 
-      - name: "Test: updates to a no-changes status when links is empty"
+      - name: "Test: posts a no-changes status when links is empty"
         id: update
         uses: $/_internal/erd-comment
         with:
@@ -64,14 +64,72 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           pr-number: ${{ github.event.pull_request.number || inputs.pr-number }}
 
-      - name: "Verify: same comment-id, and no-changes text is present"
+      - name: "Verify: a new comment is posted, the earlier one is hidden, and the no-changes text is present"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           POST_ID: ${{ steps.post.outputs.comment-id }}
           UPDATE_ID: ${{ steps.update.outputs.comment-id }}
         run: |
-          if [ "$POST_ID" != "$UPDATE_ID" ]; then
-            echo "::error::Expected the same comment-id when updating to the no-changes status"
+          if [ -z "$UPDATE_ID" ] || [ "$POST_ID" = "$UPDATE_ID" ]; then
+            echo "::error::Expected a new comment-id for the no-changes status"
+            echo "  post:   $POST_ID"
+            echo "  update: $UPDATE_ID"
+            exit 1
+          fi
+          minimized() {
+            gh api "repos/$GITHUB_REPOSITORY/issues/comments/$1" --jq .node_id |
+              xargs -I{} gh api graphql -f query='query($id: ID!) { node(id: $id) { ... on IssueComment { isMinimized } } }' -f id={} --jq .data.node.isMinimized
+          }
+          if [ "$(minimized "$POST_ID")" != "true" ]; then
+            echo "::error::The earlier comment $POST_ID should be hidden"
+            exit 1
+          fi
+          if [ "$(minimized "$UPDATE_ID")" != "false" ]; then
+            echo "::error::The new comment $UPDATE_ID should not be hidden"
+            exit 1
+          fi
+          BODY=$(gh api "repos/$GITHUB_REPOSITORY/issues/comments/$UPDATE_ID" --jq .body)
+          case "$BODY" in
+            *"No relevant ERD changes"*) ;;
+            *) echo "::error::Expected the no-changes status text"; exit 1 ;;
+          esac
+
+      - name: Remove the comments of the default mode
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMENT_IDS: ${{ steps.post.outputs.comment-id }} ${{ steps.update.outputs.comment-id }}
+        run: |
+          for id in $COMMENT_IDS; do
+            gh api "repos/$GITHUB_REPOSITORY/issues/comments/$id" -X DELETE
+          done
+
+      - name: "Test: posts links (sticky)"
+        id: sticky-post
+        uses: $/_internal/erd-comment
+        with:
+          links: '[{"label": "tailordb", "url": "https://example.com/tailordb.html"}]'
+          base-ref: main
+          sticky: "true"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pr-number: ${{ github.event.pull_request.number || inputs.pr-number }}
+
+      - name: "Test: updates to a no-changes status when links is empty (sticky)"
+        id: sticky-update
+        uses: $/_internal/erd-comment
+        with:
+          links: "[]"
+          sticky: "true"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pr-number: ${{ github.event.pull_request.number || inputs.pr-number }}
+
+      - name: "Verify: sticky keeps the same comment-id and shows the no-changes text"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          POST_ID: ${{ steps.sticky-post.outputs.comment-id }}
+          UPDATE_ID: ${{ steps.sticky-update.outputs.comment-id }}
+        run: |
+          if [ -z "$POST_ID" ] || [ "$POST_ID" != "$UPDATE_ID" ]; then
+            echo "::error::Expected the same comment-id when sticky updates the status"
             echo "  post:   $POST_ID"
             echo "  update: $UPDATE_ID"
             exit 1
@@ -82,11 +140,12 @@ jobs:
             *) echo "::error::Expected the no-changes status text"; exit 1 ;;
           esac
 
-      - name: Cleanup — delete test comment
-        if: always() && steps.post.outputs.comment-id != ''
+      - name: Cleanup — delete test comments
+        if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          COMMENT_ID: ${{ steps.post.outputs.comment-id }}
+          COMMENT_IDS: ${{ steps.post.outputs.comment-id }} ${{ steps.update.outputs.comment-id }} ${{ steps.sticky-post.outputs.comment-id }}
         run: |
-          gh api "repos/$GITHUB_REPOSITORY/issues/comments/$COMMENT_ID" -X DELETE
-          echo "Deleted comment $COMMENT_ID"
+          for id in $COMMENT_IDS; do
+            gh api "repos/$GITHUB_REPOSITORY/issues/comments/$id" -X DELETE || true
+          done
