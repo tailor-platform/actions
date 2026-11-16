@@ -1,7 +1,9 @@
-name: Post or update sticky PR comment
+name: Post PR comment
 description: >-
-  Find an existing PR comment whose body starts with marker-prefix and update it,
-  or create a new comment. The body must include the marker as its first line.
+  Post a PR comment whose first line is the marker. By default every earlier bot
+  comment whose body starts with marker-prefix is hidden as outdated and a new
+  comment is created. With sticky set to "true" the earliest such comment is
+  updated in place instead.
   Internal action — use via preview-comment, preview-cleanup, or plan actions.
 
 inputs:
@@ -17,6 +19,13 @@ inputs:
   github-token:
     description: GitHub token with pull-requests:write permission
     required: true
+  sticky:
+    description: >-
+      Set to "true" to update the earliest comment that starts with marker-prefix
+      in place. Otherwise earlier comments with the marker are hidden as outdated
+      and a new comment is posted.
+    required: false
+    default: "false"
   pr-number:
     description: Pull request number. Defaults to the current PR number.
     required: false
@@ -27,13 +36,15 @@ outputs:
     description: ID of the created or updated comment
     value: ${{ steps.post.outputs.comment-id }}
   existing-body:
-    description: Body of the existing comment before the update (empty when a new comment was created)
+    description: >-
+      Body of the earlier comment with the marker (empty when there was none).
+      The newest one when sticky is off, the one that was updated when sticky is "true".
     value: ${{ steps.post.outputs.existing-body }}
 
 runs:
   using: composite
   steps:
-    - name: Post or update comment
+    - name: Post comment
       id: post
       shell: bash
       env:
@@ -41,6 +52,7 @@ runs:
         GH_ENTERPRISE_TOKEN: ${{ inputs.github-token }}
         MARKER_PREFIX: ${{ inputs.marker-prefix }}
         BODY: ${{ inputs.body }}
+        STICKY: ${{ inputs.sticky }}
         PR_NUMBER: ${{ inputs.pr-number || github.event.pull_request.number }}
       run: |
         export GH_HOST="${GITHUB_SERVER_URL#*://}"
@@ -54,13 +66,17 @@ runs:
           exit 1
         fi
 
-        EXISTING=$(gh api --paginate --slurp \
+        MATCHES=$(gh api --paginate --slurp \
           "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" | \
-          jq -r --arg m "$MARKER_PREFIX" \
-            '[ .[][] | select(.user.type == "Bot" and (.body | startswith($m))) ] | first | {id: .id, body: .body} // empty')
+          jq -c --arg m "$MARKER_PREFIX" \
+            '[ .[][] | select(.user.type == "Bot" and (.body | startswith($m))) | {id: .id, node_id: .node_id, body: .body} ]')
 
-        EXISTING_ID=$(echo "$EXISTING" | jq -r '.id // empty')
-        EXISTING_BODY=$(echo "$EXISTING" | jq -r '.body // empty')
+        if [ "$STICKY" = "true" ]; then
+          PICK='first'
+        else
+          PICK='last'
+        fi
+        EXISTING_BODY=$(printf '%s' "$MATCHES" | jq -r "$PICK | .body // empty")
 
         EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
         {
@@ -70,16 +86,28 @@ runs:
         } >> "$GITHUB_OUTPUT"
 
         PAYLOAD=$(jq -n --arg body "$BODY" '{body: $body}')
-        if [ -n "$EXISTING_ID" ]; then
-          echo "$PAYLOAD" | gh api "repos/$GITHUB_REPOSITORY/issues/comments/$EXISTING_ID" \
-            -X PATCH --input - > /dev/null
-          echo "comment-id=$EXISTING_ID" >> "$GITHUB_OUTPUT"
-        else
-          COMMENT_ID=$(echo "$PAYLOAD" | gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
-            -X POST --input - | jq -r '.id // empty')
-          if [ -z "$COMMENT_ID" ]; then
-            echo "::error::sticky-comment: failed to create comment (no id returned)"
-            exit 1
+        if [ "$STICKY" = "true" ]; then
+          EXISTING_ID=$(printf '%s' "$MATCHES" | jq -r 'first | .id // empty')
+          if [ -n "$EXISTING_ID" ]; then
+            echo "$PAYLOAD" | gh api "repos/$GITHUB_REPOSITORY/issues/comments/$EXISTING_ID" \
+              -X PATCH --input - > /dev/null
+            echo "comment-id=$EXISTING_ID" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
-          echo "comment-id=$COMMENT_ID" >> "$GITHUB_OUTPUT"
+        else
+          while read -r NODE_ID; do
+            if ! gh api graphql \
+              -f query='mutation($id: ID!) { minimizeComment(input: {subjectId: $id, classifier: OUTDATED}) { minimizedComment { isMinimized } } }' \
+              -f id="$NODE_ID" > /dev/null; then
+              echo "::warning::sticky-comment: could not hide the earlier comment $NODE_ID"
+            fi
+          done < <(printf '%s' "$MATCHES" | jq -r '.[].node_id')
         fi
+
+        COMMENT_ID=$(echo "$PAYLOAD" | gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+          -X POST --input - | jq -r '.id // empty')
+        if [ -z "$COMMENT_ID" ]; then
+          echo "::error::sticky-comment: failed to create comment (no id returned)"
+          exit 1
+        fi
+        echo "comment-id=$COMMENT_ID" >> "$GITHUB_OUTPUT"
