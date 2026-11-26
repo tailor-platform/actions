@@ -1160,31 +1160,65 @@ function enableMinimumReleaseAgeExcludePrune(workspacePath) {
 
 /**
  * What v9 spells as the peer suffix of an importer's reference: the peer
- * bindings of a `packages` entry (its own and those of every snapshot) and,
- * recursively, the bindings of each package those peers resolved to. v13
+ * bindings of the given `packages` entries (their own and those of every
+ * snapshot) and, transitively, of each package those peers resolved to. v13
  * references carry no peer group, so a binding that only changed on a peer's
- * provider is found nowhere else.
+ * provider is found nowhere else. Each reachable entry is recorded once, so a
+ * provider that many paths share costs one visit, and a cycle ends there.
  * @param {Record<string, any>} packages
- * @param {string} key
- * @param {ReadonlySet<string>} path keys already being fingerprinted, to stop cycles
- * @returns {unknown}
+ * @param {string[]} startKeys
+ * @returns {Array<[string, unknown]>} the reachable entries' peer data, sorted by key
  */
-function packagePeerFingerprint(packages, key, path = new Set()) {
-  const entry = packages[key];
-  if (!entry || path.has(key)) return null;
-  const nextPath = new Set(path).add(key);
-  const groups = [entry.peerDependencies, ...(Array.isArray(entry.snapshots) ? entry.snapshots.map((snapshot) => snapshot?.peerDependencies) : [])];
-  const providers = {};
-  for (const group of groups) {
-    if (!group || typeof group !== "object") continue;
-    for (const [peerName, binding] of Object.entries(group)) {
-      const version = typeof binding === "object" && binding !== null ? binding.version : null;
-      if (typeof version !== "string") continue;
-      const providerKey = version.lastIndexOf("@") > 0 ? version : `${peerName}@${version}`;
-      providers[providerKey] = packagePeerFingerprint(packages, providerKey, nextPath);
+function packagePeerFingerprint(packages, startKeys) {
+  const visited = new Map();
+  const pending = [...startKeys];
+  while (pending.length > 0) {
+    const key = pending.pop();
+    const entry = packages[key];
+    if (!entry || visited.has(key)) continue;
+    visited.set(key, [entry.peerDependencies ?? null, entry.snapshots ?? null]);
+    const groups = [entry.peerDependencies, ...(Array.isArray(entry.snapshots) ? entry.snapshots.map((snapshot) => snapshot?.peerDependencies) : [])];
+    for (const group of groups) {
+      if (!group || typeof group !== "object") continue;
+      for (const [peerName, binding] of Object.entries(group)) {
+        const version = typeof binding === "object" && binding !== null ? binding.version : null;
+        if (typeof version !== "string") continue;
+        pending.push(version.lastIndexOf("@") > 0 ? version : `${peerName}@${version}`);
+      }
     }
   }
-  return [entry.peerDependencies ?? null, entry.snapshots ?? null, providers];
+  return [...visited].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
+/**
+ * An injected workspace dependency is written `{specifier: "workspace:*",
+ * injected: true}` with no `version`: its package entry is keyed by the
+ * workspace directory (`@x/b@file:packages/b`), which only the entry's own
+ * key tells.
+ * @param {unknown} entry
+ * @returns {boolean}
+ */
+function isInjectedWithoutVersion(entry) {
+  return typeof entry === "object" && entry !== null && entry.injected === true && entry.version === undefined;
+}
+
+/**
+ * @param {string} name the dependency's name in the importer
+ * @param {{specifier?: unknown}} entry
+ * @returns {string} the injected package's own name: `workspace:real@*` names it when the dependency is an alias
+ */
+function injectedPackageName(name, entry) {
+  const named = typeof entry.specifier === "string" ? entry.specifier.match(/^workspace:(@?[^@]+)@/) : null;
+  return named ? named[1] : name;
+}
+
+/**
+ * @param {Record<string, unknown>} packages
+ * @param {string} packageName
+ * @returns {string[]}
+ */
+function injectedPackageKeys(packages, packageName) {
+  return Object.keys(packages).filter((key) => key.startsWith(`${packageName}@file:`));
 }
 
 /**
@@ -1235,7 +1269,8 @@ function parseNextFormatImporters(text) {
         const reference = typeof resolvedVersion === "string" ? resolvedVersion.replace(/^npm:/, "") : resolvedVersion;
         const packageName = catalogAliasTarget(catalogEntry) ?? name;
         const packageKey = typeof reference === "string" && reference.lastIndexOf("@") > 0 ? reference : `${packageName}@${reference}`;
-        return JSON.stringify([name, entry, catalogEntry, packagePeerFingerprint(packages, packageKey)]);
+        const startKeys = isInjectedWithoutVersion(entry) ? injectedPackageKeys(packages, injectedPackageName(name, entry)) : [packageKey];
+        return JSON.stringify([name, entry, catalogEntry, packagePeerFingerprint(packages, startKeys)]);
       })
       .join("\n");
   }

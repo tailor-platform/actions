@@ -258,6 +258,16 @@ describe("parseImporters (lockfile format v13)", () => {
       after: "1.2.8",
     },
     {
+      name: "a peer binding change of an injected workspace dependency, whose package entry is keyed by its file: path",
+      lockfile: (react) =>
+        v13Lockfile({
+          projects: { ".": { dependencies: { "@x/b": { specifier: "workspace:*", injected: true } } } },
+          packages: { "@x/b@file:packages/b": peerBinding(react) },
+        }),
+      before: "18.3.1",
+      after: "18.3.2",
+    },
+    {
       name: "a bumped catalog version for a dependency whose entry is an object with a catalog: specifier",
       lockfile: (version) =>
         v13Lockfile({
@@ -288,6 +298,23 @@ describe("parseImporters (lockfile format v13)", () => {
     const v9 = ["lockfileVersion: '9.0'", "importers:", "  .:", "    dependencies:", "      foo:", "        specifier: ^1.0.0"].join("\n");
     assert.deepEqual(parseImporters(withEnvDocument(v9)), parseImporters(v9));
     assert.notDeepEqual(parseImporters(withEnvDocument(v9)), {});
+  });
+
+  test("fingerprints peer providers that many paths share without walking each path", { timeout: 10_000 }, () => {
+    const depth = 20;
+    const lockfile = (leaf) => {
+      const packages = {};
+      for (let level = 0; level <= depth; level++) {
+        for (const side of ["x", "y"]) {
+          const next = level === depth ? {} : { x: { specifier: "*", version: `${level + 1}.0.0` }, y: { specifier: "*", version: `${level + 1}.0.0` } };
+          packages[`${side}${level}@${level}.0.0`] = { peerDependencies: level === depth ? { leaf: { specifier: "*", version: leaf } } : Object.fromEntries(Object.entries(next).map(([n, binding]) => [`${n}${level + 1}`, binding])) };
+        }
+      }
+      return v13Lockfile({ projects: { ".": { dependencies: { x0: "0.0.0" } } }, packages });
+    };
+    const before = parseImporters(lockfile("1.0.0"))["."];
+    assert.ok(before.length < 100_000);
+    assert.notEqual(before, parseImporters(lockfile("2.0.0"))["."]);
   });
 
   test("terminates when peer providers bind each other in a cycle", () => {
