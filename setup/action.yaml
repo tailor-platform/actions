@@ -34,9 +34,11 @@ runs:
         corepack_dir="$RUNNER_TEMP/tailor-corepack"
         bin_dir="$corepack_dir/bin"
         if [ "$RUNNER_OS" = Windows ]; then bin_dir="$corepack_dir"; fi
+        shim_dir="$corepack_dir/shims"
         npm install --global --prefix "$corepack_dir" corepack@0.36.0
-        "$bin_dir/corepack" enable --install-directory "$bin_dir" yarn
-        echo "$bin_dir" >> "$GITHUB_PATH"
+        mkdir -p "$shim_dir"
+        "$bin_dir/corepack" enable --install-directory "$shim_dir" yarn
+        echo "$shim_dir" >> "$GITHUB_PATH"
 
     - name: Restore the Yarn cache
       if: inputs.package-manager == 'yarn'

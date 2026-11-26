@@ -118,11 +118,27 @@ jobs:
           YARN_VERSION_PATTERN: ${{ matrix.yarn-version }}
         run: |
           case "$RUNNER_OS" in
-            Windows) corepack_yarn="$(cygpath -u "$RUNNER_TEMP")/tailor-corepack/yarn" ;;
-            *) corepack_yarn="$RUNNER_TEMP/tailor-corepack/bin/yarn" ;;
+            Windows) runner_temp="$(cygpath -u "$RUNNER_TEMP")" ;;
+            *) runner_temp="$RUNNER_TEMP" ;;
           esac
-          test "$(command -v yarn)" = "$corepack_yarn"
+          test "$(command -v yarn)" = "$runner_temp/tailor-corepack/shims/yarn"
           [[ "$(yarn --version)" == $YARN_VERSION_PATTERN ]]
+
+      - name: "Verify: setup puts no other Corepack binaries on PATH"
+        run: |
+          for bin in corepack pnpm pnpx; do
+            [[ "$(command -v "$bin")" != */tailor-corepack/* ]]
+          done
+
+      - name: "Verify: PowerShell and cmd run the declared Yarn version"
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          YARN_VERSION: ${{ matrix.yarn-version }}
+        run: |
+          foreach ($version in (yarn --version), (cmd /c yarn --version)) {
+            if ($version -ne $env:YARN_VERSION) { throw "yarn --version printed $version" }
+          }
 
       - name: "Test: installs with the install action"
         uses: $/install
