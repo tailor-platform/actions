@@ -1167,12 +1167,15 @@ function parseNextFormatImporters(text) {
     if (!dependencies || typeof dependencies !== "object") continue;
     importers[path] = Object.entries(dependencies)
       .map(([name, entry]) => {
-        const catalogName = typeof entry === "string" && entry.startsWith("catalog:") ? entry.slice("catalog:".length) || "default" : null;
-        const catalogVersion = catalogName === null ? null : (catalogs[catalogName]?.[name] ?? null);
-        const reference = (typeof entry === "string" ? catalogVersion ?? entry : entry?.version)?.replace(/^npm:/, "");
+        const specifier = typeof entry === "string" ? entry : entry?.specifier;
+        const catalogName = typeof specifier === "string" && specifier.startsWith("catalog:") ? specifier.slice("catalog:".length) || "default" : null;
+        const catalogEntry = catalogName === null ? null : (catalogs[catalogName]?.[name] ?? null);
+        const catalogVersion = typeof catalogEntry === "string" ? catalogEntry : catalogEntry?.version;
+        const resolvedVersion = typeof entry === "string" ? (catalogVersion ?? entry) : (entry?.version ?? catalogVersion);
+        const reference = typeof resolvedVersion === "string" ? resolvedVersion.replace(/^npm:/, "") : resolvedVersion;
         const packageKey = typeof reference === "string" && reference.lastIndexOf("@") > 0 ? reference : `${name}@${reference}`;
         const resolved = packages[packageKey];
-        return JSON.stringify([name, entry, catalogVersion, resolved?.peerDependencies ?? null, resolved?.snapshots ?? null]);
+        return JSON.stringify([name, entry, catalogEntry, resolved?.peerDependencies ?? null, resolved?.snapshots ?? null]);
       })
       .join("\n");
   }

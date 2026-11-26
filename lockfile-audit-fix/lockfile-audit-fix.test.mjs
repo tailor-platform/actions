@@ -215,6 +215,32 @@ describe("parseImporters (lockfile format v13)", () => {
     assert.notEqual(parseImporters(lockfile("0.7.0"))["."], parseImporters(lockfile("0.7.3"))["."]);
   });
 
+  test("notices a bumped version of a catalog entry written as an object for a range specifier", () => {
+    const lockfile = (version) =>
+      [
+        "{",
+        '\t"lockfileVersion": "13.0",',
+        `\t"settings": {"catalogs": {"default": {"ms": {"specifier": "^0.7.0", "version": "${version}",},},},},`,
+        '\t"projects": {".": {"dependencies": {"ms": "catalog:",},},},',
+        `\t"packages": {"ms@${version}": {},},`,
+        "}",
+      ].join("\n");
+    assert.notEqual(parseImporters(lockfile("0.7.0"))["."], parseImporters(lockfile("0.7.3"))["."]);
+  });
+
+  test("looks up the catalog for a dependency whose entry is an object with a catalog: specifier", () => {
+    const lockfile = (version) =>
+      [
+        "{",
+        '\t"lockfileVersion": "13.0",',
+        `\t"settings": {"catalogs": {"default": {"ms": "${version}",},},},`,
+        '\t"projects": {".": {"dependencies": {"ms": {"specifier": "catalog:", "with": {"react": "18.3.1",},},},},},',
+        `\t"packages": {"ms@${version}": {},},`,
+        "}",
+      ].join("\n");
+    assert.notEqual(parseImporters(lockfile("0.7.0"))["."], parseImporters(lockfile("0.7.3"))["."]);
+  });
+
   test("returns an empty object for a v13 lockfile without projects", () => {
     assert.deepEqual(parseImporters('{\n\t"lockfileVersion": "13.0",\n}\n'), {});
   });
