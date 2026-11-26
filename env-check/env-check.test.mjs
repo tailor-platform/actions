@@ -89,7 +89,7 @@ test("fails with one error naming every empty required name and the commands tha
 
   assert.equal(result.status, 1);
   assert.deepEqual(annotations(result.stdout), [
-    `::error title=Missing GitHub variables or secrets::No value for ${CLIENT_SECRET}, ${WORKSPACE_ID} in GitHub Environment "stg", the repository, or the organization. Run \`tailor setup ci env --check --environment stg\` to list what is missing and print the gh commands that set it, or \`tailor setup ci env --environment stg\` without write access to the repository.`,
+    `::error title=Missing GitHub variables or secrets::No value for ${CLIENT_SECRET}, ${WORKSPACE_ID} in GitHub Environment "stg", the repository, or the organization. Run \`tailor setup ci env --check --environment stg\` to list what is missing and print the GitHub CLI commands that set it, or \`tailor setup ci env --environment stg\` without write access to the repository.`,
   ]);
   assert.equal(result.call, null);
 });
@@ -233,7 +233,7 @@ test("leaves out --environment for a job without a GitHub Environment", async (t
   assert.equal(result.call.args, "exec tailor setup ci env");
   assert.match(
     annotations(result.stdout).find((line) => line.startsWith("::error title=")),
-    /::No value for TAILOR_AUTOFIX_APP_PRIVATE_KEY in the repository or the organization\. Run `tailor setup ci env --check` to list what is missing and print the gh commands that set it, or `tailor setup ci env` without write access to the repository\. This step's log shows the output of `tailor setup ci env`\.$/,
+    /::No value for TAILOR_AUTOFIX_APP_PRIVATE_KEY in the repository or the organization\. Run `tailor setup ci env --check` to list what is missing and print the GitHub CLI commands that set it, or `tailor setup ci env` without write access to the repository\. This step's log shows the output of `tailor setup ci env`\.$/,
   );
 });
 

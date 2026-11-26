@@ -114,7 +114,7 @@ runs:
         args=(setup ci env "${narrow[@]}")
         command="tailor ${args[*]}"
         check_command="tailor setup ci env --check${narrow[*]:+ ${narrow[*]}}"
-        message="No value for $(join "${missing[@]}") in $where. Run \`$check_command\` to list what is missing and print the gh commands that set it, or \`$command\` without write access to the repository."
+        message="No value for $(join "${missing[@]}") in $where. Run \`$check_command\` to list what is missing and print the GitHub CLI commands that set it, or \`$command\` without write access to the repository."
 
         if [ "${#cli[@]}" -gt 0 ]; then
           echo "::group::$command"
