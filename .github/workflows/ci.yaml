@@ -34,6 +34,7 @@ jobs:
       - run: pnpm test:deploy-outputs
       - run: pnpm test:bundle-cache
       - run: pnpm test:drift-check
+      - run: pnpm test:env-check
       - run: pnpm test:plan
       - run: pnpm test:preview
       - run: pnpm test:tag-guard

@@ -151,7 +151,7 @@ runs:
         {
           echo "### ⏭️ Tailor Platform Plan ($KEY)"
           echo ""
-          echo "Workspace is not yet provisioned — run deploy first to create it."
+          echo "Workspace is not yet provisioned: TAILOR_PLATFORM_WORKSPACE_ID is empty. Create the workspace with \`tailor workspace create\`, then set its ID in that variable (\`tailor setup ci env\` prints the command)."
         } >> "$GITHUB_STEP_SUMMARY"
 
     - name: Write step summary

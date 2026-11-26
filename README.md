@@ -245,6 +245,38 @@ Detect drift between the generated GitHub Actions workflows and the current conf
 
 ---
 
+### [`env-check`](env-check/action.yaml)
+
+Report the GitHub variables and secrets a job reads that have no value. For each listed name, set an `env` entry of that name on the step to `true` or `false`, whether the value is non-empty, so the step never sees the value itself. When a required name has no value, the step fails with one `::error::` that names every empty one and points to `tailor setup ci env`; with `package-manager`, it also prints the output of `tailor setup ci env` for the environment from the installed CLI. Empty optional names are logged on one line without an annotation.
+
+```yaml
+- uses: tailor-platform/actions/env-check@v2
+  env:
+    TAILOR_PLATFORM_MACHINE_USER_CLIENT_SECRET: ${{ secrets.TAILOR_PLATFORM_MACHINE_USER_CLIENT_SECRET != '' }}
+    TAILOR_PLATFORM_WORKSPACE_ID: ${{ vars.TAILOR_PLATFORM_WORKSPACE_ID != '' }}
+    TAILOR_SLACK_BOT_TOKEN: ${{ secrets.TAILOR_SLACK_BOT_TOKEN != '' }}
+  with:
+    environment: production
+    package-manager: pnpm
+    required: |
+      TAILOR_PLATFORM_MACHINE_USER_CLIENT_SECRET
+      TAILOR_PLATFORM_WORKSPACE_ID
+    optional: |
+      TAILOR_SLACK_BOT_TOKEN
+```
+
+#### Inputs
+
+| Name | Required | Default | Description |
+|------|----------|---------|-------------|
+| `environment` | No | | GitHub Environment the job runs in, named in the report and passed to `tailor setup ci env --environment`; empty for a job without one |
+| `required` | No | | Newline-separated names that must have a value |
+| `optional` | No | | Newline-separated names that may be empty |
+| `fail-on-missing` | No | `true` | Fail the job when a required name has no value; when `false`, report it as a warning |
+| `package-manager` | No | | Package manager (`pnpm`, `npm`, `yarn`, or `bun`) that runs the installed `tailor` CLI; leave it empty in a job that does not install the SDK |
+
+---
+
 ### [`seed-validate`](seed-validate/action.yaml)
 
 Validate seed data against the generated schema, detecting JSONL records that do not match their target type. Requires `tailor generate` to have run first.
