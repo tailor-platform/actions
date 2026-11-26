@@ -119,7 +119,7 @@ runs:
         if [ "${#cli[@]}" -gt 0 ]; then
           echo "::group::$command"
           status=0
-          (cd "$GITHUB_WORKSPACE" && env -u TAILOR_JSON_OUTPUT "${checked[@]/#/-u}" "${cli[@]}" "${args[@]}") || status=$?
+          (cd "$GITHUB_WORKSPACE" && env -u TAILOR_JSON_OUTPUT "${checked[@]/#/-u}" TAILOR_GITHUB_ACTIONS_ANNOTATIONS=false "${cli[@]}" "${args[@]}") || status=$?
           echo "::endgroup::"
           if [ "$status" -eq 0 ]; then
             message+=" This step's log shows the output of \`$command\`."
@@ -131,7 +131,7 @@ runs:
           message+=" Runs that Dependabot starts receive Dependabot secrets, not Actions secrets."
         fi
 
-        echo "::$level title=Missing GitHub variables or secrets::${message//'%'/'%25'}"
+        echo "::$level title=Missing GitHub variables or secrets::$message"
         if [ "$level" = error ]; then
           exit 1
         fi

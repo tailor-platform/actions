@@ -18,6 +18,7 @@ const FAKE_CLI = `#!/bin/sh
   echo "cwd=$(pwd)"
   echo "client-id=\${TAILOR_PLATFORM_MACHINE_USER_CLIENT_ID-unset}"
   echo "json=\${TAILOR_JSON_OUTPUT-unset}"
+  echo "annotations=\${TAILOR_GITHUB_ACTIONS_ANNOTATIONS-unset}"
 } > "$FAKE_CALLS"
 echo "# fake setup ci env output"
 exit "\${FAKE_STATUS:-0}"
@@ -195,6 +196,7 @@ for (const [packageManager, bin, args] of [
       cwd: result.workspace,
       "client-id": "unset",
       json: "unset",
+      annotations: "false",
     });
     assert.match(
       result.stdout,

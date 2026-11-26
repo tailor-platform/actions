@@ -10,7 +10,7 @@ inputs:
       Tailor Platform workspace ID to run dry-run against.
       Set this from a GitHub Environment variable (e.g. vars.TAILOR_PLATFORM_WORKSPACE_ID).
       When empty, the action reports "not yet provisioned" and exits successfully —
-      this covers the chicken-and-egg case where a workspace does not exist before the first deploy.
+      this covers pull requests opened before the workspace is created and its ID is set.
     required: false
     default: ""
   label:

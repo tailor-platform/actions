@@ -124,7 +124,7 @@ The [`tailor setup`](https://github.com/tailor-platform/sdk) command generates a
 
 Show planned changes by running dry-run against the target workspace. Merges the base branch and runs `tailor deploy --dry-run`, then comments the result on the PR. The dry-run output is also printed to the job log.
 
-The action targets the workspace by `workspace-id` only. When `workspace-id` is empty (workspace not yet provisioned), the action skips the dry-run and reports that the workspace is not provisioned yet — the job succeeds. This covers the chicken-and-egg situation of running `plan` on a PR before the first deploy.
+The action targets the workspace by `workspace-id` only. When `workspace-id` is empty (workspace not yet provisioned), the action skips the dry-run and reports that the workspace is not provisioned yet — the job succeeds. This covers pull requests opened before the workspace is created and its ID is set.
 
 **Prerequisites:** Same as `deploy` - checkout, Node.js setup, package manager setup, and dependency installation.
 
@@ -248,6 +248,8 @@ Detect drift between the generated GitHub Actions workflows and the current conf
 ### [`env-check`](env-check/action.yaml)
 
 Report the GitHub variables and secrets a job reads that have no value. For each listed name, set an `env` entry of that name on the step to `true` or `false`, whether the value is non-empty, so the step never sees the value itself. When a required name has no value, the step fails with one `::error::` that names every empty one and points to `tailor setup ci env`; with `package-manager`, it also prints the output of `tailor setup ci env` for the environment from the installed CLI. Empty optional names are logged on one line without an annotation.
+
+#### Usage
 
 ```yaml
 - uses: tailor-platform/actions/env-check@v2
