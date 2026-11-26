@@ -546,6 +546,63 @@ function isMentioned(haystack, name) {
 }
 
 /**
+ * True for a lockfile in the experimental `lockfile.format: v13` layout, a
+ * JSON document with a trailing comma after every entry, which is also valid
+ * YAML. The document's first character tells it apart from the block-style
+ * YAML of lockfileVersion 9.0, whatever `lockfileVersion` it records.
+ * @param {string} text
+ * @returns {boolean}
+ */
+function isNextFormatLockfile(text) {
+  return text.trimStart().startsWith("{");
+}
+
+/**
+ * Removes the comma before each closing `}` or `]` so the document parses as
+ * JSON. Only characters outside string literals are looked at, so a package
+ * name or version containing `,}` is left alone.
+ * @param {string} text
+ * @returns {string}
+ */
+function stripTrailingCommas(text) {
+  let out = "";
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      out += ch;
+      if (ch === "\\") out += text[++i] ?? "";
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      out += ch;
+      continue;
+    }
+    if (ch === ",") {
+      const next = text.slice(i + 1).match(/^\s*([}\]])/);
+      if (next) continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
+/**
+ * @param {string} text
+ * @returns {Record<string, any> | null} the parsed v13 document, or null when it isn't valid
+ */
+function parseNextFormatLockfile(text) {
+  try {
+    const parsed = JSON.parse(stripTrailingCommas(text));
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Reads pnpm-lock.yaml with its own top-level `overrides:` block (a mirror
  * of pnpm-workspace.yaml's `overrides:`) excluded first — scanning the file
  * whole would make every override look "mentioned" off the back of its own
@@ -568,7 +625,14 @@ function isMentioned(haystack, name) {
  */
 function readLockfileOutsideOverrides(lockfilePath) {
   if (!existsSync(lockfilePath)) return null;
-  const lines = readFileSync(lockfilePath, "utf8").split("\n");
+  const raw = readFileSync(lockfilePath, "utf8");
+  if (isNextFormatLockfile(raw)) {
+    const document = parseNextFormatLockfile(raw);
+    if (!document || !("lockfileVersion" in document)) return null;
+    if (document.settings) delete document.settings.overrides;
+    return JSON.stringify(document, null, "\t");
+  }
+  const lines = raw.split("\n");
   if (!lines.some((l) => /^lockfileVersion\s*:/.test(l))) return null;
   const block = findOverridesBlock(lines);
   if (!block) return lines.join("\n");
@@ -1080,6 +1144,42 @@ function enableMinimumReleaseAgeExcludePrune(workspacePath) {
 }
 
 /**
+ * The v13 counterpart of parseImporters: each project's `dependencies`
+ * entries (never `devDependencies`) from the `projects` section. v13
+ * references carry no peer suffix, so each entry is followed by the peer
+ * bindings of the `packages` entry it resolves to; a change that v9 shows as
+ * a new suffix on the importer's reference then still changes the text. A
+ * `catalog:` entry is followed by the version its catalog records, which v9
+ * shows as the importer's `version:`.
+ * @param {string} text
+ * @returns {Record<string, string>}
+ */
+function parseNextFormatImporters(text) {
+  const document = parseNextFormatLockfile(text);
+  const projects = document?.projects;
+  if (!projects || typeof projects !== "object") return {};
+  const packages = document.packages ?? {};
+  const catalogs = document.settings?.catalogs ?? {};
+
+  const importers = {};
+  for (const [path, project] of Object.entries(projects)) {
+    const dependencies = project?.dependencies;
+    if (!dependencies || typeof dependencies !== "object") continue;
+    importers[path] = Object.entries(dependencies)
+      .map(([name, entry]) => {
+        const catalogName = typeof entry === "string" && entry.startsWith("catalog:") ? entry.slice("catalog:".length) || "default" : null;
+        const catalogVersion = catalogName === null ? null : (catalogs[catalogName]?.[name] ?? null);
+        const reference = (typeof entry === "string" ? catalogVersion ?? entry : entry?.version)?.replace(/^npm:/, "");
+        const packageKey = typeof reference === "string" && reference.lastIndexOf("@") > 0 ? reference : `${name}@${reference}`;
+        const resolved = packages[packageKey];
+        return JSON.stringify([name, entry, catalogVersion, resolved?.peerDependencies ?? null, resolved?.snapshots ?? null]);
+      })
+      .join("\n");
+  }
+  return importers;
+}
+
+/**
  * Parses pnpm-lock.yaml's per-importer `dependencies` blocks (never
  * `devDependencies`), keyed by importer path, as raw indented text — good
  * enough to diff without a full YAML parser.
@@ -1087,6 +1187,7 @@ function enableMinimumReleaseAgeExcludePrune(workspacePath) {
  * @returns {Record<string, string>}
  */
 function parseImporters(text) {
+  if (isNextFormatLockfile(text)) return parseNextFormatImporters(text);
   const lines = text.split("\n");
   const importersIdx = lines.findIndex((l) => /^importers:\s*$/.test(l));
   if (importersIdx === -1) return {};
@@ -1173,6 +1274,7 @@ function loadFixedGroupNormalizer(cwd) {
 function diffRuntimeDeps({ beforeText, afterText, cwd }) {
   const beforeImporters = parseImporters(beforeText);
   const afterImporters = parseImporters(afterText);
+  const formatChanged = isNextFormatLockfile(beforeText) !== isNextFormatLockfile(afterText);
   const paths = new Set([...Object.keys(beforeImporters), ...Object.keys(afterImporters)]);
   const normalize = loadFixedGroupNormalizer(cwd);
   const changedNames = new Set();
@@ -1180,7 +1282,7 @@ function diffRuntimeDeps({ beforeText, afterText, cwd }) {
   for (const importerPath of paths) {
     const beforeDeps = beforeImporters[importerPath] ?? "";
     const afterDeps = afterImporters[importerPath] ?? "";
-    if (beforeDeps === afterDeps) continue;
+    if (formatChanged ? beforeDeps === "" && afterDeps === "" : beforeDeps === afterDeps) continue;
 
     const meta = readPackageMeta(importerPath, cwd);
     if (!meta || meta.private || !meta.name) continue;

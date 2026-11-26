@@ -138,6 +138,141 @@ describe("parseImporters", () => {
   });
 });
 
+const V13_WORKSPACE_LOCKFILE = readFileSync(
+  join(__dirname, "..", "tests", "lockfile-audit-fix", "format-v13", "workspace-lock.yaml"),
+  "utf8",
+);
+
+describe("parseImporters (lockfile format v13)", () => {
+  test("reads each project's dependencies from the projects section, not devDependencies", () => {
+    const importers = parseImporters(V13_WORKSPACE_LOCKFILE);
+    assert.deepEqual(Object.keys(importers).sort(), [".", "packages/a", "packages/b"]);
+    assert.match(importers["packages/a"], /uri-js/);
+    assert.doesNotMatch(importers["packages/a"], /yaml/);
+  });
+
+  test("tells projects apart when only the resolved version of a range specifier changes", () => {
+    const bumped = V13_WORKSPACE_LOCKFILE.replace('"version": "2.1.3"', '"version": "2.1.4"');
+    assert.notEqual(parseImporters(bumped)["packages/b"], parseImporters(V13_WORKSPACE_LOCKFILE)["packages/b"]);
+    assert.equal(parseImporters(bumped)["packages/a"], parseImporters(V13_WORKSPACE_LOCKFILE)["packages/a"]);
+  });
+
+  test("notices a peer binding change that only appears in the referenced package entry", () => {
+    const rebound = V13_WORKSPACE_LOCKFILE.replace(
+      /("react-dom@18\.3\.1": \{[\s\S]*?"peerDependencies": \{[\s\S]*?"version": ")18\.3\.1/,
+      "$118.3.2",
+    );
+    assert.notEqual(rebound, V13_WORKSPACE_LOCKFILE);
+    assert.notEqual(parseImporters(rebound)["."], parseImporters(V13_WORKSPACE_LOCKFILE)["."]);
+  });
+
+  test("notices a peer binding change of the package an npm alias resolves to", () => {
+    const lockfile = (reactVersion) =>
+      [
+        "{",
+        '\t"lockfileVersion": "13.0",',
+        '\t"projects": {".": {"dependencies": {"rd": {"specifier": "npm:react-dom@^18.2.0", "version": "react-dom@18.3.1",},},},},',
+        `\t"packages": {"react-dom@18.3.1": {"peerDependencies": {"react": {"specifier": "^18.3.1", "version": "${reactVersion}",},},},},`,
+        "}",
+      ].join("\n");
+    assert.notEqual(parseImporters(lockfile("18.3.1"))["."], parseImporters(lockfile("18.3.2"))["."]);
+  });
+
+  test("notices a peer binding change recorded under snapshots of the referenced package", () => {
+    const lockfile = (reactVersion) =>
+      [
+        "{",
+        '\t"lockfileVersion": "13.0",',
+        '\t"projects": {".": {"dependencies": {"react-dom": {"specifier": "^18.2.0", "version": "18.3.1",},},},},',
+        `\t"packages": {"react-dom@18.3.1": {"snapshots": [{"peerDependencies": {"react": {"version": "${reactVersion}",},},},],},},`,
+        "}",
+      ].join("\n");
+    assert.notEqual(parseImporters(lockfile("18.3.1"))["."], parseImporters(lockfile("18.3.2"))["."]);
+  });
+
+  test("notices a peer binding change of the package an npm: specifier string resolves to", () => {
+    const lockfile = (reactVersion) =>
+      [
+        "{",
+        '\t"lockfileVersion": "13.0",',
+        '\t"projects": {".": {"dependencies": {"other": "npm:react-dom@18.3.1",},},},',
+        `\t"packages": {"react-dom@18.3.1": {"peerDependencies": {"react": {"specifier": "^18.3.1", "version": "${reactVersion}",},},},},`,
+        "}",
+      ].join("\n");
+    assert.notEqual(parseImporters(lockfile("18.3.1"))["."], parseImporters(lockfile("18.3.2"))["."]);
+  });
+
+  test("notices a bumped catalog version for a dependency declared as catalog:", () => {
+    const lockfile = (version) =>
+      [
+        "{",
+        '\t"lockfileVersion": "13.0",',
+        `\t"settings": {"catalogs": {"default": {"ms": "${version}",},},},`,
+        '\t"projects": {".": {"dependencies": {"ms": "catalog:",},},},',
+        `\t"packages": {"ms@${version}": {},},`,
+        "}",
+      ].join("\n");
+    assert.notEqual(parseImporters(lockfile("0.7.0"))["."], parseImporters(lockfile("0.7.3"))["."]);
+  });
+
+  test("returns an empty object for a v13 lockfile without projects", () => {
+    assert.deepEqual(parseImporters('{\n\t"lockfileVersion": "13.0",\n}\n'), {});
+  });
+});
+
+describe("diffRuntimeDeps (lockfile format v13)", () => {
+  let cwd;
+
+  before(() => {
+    cwd = mkdtempSync(join(tmpdir(), "lockfile-audit-fix-diff-v13-test-"));
+    writeFileSync(join(cwd, "package.json"), JSON.stringify({ name: "root-pkg" }));
+    mkdirSync(join(cwd, "packages", "a"), { recursive: true });
+    writeFileSync(join(cwd, "packages", "a", "package.json"), JSON.stringify({ name: "@x/a" }));
+    mkdirSync(join(cwd, "packages", "b"), { recursive: true });
+    writeFileSync(join(cwd, "packages", "b", "package.json"), JSON.stringify({ name: "@x/b", private: true }));
+  });
+
+  after(() => {
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  test("reports the non-private project whose dependency was bumped", () => {
+    const afterText = V13_WORKSPACE_LOCKFILE.replaceAll('"uri-js": "4.4.1"', '"uri-js": "4.4.2"');
+    assert.deepEqual(diffRuntimeDeps({ beforeText: V13_WORKSPACE_LOCKFILE, afterText, cwd }), ["@x/a"]);
+  });
+
+  test("ignores a devDependencies-only change", () => {
+    const afterText = V13_WORKSPACE_LOCKFILE.replace('"yaml": "2.9.1"', '"yaml": "2.9.2"');
+    assert.deepEqual(diffRuntimeDeps({ beforeText: V13_WORKSPACE_LOCKFILE, afterText, cwd }), []);
+  });
+
+  test("excludes a private project even when its dependencies changed", () => {
+    const afterText = V13_WORKSPACE_LOCKFILE.replace('"version": "2.1.3"', '"version": "2.1.4"');
+    assert.deepEqual(diffRuntimeDeps({ beforeText: V13_WORKSPACE_LOCKFILE, afterText, cwd }), []);
+  });
+
+  test("reports every non-private project that has dependencies when the format changed between before and after", () => {
+    const v9Before = [
+      "lockfileVersion: '9.0'",
+      "importers:",
+      "  .:",
+      "    dependencies:",
+      "      react:",
+      "        specifier: ^18.2.0",
+      "        version: 18.3.1",
+      "  packages/a:",
+      "    dependencies:",
+      "      uri-js:",
+      "        specifier: ^4.4.0",
+      "        version: 4.4.1",
+    ].join("\n");
+    assert.deepEqual(diffRuntimeDeps({ beforeText: v9Before, afterText: V13_WORKSPACE_LOCKFILE, cwd }), [
+      "@x/a",
+      "root-pkg",
+    ]);
+  });
+});
+
 describe("loadFixedGroupNormalizer", () => {
   let cwd;
 
@@ -813,6 +948,22 @@ describe("readLockfileOutsideOverrides", () => {
     const text = readLockfileOutsideOverrides(lockfilePath);
     assert.doesNotMatch(text, /ghost-pkg@1: 2\.0\.0/);
     assert.match(text, /esbuild@0\.28\.1/);
+  });
+
+  test("excludes a v13 lockfile's settings.overrides but keeps the rest", () => {
+    const lockfilePath = join(cwd, "v13-lock.yaml");
+    writeFileSync(lockfilePath, V13_WORKSPACE_LOCKFILE);
+
+    const text = readLockfileOutsideOverrides(lockfilePath);
+    assert.equal(isMentioned(text, "left-pad"), false);
+    assert.equal(isMentioned(text, "uri-js"), true);
+    assert.equal(isMentioned(text, "@x/b"), true);
+  });
+
+  test("returns null for a v13-shaped file that has no lockfileVersion", () => {
+    const lockfilePath = join(cwd, "v13-not-a-lockfile.yaml");
+    writeFileSync(lockfilePath, '{\n\t"projects": {},\n}\n');
+    assert.equal(readLockfileOutsideOverrides(lockfilePath), null);
   });
 
   test("returns null when the file doesn't exist", () => {

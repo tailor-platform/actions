@@ -1,0 +1,124 @@
+{
+	"lockfileVersion": "13.0",
+
+	"settings": {
+		"autoDedupe": false,
+		"autoInstallPeers": true,
+		"dedupeInjectedDeps": true,
+		"dedupePeerDependents": true,
+		"excludeLinksFromLockfile": false,
+		"linkWorkspacePackages": false,
+		"overrides": {
+			"uri-js": "4.4.1",
+			"left-pad": "1.3.0",
+		},
+	},
+
+	"projects": {
+		".": {
+			"dependencies": {
+				"react": {
+					"specifier": "^18.2.0",
+					"version": "18.3.1",
+				},
+				"react-dom": {
+					"specifier": "^18.2.0",
+					"version": "18.3.1",
+				},
+			},
+		},
+
+		"packages/a": {
+			"dependencies": {
+				"@x/b": "workspace:*",
+				"react": {
+					"specifier": "^18.2.0",
+					"version": "18.3.1",
+				},
+				"uri-js": "4.4.1",
+			},
+			"devDependencies": {
+				"yaml": "2.9.1",
+			},
+		},
+
+		"packages/b": {
+			"name": "@x/b",
+			"dependencies": {
+				"ms": {
+					"specifier": "^2.1.0",
+					"version": "2.1.3",
+				},
+				"react": {
+					"specifier": "*",
+					"version": "18.3.1",
+				},
+			},
+		},
+	},
+
+	"packages": {
+		"js-tokens@4.0.0": {
+			"integrity": "sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==",
+		},
+
+		"loose-envify@1.4.0": {
+			"integrity": "sha512-lyuxPGr/Wfhrlem2CL/UcnUc1zcqKAImBDzukY7Y5F/yQiNdko6+fRLevlw1HgMySw7f611UIY408EtxRSoK3Q==",
+			"hasBin": true,
+			"dependencies": {
+				"js-tokens": "4.0.0",
+			},
+		},
+
+		"ms@2.1.3": {
+			"integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
+		},
+
+		"punycode@2.3.1": {
+			"integrity": "sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==",
+			"engines": {"node": ">=6"},
+		},
+
+		"react-dom@18.3.1": {
+			"integrity": "sha512-5m4nQKp+rZRb09LNH59GM4BxTh9251/ylbKIbpe7TpGxfJ+9kv6BLkLBXIjjspbgbnIBNqlI23tRnTWT0snUIw==",
+			"peerDependencies": {
+				"react": {
+					"specifier": "^18.3.1",
+					"version": "18.3.1",
+				},
+			},
+			"dependencies": {
+				"loose-envify": "1.4.0",
+				"scheduler": "0.23.2",
+			},
+		},
+
+		"react@18.3.1": {
+			"integrity": "sha512-wS+hAgJShR0KhEvPJArfuPVN1+Hz1t0Y6n5jLrGQbkb4urgPE/0Rve+1kMB1v/oWgHgm4WIcV+i7F2pTVj+2iQ==",
+			"engines": {"node": ">=0.10.0"},
+			"dependencies": {
+				"loose-envify": "1.4.0",
+			},
+		},
+
+		"scheduler@0.23.2": {
+			"integrity": "sha512-UOShsPwz7NrMUqhR6t0hWjFduvOzbtv7toDH1/hIrfRNIDBnnBWd0CwJTGvTpngVlmwGCdP9/Zl/tVrDqcuYzQ==",
+			"dependencies": {
+				"loose-envify": "1.4.0",
+			},
+		},
+
+		"uri-js@4.4.1": {
+			"integrity": "sha512-7rKUyy33Q1yc98pQ1DAmLtwX109F7TIfWlW1Ydo8Wl1ii1SeHieeh0HHfPeL2fMXK6z0s8ecKs9frCuLJvndBg==",
+			"dependencies": {
+				"punycode": "2.3.1",
+			},
+		},
+
+		"yaml@2.9.1": {
+			"integrity": "sha512-3NxN8+78OdzbT7C/WjGsyfPAtJaN3FNDsWxv7Y7mcDsT/oOmgW8BpyQQFFBnvZE3j9Y2Sdz1ULFLezL7Eb2yFw==",
+			"engines": {"node": ">= 14.6"},
+			"hasBin": true,
+		},
+	},
+}
