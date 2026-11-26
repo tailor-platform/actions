@@ -166,80 +166,81 @@ describe("parseImporters (lockfile format v13)", () => {
     assert.notEqual(parseImporters(rebound)["."], parseImporters(V13_WORKSPACE_LOCKFILE)["."]);
   });
 
-  test("notices a peer binding change of the package an npm alias resolves to", () => {
-    const lockfile = (reactVersion) =>
-      [
-        "{",
-        '\t"lockfileVersion": "13.0",',
-        '\t"projects": {".": {"dependencies": {"rd": {"specifier": "npm:react-dom@^18.2.0", "version": "react-dom@18.3.1",},},},},',
-        `\t"packages": {"react-dom@18.3.1": {"peerDependencies": {"react": {"specifier": "^18.3.1", "version": "${reactVersion}",},},},},`,
-        "}",
-      ].join("\n");
-    assert.notEqual(parseImporters(lockfile("18.3.1"))["."], parseImporters(lockfile("18.3.2"))["."]);
-  });
+  const v13Lockfile = ({ settings, projects, packages }) =>
+    JSON.stringify({ lockfileVersion: "13.0", settings, projects, packages }, null, "\t");
+  const peerBinding = (react) => ({ peerDependencies: { react: { specifier: "^18.3.1", version: react } } });
 
-  test("notices a peer binding change recorded under snapshots of the referenced package", () => {
-    const lockfile = (reactVersion) =>
-      [
-        "{",
-        '\t"lockfileVersion": "13.0",',
-        '\t"projects": {".": {"dependencies": {"react-dom": {"specifier": "^18.2.0", "version": "18.3.1",},},},},',
-        `\t"packages": {"react-dom@18.3.1": {"snapshots": [{"peerDependencies": {"react": {"version": "${reactVersion}",},},},],},},`,
-        "}",
-      ].join("\n");
-    assert.notEqual(parseImporters(lockfile("18.3.1"))["."], parseImporters(lockfile("18.3.2"))["."]);
-  });
+  const changedFingerprintCases = [
+    {
+      name: "a peer binding change of the package an npm alias resolves to",
+      lockfile: (react) =>
+        v13Lockfile({
+          projects: { ".": { dependencies: { rd: { specifier: "npm:react-dom@^18.2.0", version: "react-dom@18.3.1" } } } },
+          packages: { "react-dom@18.3.1": peerBinding(react) },
+        }),
+      before: "18.3.1",
+      after: "18.3.2",
+    },
+    {
+      name: "a peer binding change recorded under snapshots of the referenced package",
+      lockfile: (react) =>
+        v13Lockfile({
+          projects: { ".": { dependencies: { "react-dom": { specifier: "^18.2.0", version: "18.3.1" } } } },
+          packages: { "react-dom@18.3.1": { snapshots: [{ peerDependencies: { react: { version: react } } }] } },
+        }),
+      before: "18.3.1",
+      after: "18.3.2",
+    },
+    {
+      name: "a peer binding change of the package an npm: specifier string resolves to",
+      lockfile: (react) =>
+        v13Lockfile({
+          projects: { ".": { dependencies: { other: "npm:react-dom@18.3.1" } } },
+          packages: { "react-dom@18.3.1": peerBinding(react) },
+        }),
+      before: "18.3.1",
+      after: "18.3.2",
+    },
+    {
+      name: "a bumped catalog version for a dependency declared as catalog:",
+      lockfile: (version) =>
+        v13Lockfile({
+          settings: { catalogs: { default: { ms: version } } },
+          projects: { ".": { dependencies: { ms: "catalog:" } } },
+          packages: { [`ms@${version}`]: {} },
+        }),
+      before: "0.7.0",
+      after: "0.7.3",
+    },
+    {
+      name: "a bumped version of a catalog entry written as an object for a range specifier",
+      lockfile: (version) =>
+        v13Lockfile({
+          settings: { catalogs: { default: { ms: { specifier: "^0.7.0", version } } } },
+          projects: { ".": { dependencies: { ms: "catalog:" } } },
+          packages: { [`ms@${version}`]: {} },
+        }),
+      before: "0.7.0",
+      after: "0.7.3",
+    },
+    {
+      name: "a bumped catalog version for a dependency whose entry is an object with a catalog: specifier",
+      lockfile: (version) =>
+        v13Lockfile({
+          settings: { catalogs: { default: { ms: version } } },
+          projects: { ".": { dependencies: { ms: { specifier: "catalog:", with: { react: "18.3.1" } } } } },
+          packages: { [`ms@${version}`]: {} },
+        }),
+      before: "0.7.0",
+      after: "0.7.3",
+    },
+  ];
 
-  test("notices a peer binding change of the package an npm: specifier string resolves to", () => {
-    const lockfile = (reactVersion) =>
-      [
-        "{",
-        '\t"lockfileVersion": "13.0",',
-        '\t"projects": {".": {"dependencies": {"other": "npm:react-dom@18.3.1",},},},',
-        `\t"packages": {"react-dom@18.3.1": {"peerDependencies": {"react": {"specifier": "^18.3.1", "version": "${reactVersion}",},},},},`,
-        "}",
-      ].join("\n");
-    assert.notEqual(parseImporters(lockfile("18.3.1"))["."], parseImporters(lockfile("18.3.2"))["."]);
-  });
-
-  test("notices a bumped catalog version for a dependency declared as catalog:", () => {
-    const lockfile = (version) =>
-      [
-        "{",
-        '\t"lockfileVersion": "13.0",',
-        `\t"settings": {"catalogs": {"default": {"ms": "${version}",},},},`,
-        '\t"projects": {".": {"dependencies": {"ms": "catalog:",},},},',
-        `\t"packages": {"ms@${version}": {},},`,
-        "}",
-      ].join("\n");
-    assert.notEqual(parseImporters(lockfile("0.7.0"))["."], parseImporters(lockfile("0.7.3"))["."]);
-  });
-
-  test("notices a bumped version of a catalog entry written as an object for a range specifier", () => {
-    const lockfile = (version) =>
-      [
-        "{",
-        '\t"lockfileVersion": "13.0",',
-        `\t"settings": {"catalogs": {"default": {"ms": {"specifier": "^0.7.0", "version": "${version}",},},},},`,
-        '\t"projects": {".": {"dependencies": {"ms": "catalog:",},},},',
-        `\t"packages": {"ms@${version}": {},},`,
-        "}",
-      ].join("\n");
-    assert.notEqual(parseImporters(lockfile("0.7.0"))["."], parseImporters(lockfile("0.7.3"))["."]);
-  });
-
-  test("looks up the catalog for a dependency whose entry is an object with a catalog: specifier", () => {
-    const lockfile = (version) =>
-      [
-        "{",
-        '\t"lockfileVersion": "13.0",',
-        `\t"settings": {"catalogs": {"default": {"ms": "${version}",},},},`,
-        '\t"projects": {".": {"dependencies": {"ms": {"specifier": "catalog:", "with": {"react": "18.3.1",},},},},},',
-        `\t"packages": {"ms@${version}": {},},`,
-        "}",
-      ].join("\n");
-    assert.notEqual(parseImporters(lockfile("0.7.0"))["."], parseImporters(lockfile("0.7.3"))["."]);
-  });
+  for (const { name, lockfile, before, after } of changedFingerprintCases) {
+    test(`notices ${name}`, () => {
+      assert.notEqual(parseImporters(lockfile(before))["."], parseImporters(lockfile(after))["."]);
+    });
+  }
 
   test("returns an empty object for a v13 lockfile without projects", () => {
     assert.deepEqual(parseImporters('{\n\t"lockfileVersion": "13.0",\n}\n'), {});
