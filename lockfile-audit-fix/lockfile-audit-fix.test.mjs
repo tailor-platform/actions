@@ -224,6 +224,17 @@ describe("parseImporters (lockfile format v13)", () => {
       after: "0.7.3",
     },
     {
+      name: "a peer binding change of the package a catalog npm alias resolves to",
+      lockfile: (react) =>
+        v13Lockfile({
+          settings: { catalogs: { default: { "my-rd": { specifier: "npm:react-dom@^18.2.0", version: "18.3.1" } } } },
+          projects: { ".": { dependencies: { "my-rd": "catalog:" } } },
+          packages: { "react-dom@18.3.1": peerBinding(react) },
+        }),
+      before: "18.3.1",
+      after: "18.3.2",
+    },
+    {
       name: "a bumped catalog version for a dependency whose entry is an object with a catalog: specifier",
       lockfile: (version) =>
         v13Lockfile({
@@ -241,6 +252,20 @@ describe("parseImporters (lockfile format v13)", () => {
       assert.notEqual(parseImporters(lockfile(before))["."], parseImporters(lockfile(after))["."]);
     });
   }
+
+  const withEnvDocument = (mainDocument) =>
+    ["---", "importers:", "  .:", "    configDependencies: {}", "    packageManagerDependencies:", "      pnpm:", "        specifier: 12.22.0", "---", mainDocument].join("\n");
+
+  test("reads a v13 lockfile that follows the env document pnpm writes for packageManager", () => {
+    assert.deepEqual(parseImporters(withEnvDocument(V13_WORKSPACE_LOCKFILE)), parseImporters(V13_WORKSPACE_LOCKFILE));
+    assert.notDeepEqual(parseImporters(withEnvDocument(V13_WORKSPACE_LOCKFILE)), {});
+  });
+
+  test("reads a v9 lockfile that follows the env document pnpm writes for packageManager", () => {
+    const v9 = ["lockfileVersion: '9.0'", "importers:", "  .:", "    dependencies:", "      foo:", "        specifier: ^1.0.0"].join("\n");
+    assert.deepEqual(parseImporters(withEnvDocument(v9)), parseImporters(v9));
+    assert.notDeepEqual(parseImporters(withEnvDocument(v9)), {});
+  });
 
   test("returns an empty object for a v13 lockfile without projects", () => {
     assert.deepEqual(parseImporters('{\n\t"lockfileVersion": "13.0",\n}\n'), {});
@@ -266,6 +291,15 @@ describe("diffRuntimeDeps (lockfile format v13)", () => {
   test("reports the non-private project whose dependency was bumped", () => {
     const afterText = V13_WORKSPACE_LOCKFILE.replaceAll('"uri-js": "4.4.1"', '"uri-js": "4.4.2"');
     assert.deepEqual(diffRuntimeDeps({ beforeText: V13_WORKSPACE_LOCKFILE, afterText, cwd }), ["@x/a"]);
+  });
+
+  test("reports the project whose dependency was bumped in a v13 lockfile that has an env document", () => {
+    const envDocument = ["---", "importers:", "  .:", "    configDependencies: {}", "---", ""].join("\n");
+    const afterText = V13_WORKSPACE_LOCKFILE.replaceAll('"uri-js": "4.4.1"', '"uri-js": "4.4.2"');
+    assert.deepEqual(
+      diffRuntimeDeps({ beforeText: envDocument + V13_WORKSPACE_LOCKFILE, afterText: envDocument + afterText, cwd }),
+      ["@x/a"],
+    );
   });
 
   test("ignores a devDependencies-only change", () => {
@@ -985,6 +1019,15 @@ describe("readLockfileOutsideOverrides", () => {
     assert.equal(isMentioned(text, "left-pad"), false);
     assert.equal(isMentioned(text, "uri-js"), true);
     assert.equal(isMentioned(text, "@x/b"), true);
+  });
+
+  test("excludes settings.overrides from a v13 lockfile that follows an env document", () => {
+    const lockfilePath = join(cwd, "v13-env-document-lock.yaml");
+    writeFileSync(lockfilePath, ["---", "importers:", "  .:", "    configDependencies: {}", "---", V13_WORKSPACE_LOCKFILE].join("\n"));
+
+    const text = readLockfileOutsideOverrides(lockfilePath);
+    assert.equal(isMentioned(text, "left-pad"), false);
+    assert.equal(isMentioned(text, "uri-js"), true);
   });
 
   test("returns null for a v13-shaped file that has no lockfileVersion", () => {

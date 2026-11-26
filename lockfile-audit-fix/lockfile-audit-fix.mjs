@@ -554,7 +554,22 @@ function isMentioned(haystack, name) {
  * @returns {boolean}
  */
 function isNextFormatLockfile(text) {
-  return text.trimStart().startsWith("{");
+  return skipEnvDocument(text).trimStart().startsWith("{");
+}
+
+/**
+ * With `packageManager` or `configDependencies` set, pnpm writes a separate
+ * YAML document (`---` ... `---`) before the lockfile itself, in either
+ * format. Returns the text after that document, or the text unchanged when
+ * it doesn't start with one.
+ * @param {string} text
+ * @returns {string}
+ */
+function skipEnvDocument(text) {
+  const lines = text.split("\n");
+  if (lines[0].trimEnd() !== "---") return text;
+  const end = lines.findIndex((line, i) => i > 0 && line.trimEnd() === "---");
+  return end === -1 ? text : lines.slice(end + 1).join("\n");
 }
 
 /**
@@ -595,7 +610,7 @@ function stripTrailingCommas(text) {
  */
 function parseNextFormatLockfile(text) {
   try {
-    const parsed = JSON.parse(stripTrailingCommas(text));
+    const parsed = JSON.parse(stripTrailingCommas(skipEnvDocument(text)));
     return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
   } catch {
     return null;
@@ -1144,6 +1159,21 @@ function enableMinimumReleaseAgeExcludePrune(workspacePath) {
 }
 
 /**
+ * The package a catalog entry points at when its specifier is an npm alias:
+ * `{specifier: "npm:react-dom@^18.2.0", version: "18.3.1"}` is `react-dom`,
+ * while its `version` carries no name.
+ * @param {unknown} catalogEntry
+ * @returns {string | null}
+ */
+function catalogAliasTarget(catalogEntry) {
+  const specifier = typeof catalogEntry === "object" && catalogEntry !== null ? catalogEntry.specifier : null;
+  if (typeof specifier !== "string" || !specifier.startsWith("npm:")) return null;
+  const target = specifier.slice("npm:".length);
+  const at = target.lastIndexOf("@");
+  return at > 0 ? target.slice(0, at) : target;
+}
+
+/**
  * The v13 counterpart of parseImporters: each project's `dependencies`
  * entries (never `devDependencies`) from the `projects` section. v13
  * references carry no peer suffix, so each entry is followed by the peer
@@ -1173,7 +1203,8 @@ function parseNextFormatImporters(text) {
         const catalogVersion = typeof catalogEntry === "string" ? catalogEntry : catalogEntry?.version;
         const resolvedVersion = typeof entry === "string" ? (catalogVersion ?? entry) : (entry?.version ?? catalogVersion);
         const reference = typeof resolvedVersion === "string" ? resolvedVersion.replace(/^npm:/, "") : resolvedVersion;
-        const packageKey = typeof reference === "string" && reference.lastIndexOf("@") > 0 ? reference : `${name}@${reference}`;
+        const packageName = catalogAliasTarget(catalogEntry) ?? name;
+        const packageKey = typeof reference === "string" && reference.lastIndexOf("@") > 0 ? reference : `${packageName}@${reference}`;
         const resolved = packages[packageKey];
         return JSON.stringify([name, entry, catalogEntry, resolved?.peerDependencies ?? null, resolved?.snapshots ?? null]);
       })
@@ -1191,7 +1222,7 @@ function parseNextFormatImporters(text) {
  */
 function parseImporters(text) {
   if (isNextFormatLockfile(text)) return parseNextFormatImporters(text);
-  const lines = text.split("\n");
+  const lines = skipEnvDocument(text).split("\n");
   const importersIdx = lines.findIndex((l) => /^importers:\s*$/.test(l));
   if (importersIdx === -1) return {};
 
