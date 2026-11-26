@@ -1159,6 +1159,35 @@ function enableMinimumReleaseAgeExcludePrune(workspacePath) {
 }
 
 /**
+ * What v9 spells as the peer suffix of an importer's reference: the peer
+ * bindings of a `packages` entry (its own and those of every snapshot) and,
+ * recursively, the bindings of each package those peers resolved to. v13
+ * references carry no peer group, so a binding that only changed on a peer's
+ * provider is found nowhere else.
+ * @param {Record<string, any>} packages
+ * @param {string} key
+ * @param {ReadonlySet<string>} path keys already being fingerprinted, to stop cycles
+ * @returns {unknown}
+ */
+function packagePeerFingerprint(packages, key, path = new Set()) {
+  const entry = packages[key];
+  if (!entry || path.has(key)) return null;
+  const nextPath = new Set(path).add(key);
+  const groups = [entry.peerDependencies, ...(Array.isArray(entry.snapshots) ? entry.snapshots.map((snapshot) => snapshot?.peerDependencies) : [])];
+  const providers = {};
+  for (const group of groups) {
+    if (!group || typeof group !== "object") continue;
+    for (const [peerName, binding] of Object.entries(group)) {
+      const version = typeof binding === "object" && binding !== null ? binding.version : null;
+      if (typeof version !== "string") continue;
+      const providerKey = version.lastIndexOf("@") > 0 ? version : `${peerName}@${version}`;
+      providers[providerKey] = packagePeerFingerprint(packages, providerKey, nextPath);
+    }
+  }
+  return [entry.peerDependencies ?? null, entry.snapshots ?? null, providers];
+}
+
+/**
  * The package a catalog entry points at when its specifier is an npm alias:
  * `{specifier: "npm:react-dom@^18.2.0", version: "18.3.1"}` is `react-dom`,
  * while its `version` carries no name.
@@ -1201,12 +1230,12 @@ function parseNextFormatImporters(text) {
         const catalogName = typeof specifier === "string" && specifier.startsWith("catalog:") ? specifier.slice("catalog:".length) || "default" : null;
         const catalogEntry = catalogName === null ? null : (catalogs[catalogName]?.[name] ?? null);
         const catalogVersion = typeof catalogEntry === "string" ? catalogEntry : catalogEntry?.version;
-        const resolvedVersion = typeof entry === "string" ? (catalogVersion ?? entry) : (entry?.version ?? catalogVersion);
+        const impliedVersion = catalogName === null ? specifier : undefined;
+        const resolvedVersion = typeof entry === "string" ? (catalogVersion ?? entry) : (entry?.version ?? catalogVersion ?? impliedVersion);
         const reference = typeof resolvedVersion === "string" ? resolvedVersion.replace(/^npm:/, "") : resolvedVersion;
         const packageName = catalogAliasTarget(catalogEntry) ?? name;
         const packageKey = typeof reference === "string" && reference.lastIndexOf("@") > 0 ? reference : `${packageName}@${reference}`;
-        const resolved = packages[packageKey];
-        return JSON.stringify([name, entry, catalogEntry, resolved?.peerDependencies ?? null, resolved?.snapshots ?? null]);
+        return JSON.stringify([name, entry, catalogEntry, packagePeerFingerprint(packages, packageKey)]);
       })
       .join("\n");
   }

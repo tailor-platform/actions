@@ -235,6 +235,29 @@ describe("parseImporters (lockfile format v13)", () => {
       after: "18.3.2",
     },
     {
+      name: "a peer binding change of a dependency whose object entry omits the version that follows from its specifier",
+      lockfile: (react) =>
+        v13Lockfile({
+          projects: { ".": { dependencies: { plugin: { specifier: "1.0.0", with: { react: "18.3.1" } } } } },
+          packages: { "plugin@1.0.0": peerBinding(react) },
+        }),
+      before: "18.3.1",
+      after: "18.3.2",
+    },
+    {
+      name: "a peer binding change that is only recorded on the provider of a peer",
+      lockfile: (minimist) =>
+        v13Lockfile({
+          projects: { ".": { dependencies: { plugin: "1.0.0" } } },
+          packages: {
+            "plugin@1.0.0": { peerDependencies: { host: { specifier: "^2.0.0", version: "2.0.0" } } },
+            "host@2.0.0": { peerDependencies: { minimist: { specifier: "^1.2.0", version: minimist } } },
+          },
+        }),
+      before: "1.2.5",
+      after: "1.2.8",
+    },
+    {
       name: "a bumped catalog version for a dependency whose entry is an object with a catalog: specifier",
       lockfile: (version) =>
         v13Lockfile({
@@ -265,6 +288,17 @@ describe("parseImporters (lockfile format v13)", () => {
     const v9 = ["lockfileVersion: '9.0'", "importers:", "  .:", "    dependencies:", "      foo:", "        specifier: ^1.0.0"].join("\n");
     assert.deepEqual(parseImporters(withEnvDocument(v9)), parseImporters(v9));
     assert.notDeepEqual(parseImporters(withEnvDocument(v9)), {});
+  });
+
+  test("terminates when peer providers bind each other in a cycle", () => {
+    const lockfile = v13Lockfile({
+      projects: { ".": { dependencies: { a: "1.0.0" } } },
+      packages: {
+        "a@1.0.0": { peerDependencies: { b: { specifier: "*", version: "1.0.0" } } },
+        "b@1.0.0": { peerDependencies: { a: { specifier: "*", version: "1.0.0" } } },
+      },
+    });
+    assert.equal(typeof parseImporters(lockfile)["."], "string");
   });
 
   test("returns an empty object for a v13 lockfile without projects", () => {
