@@ -25,7 +25,27 @@ runs:
       uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version-file: ${{ inputs.node-version-file }}
-        cache: ${{ inputs.package-manager }}
+        cache: ${{ inputs.package-manager != 'yarn' && inputs.package-manager || '' }}
+
+    - name: Set up Yarn
+      if: inputs.package-manager == 'yarn'
+      shell: bash
+      run: | # zizmor: ignore[adhoc-packages,github-env]
+        corepack_dir="$RUNNER_TEMP/tailor-corepack"
+        bin_dir="$corepack_dir/bin"
+        if [ "$RUNNER_OS" = Windows ]; then bin_dir="$corepack_dir"; fi
+        shim_dir="$corepack_dir/shims"
+        npm install --global --prefix "$corepack_dir" corepack@0.36.0
+        mkdir -p "$shim_dir"
+        "$bin_dir/corepack" enable --install-directory "$shim_dir" yarn
+        echo "$shim_dir" >> "$GITHUB_PATH"
+
+    - name: Restore the Yarn cache
+      if: inputs.package-manager == 'yarn'
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version-file: ${{ inputs.node-version-file }}
+        cache: yarn
 
     - name: Set up Bun
       if: inputs.package-manager == 'bun'

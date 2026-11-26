@@ -19,6 +19,14 @@
       "matchStrings": ["\"ghActionsLock\": \"(?<currentValue>v[\\d.]+)\""],
       "depNameTemplate": "github/gh-actions-lock",
       "datasourceTemplate": "github-releases"
+    },
+    {
+      "customType": "regex",
+      "description": "Update the Corepack version that the setup action installs for yarn",
+      "managerFilePatterns": ["/^setup/action\\.yaml$/"],
+      "matchStrings": ["corepack@(?<currentValue>\\d+\\.\\d+\\.\\d+)"],
+      "depNameTemplate": "corepack",
+      "datasourceTemplate": "npm"
     }
   ],
   "packageRules": [

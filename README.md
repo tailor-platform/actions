@@ -199,6 +199,8 @@ The comment is keyed per workspace via a `<!-- tailor-plan: KEY -->` marker (`KE
 
 Set up the Tailor Platform toolchain (Node.js and package manager). Does not install project dependencies — use the [`install`](#install) action for that.
 
+With `yarn`, it installs Corepack from the npm registry and uses it to run the Yarn version that `packageManager` or `devEngines.packageManager` (an object, not an array) in `package.json` declares, or Yarn 1 when neither does. Corepack downloads that version from `repo.yarnpkg.com` (Yarn 2 and later) or `registry.yarnpkg.com` (Yarn 1), so the runner needs access to them.
+
 ---
 
 ### [`generate-check`](generate-check/action.yaml)
