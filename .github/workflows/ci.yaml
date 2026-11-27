@@ -9,7 +9,7 @@ on:
 permissions: {}
 
 jobs:
-  cli-bin-contract:
+  unit-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
