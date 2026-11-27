@@ -2,8 +2,12 @@
 	"lockfileVersion": "13.0",
 
 	"settings": {
+		"autoDedupe": false,
 		"autoInstallPeers": true,
+		"dedupeInjectedDeps": true,
+		"dedupePeerDependents": true,
 		"excludeLinksFromLockfile": false,
+		"linkWorkspacePackages": false,
 	},
 
 	"projects": {
