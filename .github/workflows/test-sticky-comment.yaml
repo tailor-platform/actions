@@ -26,65 +26,102 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: "Test: post new sticky comment"
-        id: post
+      - name: "Test: post a comment (default)"
+        id: first
         uses: $/_internal/sticky-comment
         with:
-          marker-prefix: "<!-- test-sticky-comment -->"
+          marker-prefix: "<!-- test-sticky-comment-default -->"
           body: |
-            <!-- test-sticky-comment -->
-            Test run ${{ github.run_id }} — initial body
+            <!-- test-sticky-comment-default -->
+            Test run ${{ github.run_id }} — first body
           github-token: ${{ secrets.GITHUB_TOKEN }}
           pr-number: ${{ github.event.pull_request.number || inputs.pr-number }}
 
-      - name: "Verify: comment-id is set after first post"
-        env:
-          COMMENT_ID: ${{ steps.post.outputs.comment-id }}
-        run: |
-          if [ -z "$COMMENT_ID" ]; then
-            echo "::error::comment-id should be set after posting a new comment"
-            exit 1
-          fi
-          echo "Created comment id: $COMMENT_ID"
-
-      - name: "Test: update existing sticky comment"
-        id: update
+      - name: "Test: post again (default)"
+        id: second
         uses: $/_internal/sticky-comment
         with:
-          marker-prefix: "<!-- test-sticky-comment -->"
+          marker-prefix: "<!-- test-sticky-comment-default -->"
           body: |
-            <!-- test-sticky-comment -->
-            Test run ${{ github.run_id }} — updated body
+            <!-- test-sticky-comment-default -->
+            Test run ${{ github.run_id }} — second body
           github-token: ${{ secrets.GITHUB_TOKEN }}
           pr-number: ${{ github.event.pull_request.number || inputs.pr-number }}
 
-      - name: "Verify: same comment-id on update"
-        env:
-          POST_ID: ${{ steps.post.outputs.comment-id }}
-          UPDATE_ID: ${{ steps.update.outputs.comment-id }}
-        run: |
-          if [ "$POST_ID" != "$UPDATE_ID" ]; then
-            echo "::error::Expected same comment-id when updating an existing sticky comment"
-            echo "  post:   $POST_ID"
-            echo "  update: $UPDATE_ID"
-            exit 1
-          fi
-
-      - name: "Verify: existing-body is populated on update"
-        env:
-          EXISTING_BODY: ${{ steps.update.outputs.existing-body }}
-        run: |
-          if [ -z "$EXISTING_BODY" ]; then
-            echo "::error::existing-body should contain the body from the first post"
-            exit 1
-          fi
-          echo "existing-body is set (length: ${#EXISTING_BODY})"
-
-      - name: Cleanup — delete test comment
-        if: always() && steps.post.outputs.comment-id != ''
+      - name: "Verify: default posts a new comment and hides the earlier one"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          COMMENT_ID: ${{ steps.post.outputs.comment-id }}
+          FIRST_ID: ${{ steps.first.outputs.comment-id }}
+          SECOND_ID: ${{ steps.second.outputs.comment-id }}
+          EXISTING_BODY: ${{ steps.second.outputs.existing-body }}
         run: |
-          gh api "repos/$GITHUB_REPOSITORY/issues/comments/$COMMENT_ID" -X DELETE
-          echo "Deleted comment $COMMENT_ID"
+          if [ -z "$FIRST_ID" ] || [ -z "$SECOND_ID" ] || [ "$FIRST_ID" = "$SECOND_ID" ]; then
+            echo "::error::Expected a new comment-id on the second post (first: $FIRST_ID, second: $SECOND_ID)"
+            exit 1
+          fi
+          case "$EXISTING_BODY" in
+            *"first body"*) ;;
+            *) echo "::error::existing-body should be the body of the earlier comment"; exit 1 ;;
+          esac
+          minimized() {
+            gh api "repos/$GITHUB_REPOSITORY/issues/comments/$1" --jq .node_id |
+              xargs -I{} gh api graphql -f query='query($id: ID!) { node(id: $id) { ... on IssueComment { isMinimized } } }' -f id={} --jq .data.node.isMinimized
+          }
+          if [ "$(minimized "$FIRST_ID")" != "true" ]; then
+            echo "::error::The earlier comment $FIRST_ID should be hidden"
+            exit 1
+          fi
+          if [ "$(minimized "$SECOND_ID")" != "false" ]; then
+            echo "::error::The new comment $SECOND_ID should not be hidden"
+            exit 1
+          fi
+
+      - name: "Test: post a comment (sticky)"
+        id: sticky-first
+        uses: $/_internal/sticky-comment
+        with:
+          marker-prefix: "<!-- test-sticky-comment-sticky -->"
+          body: |
+            <!-- test-sticky-comment-sticky -->
+            Test run ${{ github.run_id }} — initial body
+          sticky: "true"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pr-number: ${{ github.event.pull_request.number || inputs.pr-number }}
+
+      - name: "Test: update the comment (sticky)"
+        id: sticky-second
+        uses: $/_internal/sticky-comment
+        with:
+          marker-prefix: "<!-- test-sticky-comment-sticky -->"
+          body: |
+            <!-- test-sticky-comment-sticky -->
+            Test run ${{ github.run_id }} — updated body
+          sticky: "true"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pr-number: ${{ github.event.pull_request.number || inputs.pr-number }}
+
+      - name: "Verify: sticky updates the same comment"
+        env:
+          FIRST_ID: ${{ steps.sticky-first.outputs.comment-id }}
+          SECOND_ID: ${{ steps.sticky-second.outputs.comment-id }}
+          EXISTING_BODY: ${{ steps.sticky-second.outputs.existing-body }}
+        run: |
+          if [ -z "$FIRST_ID" ] || [ "$FIRST_ID" != "$SECOND_ID" ]; then
+            echo "::error::Expected the same comment-id when sticky updates (first: $FIRST_ID, second: $SECOND_ID)"
+            exit 1
+          fi
+          case "$EXISTING_BODY" in
+            *"initial body"*) ;;
+            *) echo "::error::existing-body should contain the body from the first post"; exit 1 ;;
+          esac
+
+      - name: Cleanup — delete test comments
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMENT_IDS: ${{ steps.first.outputs.comment-id }} ${{ steps.second.outputs.comment-id }} ${{ steps.sticky-first.outputs.comment-id }}
+        run: |
+          for id in $COMMENT_IDS; do
+            gh api "repos/$GITHUB_REPOSITORY/issues/comments/$id" -X DELETE
+            echo "Deleted comment $id"
+          done
