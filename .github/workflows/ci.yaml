@@ -36,6 +36,8 @@ jobs:
       - run: pnpm test:drift-check
       - run: pnpm test:plan
       - run: pnpm test:preview
+      - run: pnpm test:sticky-comment
+      - run: pnpm test:sticky-input
       - run: pnpm test:tag-guard
 
   internal-refs:
