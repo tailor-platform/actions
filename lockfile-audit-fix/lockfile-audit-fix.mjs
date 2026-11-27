@@ -546,6 +546,78 @@ function isMentioned(haystack, name) {
 }
 
 /**
+ * True for a lockfile in the experimental `lockfile.format: v13` layout, a
+ * JSON document with a trailing comma after every entry, which is also valid
+ * YAML. The document's first character tells it apart from the block-style
+ * YAML of lockfileVersion 9.0, whatever `lockfileVersion` it records.
+ * @param {string} text
+ * @returns {boolean}
+ */
+function isNextFormatLockfile(text) {
+  return skipEnvDocument(text).trimStart().startsWith("{");
+}
+
+/**
+ * With `packageManager` or `configDependencies` set, pnpm writes a separate
+ * YAML document (`---` ... `---`) before the lockfile itself, in either
+ * format. Returns the text after that document, or the text unchanged when
+ * it doesn't start with one.
+ * @param {string} text
+ * @returns {string}
+ */
+function skipEnvDocument(text) {
+  const lines = text.split("\n");
+  if (lines[0].trimEnd() !== "---") return text;
+  const end = lines.findIndex((line, i) => i > 0 && line.trimEnd() === "---");
+  return end === -1 ? text : lines.slice(end + 1).join("\n");
+}
+
+/**
+ * Removes the comma before each closing `}` or `]` so the document parses as
+ * JSON. Only characters outside string literals are looked at, so a package
+ * name or version containing `,}` is left alone.
+ * @param {string} text
+ * @returns {string}
+ */
+function stripTrailingCommas(text) {
+  let out = "";
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      out += ch;
+      if (ch === "\\") out += text[++i] ?? "";
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      out += ch;
+      continue;
+    }
+    if (ch === ",") {
+      const next = text.slice(i + 1).match(/^\s*([}\]])/);
+      if (next) continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
+/**
+ * @param {string} text
+ * @returns {Record<string, any> | null} the parsed v13 document, or null when it isn't valid
+ */
+function parseNextFormatLockfile(text) {
+  try {
+    const parsed = JSON.parse(stripTrailingCommas(skipEnvDocument(text)));
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Reads pnpm-lock.yaml with its own top-level `overrides:` block (a mirror
  * of pnpm-workspace.yaml's `overrides:`) excluded first — scanning the file
  * whole would make every override look "mentioned" off the back of its own
@@ -568,7 +640,14 @@ function isMentioned(haystack, name) {
  */
 function readLockfileOutsideOverrides(lockfilePath) {
   if (!existsSync(lockfilePath)) return null;
-  const lines = readFileSync(lockfilePath, "utf8").split("\n");
+  const raw = readFileSync(lockfilePath, "utf8");
+  if (isNextFormatLockfile(raw)) {
+    const document = parseNextFormatLockfile(raw);
+    if (!document || !("lockfileVersion" in document)) return null;
+    if (document.settings) delete document.settings.overrides;
+    return JSON.stringify(document, null, "\t");
+  }
+  const lines = raw.split("\n");
   if (!lines.some((l) => /^lockfileVersion\s*:/.test(l))) return null;
   const block = findOverridesBlock(lines);
   if (!block) return lines.join("\n");
@@ -1080,6 +1159,125 @@ function enableMinimumReleaseAgeExcludePrune(workspacePath) {
 }
 
 /**
+ * What v9 spells as the peer suffix of an importer's reference: the peer
+ * bindings of the given `packages` entries (their own and those of every
+ * snapshot) and, transitively, of each package those peers resolved to. v13
+ * references carry no peer group, so a binding that only changed on a peer's
+ * provider is found nowhere else. Each reachable entry is recorded once, so a
+ * provider that many paths share costs one visit, and a cycle ends there.
+ * @param {Record<string, any>} packages
+ * @param {string[]} startKeys
+ * @returns {Array<[string, unknown]>} the reachable entries' peer data, sorted by key
+ */
+function packagePeerFingerprint(packages, startKeys) {
+  const visited = new Map();
+  const pending = [...startKeys];
+  while (pending.length > 0) {
+    const key = pending.pop();
+    const entry = packages[key];
+    if (!entry || visited.has(key)) continue;
+    visited.set(key, [entry.peerDependencies ?? null, entry.snapshots ?? null]);
+    const groups = [entry.peerDependencies, ...(Array.isArray(entry.snapshots) ? entry.snapshots.map((snapshot) => snapshot?.peerDependencies) : [])];
+    for (const group of groups) {
+      if (!group || typeof group !== "object") continue;
+      for (const [peerName, binding] of Object.entries(group)) {
+        const version = typeof binding === "object" && binding !== null ? binding.version : null;
+        if (typeof version !== "string") continue;
+        pending.push(version.lastIndexOf("@") > 0 ? version : `${peerName}@${version}`);
+      }
+    }
+  }
+  return [...visited].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
+/**
+ * An injected workspace dependency is written `{specifier: "workspace:*",
+ * injected: true}` with no `version`: its package entry is keyed by the
+ * workspace directory (`@x/b@file:packages/b`), which only the entry's own
+ * key tells.
+ * @param {unknown} entry
+ * @returns {boolean}
+ */
+function isInjectedWithoutVersion(entry) {
+  return typeof entry === "object" && entry !== null && entry.injected === true && entry.version === undefined;
+}
+
+/**
+ * @param {string} name the dependency's name in the importer
+ * @param {{specifier?: unknown}} entry
+ * @returns {string} the injected package's own name: `workspace:real@*` names it when the dependency is an alias
+ */
+function injectedPackageName(name, entry) {
+  const named = typeof entry.specifier === "string" ? entry.specifier.match(/^workspace:(@?[^@]+)@/) : null;
+  return named ? named[1] : name;
+}
+
+/**
+ * @param {Record<string, unknown>} packages
+ * @param {string} packageName
+ * @returns {string[]}
+ */
+function injectedPackageKeys(packages, packageName) {
+  return Object.keys(packages).filter((key) => key.startsWith(`${packageName}@file:`));
+}
+
+/**
+ * The package a catalog entry points at when its specifier is an npm alias:
+ * `{specifier: "npm:react-dom@^18.2.0", version: "18.3.1"}` is `react-dom`,
+ * while its `version` carries no name.
+ * @param {unknown} catalogEntry
+ * @returns {string | null}
+ */
+function catalogAliasTarget(catalogEntry) {
+  const specifier = typeof catalogEntry === "object" && catalogEntry !== null ? catalogEntry.specifier : null;
+  if (typeof specifier !== "string" || !specifier.startsWith("npm:")) return null;
+  const target = specifier.slice("npm:".length);
+  const at = target.lastIndexOf("@");
+  return at > 0 ? target.slice(0, at) : target;
+}
+
+/**
+ * The v13 counterpart of parseImporters: each project's `dependencies`
+ * entries (never `devDependencies`) from the `projects` section. v13
+ * references carry no peer suffix, so each entry is followed by the peer
+ * bindings of the `packages` entry it resolves to; a change that v9 shows as
+ * a new suffix on the importer's reference then still changes the text. A
+ * `catalog:` entry is followed by the version its catalog records, which v9
+ * shows as the importer's `version:`.
+ * @param {string} text
+ * @returns {Record<string, string>}
+ */
+function parseNextFormatImporters(text) {
+  const document = parseNextFormatLockfile(text);
+  const projects = document?.projects;
+  if (!projects || typeof projects !== "object") return {};
+  const packages = document.packages ?? {};
+  const catalogs = document.settings?.catalogs ?? {};
+
+  const importers = {};
+  for (const [path, project] of Object.entries(projects)) {
+    const dependencies = project?.dependencies;
+    if (!dependencies || typeof dependencies !== "object") continue;
+    importers[path] = Object.entries(dependencies)
+      .map(([name, entry]) => {
+        const specifier = typeof entry === "string" ? entry : entry?.specifier;
+        const catalogName = typeof specifier === "string" && specifier.startsWith("catalog:") ? specifier.slice("catalog:".length) || "default" : null;
+        const catalogEntry = catalogName === null ? null : (catalogs[catalogName]?.[name] ?? null);
+        const catalogVersion = typeof catalogEntry === "string" ? catalogEntry : catalogEntry?.version;
+        const impliedVersion = catalogName === null ? specifier : undefined;
+        const resolvedVersion = typeof entry === "string" ? (catalogVersion ?? entry) : (entry?.version ?? catalogVersion ?? impliedVersion);
+        const reference = typeof resolvedVersion === "string" ? resolvedVersion.replace(/^npm:/, "") : resolvedVersion;
+        const packageName = catalogAliasTarget(catalogEntry) ?? name;
+        const packageKey = typeof reference === "string" && reference.lastIndexOf("@") > 0 ? reference : `${packageName}@${reference}`;
+        const startKeys = isInjectedWithoutVersion(entry) ? injectedPackageKeys(packages, injectedPackageName(name, entry)) : [packageKey];
+        return JSON.stringify([name, entry, catalogEntry, packagePeerFingerprint(packages, startKeys)]);
+      })
+      .join("\n");
+  }
+  return importers;
+}
+
+/**
  * Parses pnpm-lock.yaml's per-importer `dependencies` blocks (never
  * `devDependencies`), keyed by importer path, as raw indented text — good
  * enough to diff without a full YAML parser.
@@ -1087,7 +1285,8 @@ function enableMinimumReleaseAgeExcludePrune(workspacePath) {
  * @returns {Record<string, string>}
  */
 function parseImporters(text) {
-  const lines = text.split("\n");
+  if (isNextFormatLockfile(text)) return parseNextFormatImporters(text);
+  const lines = skipEnvDocument(text).split("\n");
   const importersIdx = lines.findIndex((l) => /^importers:\s*$/.test(l));
   if (importersIdx === -1) return {};
 
@@ -1173,6 +1372,7 @@ function loadFixedGroupNormalizer(cwd) {
 function diffRuntimeDeps({ beforeText, afterText, cwd }) {
   const beforeImporters = parseImporters(beforeText);
   const afterImporters = parseImporters(afterText);
+  const formatChanged = isNextFormatLockfile(beforeText) !== isNextFormatLockfile(afterText);
   const paths = new Set([...Object.keys(beforeImporters), ...Object.keys(afterImporters)]);
   const normalize = loadFixedGroupNormalizer(cwd);
   const changedNames = new Set();
@@ -1180,7 +1380,7 @@ function diffRuntimeDeps({ beforeText, afterText, cwd }) {
   for (const importerPath of paths) {
     const beforeDeps = beforeImporters[importerPath] ?? "";
     const afterDeps = afterImporters[importerPath] ?? "";
-    if (beforeDeps === afterDeps) continue;
+    if (formatChanged ? beforeDeps === "" && afterDeps === "" : beforeDeps === afterDeps) continue;
 
     const meta = readPackageMeta(importerPath, cwd);
     if (!meta || meta.private || !meta.name) continue;
