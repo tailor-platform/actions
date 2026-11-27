@@ -1,8 +1,9 @@
 name: Post ERD schema preview links for a pull request
 description: >-
-  List this run's uploaded *.html artifacts and post or update a sticky PR
-  comment linking to each one, labeled by artifact name minus the .html
-  extension. Run this once per PR (e.g. in a job that needs: every
+  List this run's uploaded *.html artifacts and post a PR comment linking to
+  each one, labeled by artifact name minus the .html extension. Earlier ERD
+  comments are hidden as outdated, or with sticky set to "true" the newest one
+  is updated in place. Run this once per PR (e.g. in a job that needs: every
   erd-schema-preview matrix leg), after uploading each namespace's
   artifact with a name like "<namespace>.html". A namespace erd-schema-preview
   skipped as irrelevant simply has no matching artifact and is naturally
