@@ -10,6 +10,10 @@ SDK's `tailor` CLI. If you're still on the SDK's pre-rename `tailor-sdk` CLI, us
 instead; that line is maintained on the [`maintenance/v1`](https://github.com/tailor-platform/actions/tree/maintenance/v1)
 branch, not `main`.
 
+## ERD schema comment
+
+Each run hides the earlier ERD comments as outdated and posts a new one. Pass `sticky: true` to update the newest ERD comment in place instead.
+
 ## GitHub Enterprise Server
 
 Actions that call the GitHub API, directly or through `gh`, use the API of the host the
@@ -42,8 +46,6 @@ to the run page because v3 artifacts reach the REST API only after the entire ru
 Irrelevant namespaces produce no artifact, so a candidate may be absent from the completed
 run. Pass `[]` when there are no candidates. This input is ignored on GitHub.com and
 Enterprise Cloud, where the comment still discovers and links uploaded artifacts directly.
-
-Each run hides the earlier ERD comments as outdated and posts a new one. Pass `sticky: true` to update the newest ERD comment in place instead.
 
 ## Actions
 
