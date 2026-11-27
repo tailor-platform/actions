@@ -124,7 +124,7 @@ The [`tailor setup`](https://github.com/tailor-platform/sdk) command generates a
 
 Show planned changes by running dry-run against the target workspace. Merges the base branch and runs `tailor deploy --dry-run`, then comments the result on the PR. The dry-run output is also printed to the job log.
 
-The action targets the workspace by `workspace-id` only. When `workspace-id` is empty (workspace not yet provisioned), the action skips the dry-run and reports that the workspace is not provisioned yet — the job succeeds. This covers the chicken-and-egg situation of running `plan` on a PR before the first deploy.
+The action targets the workspace by `workspace-id` only. When `workspace-id` is empty (workspace not yet provisioned), the action skips the dry-run and reports that the workspace is not provisioned yet — the job succeeds. This covers pull requests opened before the workspace is created and its ID is set.
 
 **Prerequisites:** Same as `deploy` - checkout, Node.js setup, package manager setup, and dependency installation.
 
@@ -242,6 +242,40 @@ Detect drift between the generated GitHub Actions workflows and the current conf
 | `working-directory` | No | `.` | Working directory (for monorepo setups) |
 | `ignore` | No | | Comma-separated drift rule keys to suppress (e.g. `"default-branch,template-version"`). Each warning includes its rule key |
 | `fail-on-drift` | No | `false` | Fail the job when the check finds unsuppressed workflow drift |
+
+---
+
+### [`env-check`](env-check/action.yaml)
+
+Report the GitHub variables and secrets a job reads that have no value. For each listed name, set an `env` entry of that name on the step to `true` or `false`, whether the value is non-empty, so the step never sees the value itself. When a required name has no value, the step fails with one `::error::` that names every empty one and points to `tailor setup ci env`; with `package-manager`, it also prints the output of `tailor setup ci env` for the environment from the installed CLI. Empty optional names are logged on one line without an annotation.
+
+#### Usage
+
+```yaml
+- uses: tailor-platform/actions/env-check@v2
+  env:
+    TAILOR_PLATFORM_MACHINE_USER_CLIENT_SECRET: ${{ secrets.TAILOR_PLATFORM_MACHINE_USER_CLIENT_SECRET != '' }}
+    TAILOR_PLATFORM_WORKSPACE_ID: ${{ vars.TAILOR_PLATFORM_WORKSPACE_ID != '' }}
+    TAILOR_SLACK_BOT_TOKEN: ${{ secrets.TAILOR_SLACK_BOT_TOKEN != '' }}
+  with:
+    environment: production
+    package-manager: pnpm
+    required: |
+      TAILOR_PLATFORM_MACHINE_USER_CLIENT_SECRET
+      TAILOR_PLATFORM_WORKSPACE_ID
+    optional: |
+      TAILOR_SLACK_BOT_TOKEN
+```
+
+#### Inputs
+
+| Name | Required | Default | Description |
+|------|----------|---------|-------------|
+| `environment` | No | | GitHub Environment the job runs in, named in the report and passed to `tailor setup ci env --environment`; empty for a job without one. Only letters, numbers, `.`, `_`, `/`, and `-` are accepted |
+| `required` | No | | Newline-separated names that must have a value |
+| `optional` | No | | Newline-separated names that may be empty |
+| `fail-on-missing` | No | `true` | Fail the job when a required name has no value; when `false`, report it as a warning |
+| `package-manager` | No | | Package manager (`pnpm`, `npm`, `yarn`, or `bun`) that runs the installed `tailor` CLI; leave it empty in a job that does not install the SDK |
 
 ---
 

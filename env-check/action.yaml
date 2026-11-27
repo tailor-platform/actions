@@ -1,0 +1,147 @@
+name: Check Tailor Platform workflow variables and secrets
+description: >-
+  Report the GitHub variables and secrets a job reads that have no value, and point to
+  `tailor setup ci env` to register them. For each name listed in required or optional, set an
+  env entry of that name on this step to `true` or `false`, the result of an expression such as
+  `secrets.NAME != ''`, so the step never sees a value itself.
+
+inputs:
+  environment:
+    description: >-
+      GitHub Environment the job runs in, made of letters, numbers, ".", "_", "/", and "-"; empty for a
+      job without one
+    required: false
+    default: ""
+  required:
+    description: Newline-separated names that must have a value
+    required: false
+    default: ""
+  optional:
+    description: Newline-separated names that may be empty; empty ones are logged without an annotation
+    required: false
+    default: ""
+  fail-on-missing:
+    description: Fail the job when a required name has no value; when false, report it as a warning
+    required: false
+    default: "true"
+  package-manager:
+    description: >-
+      Package manager that runs the installed tailor CLI (pnpm, npm, yarn, or bun). When set and a
+      required name has no value, the step also prints `tailor setup ci env` for the environment.
+      Leave it empty in a job that does not install the SDK.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Check variables and secrets
+      shell: bash
+      env:
+        ENV_CHECK_ENVIRONMENT: ${{ inputs.environment }}
+        ENV_CHECK_REQUIRED: ${{ inputs.required }}
+        ENV_CHECK_OPTIONAL: ${{ inputs.optional }}
+        ENV_CHECK_FAIL_ON_MISSING: ${{ inputs.fail-on-missing }}
+        ENV_CHECK_PACKAGE_MANAGER: ${{ inputs.package-manager }}
+      run: |
+        case "$ENV_CHECK_FAIL_ON_MISSING" in
+          true) level=error ;;
+          false) level=warning ;;
+          *)
+            echo "::error::fail-on-missing must be 'true' or 'false'"
+            exit 1
+            ;;
+        esac
+
+        # Never npx or bunx: they download an unrelated package named tailor when the SDK is not installed.
+        case "$ENV_CHECK_PACKAGE_MANAGER" in
+          pnpm) cli=(pnpm exec tailor) ;;
+          npm) cli=(npm exec --no -- tailor) ;;
+          yarn) cli=(yarn tailor) ;;
+          bun) cli=(bun run tailor) ;;
+          "") cli=() ;;
+          *)
+            echo "::error::Unsupported package-manager (expected pnpm, npm, yarn, or bun)"
+            exit 1
+            ;;
+        esac
+
+        # The characters tailor setup accepts in environment names.
+        if [[ -n "$ENV_CHECK_ENVIRONMENT" && ! "$ENV_CHECK_ENVIRONMENT" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+          echo '::error::Invalid environment name (expected letters, numbers, ".", "_", "/", and "-")'
+          exit 1
+        fi
+
+        missing=()
+        unset_optional=()
+        checked=()
+        for list in required optional; do
+          if [ "$list" = required ]; then names="$ENV_CHECK_REQUIRED"; else names="$ENV_CHECK_OPTIONAL"; fi
+          while read -r name; do
+            if [ -z "$name" ]; then
+              continue
+            fi
+            if [[ ! "$name" =~ ^[A-Z_][A-Z0-9_]*$ || "$name" == ENV_CHECK_* ]]; then
+              shown="${name//'%'/'%25'}"
+              echo "::error::Invalid variable or secret name in $list: '${shown//$'\r'/'%0D'}'"
+              exit 1
+            fi
+            checked+=("$name")
+            case "${!name-}" in
+              true) ;;
+              false)
+                if [ "$list" = required ]; then missing+=("$name"); else unset_optional+=("$name"); fi
+                ;;
+              *)
+                echo "::error::$name must be 'true' or 'false' in this step's env, the result of an expression such as secrets.$name != ''"
+                exit 1
+                ;;
+            esac
+          done <<< "$names"
+        done
+
+        join() {
+          local IFS=,
+          local list="$*"
+          printf '%s' "${list//,/, }"
+        }
+
+        if [ "${#unset_optional[@]}" -gt 0 ]; then
+          echo "Optional, not set: $(join "${unset_optional[@]}")"
+        fi
+        if [ "${#missing[@]}" -eq 0 ]; then
+          exit 0
+        fi
+
+        if [ -n "$ENV_CHECK_ENVIRONMENT" ]; then
+          where="GitHub Environment \"$ENV_CHECK_ENVIRONMENT\", the repository, or the organization"
+          narrow=(--environment "$ENV_CHECK_ENVIRONMENT")
+        else
+          where="the repository or the organization"
+          narrow=()
+        fi
+        args=(setup ci env "${narrow[@]}")
+        command="tailor ${args[*]}"
+        check_command="tailor setup ci env --check${narrow[*]:+ ${narrow[*]}}"
+        message="No value for $(join "${missing[@]}") in $where. Run \`$check_command\` to list what is missing and print the GitHub CLI commands that set it, or \`$command\` without write access to the repository."
+
+        if [ "${#cli[@]}" -gt 0 ]; then
+          echo "::group::$command"
+          status=0
+          # tailor setup commands read .github/tailor.lock from the repository root.
+          (cd "$GITHUB_WORKSPACE" && env -u TAILOR_JSON_OUTPUT "${checked[@]/#/-u}" TAILOR_GITHUB_ACTIONS_ANNOTATIONS=false "${cli[@]}" "${args[@]}") || status=$?
+          echo "::endgroup::"
+          if [ "$status" -eq 0 ]; then
+            message+=" This step's log shows the output of \`$command\`."
+          else
+            echo "Could not run \`$command\` (exit $status)."
+          fi
+        fi
+        if [ "${GITHUB_ACTOR-}" = "dependabot[bot]" ]; then
+          message+=" Runs that Dependabot starts receive Dependabot secrets, not Actions secrets."
+        fi
+
+        echo "::$level title=Missing GitHub variables or secrets::$message"
+        if [ "$level" = error ]; then
+          exit 1
+        fi

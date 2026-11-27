@@ -17,6 +17,7 @@
     "test:erd-preview": "node --test tests/erd-preview.test.mjs",
     "test:preview": "node --test tests/preview/*.test.mjs",
     "test:drift-check": "node --test drift-check/*.test.mjs",
+    "test:env-check": "node --test env-check/*.test.mjs",
     "changeset": "changeset",
     "test:plan": "node --test plan/*.test.mjs",
     "test:tag-guard": "node --test tag-guard/*.test.mjs",

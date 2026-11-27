@@ -75,7 +75,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # Empty workspace-id: a plan for a workspace that is not provisioned yet must
-      # succeed (chicken-and-egg for plans on PRs before the first deploy). The
+      # succeed (PRs opened before the workspace is created and its ID is set). The
       # action reports "not provisioned" instead of running a dry-run. No
       # github-token is passed here, so no PR comment is posted (summary only).
       - name: Run plan action (empty workspace-id, not provisioned)

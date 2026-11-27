@@ -112,3 +112,15 @@ test("prints the plan to the job log when the dry-run succeeds", async (t) => {
   const log = await runDryRunStep(t, { stdout: "+ TailorDB type: User\n" });
   assert.match(log, /^\+ TailorDB type: User$/m);
 });
+
+test("tells how to provision the workspace when workspace-id is empty, since deploy refuses an empty one", async (t) => {
+  const step = action.runs.steps.find((candidate) => candidate.name === "Write step summary (not provisioned)");
+  const fixture = await createFixture(t);
+  const summary = path.join(fixture, "summary.md");
+  await runStep(step, { PATH: process.env.PATH, GITHUB_STEP_SUMMARY: summary, LABEL: "stg" });
+  assert.equal(
+    await fs.readFile(summary, "utf8"),
+    "### ⏭️ Tailor Platform Plan (stg)\n\n" +
+      "Workspace is not yet provisioned: TAILOR_PLATFORM_WORKSPACE_ID is empty. Create the workspace with `tailor workspace create`, then set its ID in that variable (`tailor setup ci env` prints the command).\n",
+  );
+});

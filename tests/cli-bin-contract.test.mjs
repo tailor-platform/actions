@@ -15,6 +15,7 @@ const directCliActions = [
   "_internal/erd-export/action.yaml",
   "_internal/sdk-setup/action.yaml",
   "drift-check/action.yaml",
+  "env-check/action.yaml",
   "erd-schema-preview/action.yaml",
   "generate-check/action.yaml",
   "migration-drift-check/action.yaml",
