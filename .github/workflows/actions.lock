@@ -77,10 +77,10 @@ workflows:
         - 'actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1'
         - 'pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115'
         - 'tailor-platform/actions@053ee1c31460fc04639c466e5f483ea3150a9a31'
-        - 'tailor-platform/actions@bed6c5a2dc015d45d78931d9e8989109ec27fc28'
+        - 'tailor-platform/actions@9dde14278f825531bc127c065f5666d2967ab0a7'
     '.github/workflows/test-preview-comment.yaml':
         - 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1'
-        - 'tailor-platform/actions@bed6c5a2dc015d45d78931d9e8989109ec27fc28'
+        - 'tailor-platform/actions@9dde14278f825531bc127c065f5666d2967ab0a7'
     '.github/workflows/test-relevance.yaml':
         - 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1'
         - 'actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1'
@@ -146,6 +146,11 @@ dependencies:
     'tailor-platform/actions@053ee1c31460fc04639c466e5f483ea3150a9a31':
         ref: 'main'
         commit: 'sha1-053ee1c31460fc04639c466e5f483ea3150a9a31'
+        owner_id: 127912421
+        repo_id: 1191288549
+    'tailor-platform/actions@9dde14278f825531bc127c065f5666d2967ab0a7':
+        ref: 'feat/non-sticky-comments'
+        commit: 'sha1-9dde14278f825531bc127c065f5666d2967ab0a7'
         owner_id: 127912421
         repo_id: 1191288549
     'tailor-platform/actions@bed6c5a2dc015d45d78931d9e8989109ec27fc28':
