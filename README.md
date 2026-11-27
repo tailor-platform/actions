@@ -271,7 +271,7 @@ Report the GitHub variables and secrets a job reads that have no value. For each
 
 | Name | Required | Default | Description |
 |------|----------|---------|-------------|
-| `environment` | No | | GitHub Environment the job runs in, named in the report and passed to `tailor setup ci env --environment`; empty for a job without one |
+| `environment` | No | | GitHub Environment the job runs in, named in the report and passed to `tailor setup ci env --environment`; empty for a job without one. Only letters, numbers, `.`, `_`, `/`, and `-` are accepted |
 | `required` | No | | Newline-separated names that must have a value |
 | `optional` | No | | Newline-separated names that may be empty |
 | `fail-on-missing` | No | `true` | Fail the job when a required name has no value; when `false`, report it as a warning |

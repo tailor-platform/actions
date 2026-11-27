@@ -7,7 +7,9 @@ description: >-
 
 inputs:
   environment:
-    description: GitHub Environment the job runs in; empty for a job without one
+    description: >-
+      GitHub Environment the job runs in, made of letters, numbers, ".", "_", "/", and "-"; empty for a
+      job without one
     required: false
     default: ""
   required:
@@ -46,7 +48,7 @@ runs:
           true) level=error ;;
           false) level=warning ;;
           *)
-            echo "::error::fail-on-missing must be 'true' or 'false' (received '$ENV_CHECK_FAIL_ON_MISSING')"
+            echo "::error::fail-on-missing must be 'true' or 'false'"
             exit 1
             ;;
         esac
@@ -59,10 +61,16 @@ runs:
           bun) cli=(bun run tailor) ;;
           "") cli=() ;;
           *)
-            echo "::error::Unsupported package-manager '$ENV_CHECK_PACKAGE_MANAGER' (expected pnpm, npm, yarn, or bun)"
+            echo "::error::Unsupported package-manager (expected pnpm, npm, yarn, or bun)"
             exit 1
             ;;
         esac
+
+        # The characters tailor setup accepts in environment names.
+        if [[ -n "$ENV_CHECK_ENVIRONMENT" && ! "$ENV_CHECK_ENVIRONMENT" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+          echo '::error::Invalid environment name (expected letters, numbers, ".", "_", "/", and "-")'
+          exit 1
+        fi
 
         missing=()
         unset_optional=()
@@ -74,7 +82,8 @@ runs:
               continue
             fi
             if [[ ! "$name" =~ ^[A-Z_][A-Z0-9_]*$ || "$name" == ENV_CHECK_* ]]; then
-              echo "::error::Invalid variable or secret name in $list: '$name'"
+              shown="${name//'%'/'%25'}"
+              echo "::error::Invalid variable or secret name in $list: '${shown//$'\r'/'%0D'}'"
               exit 1
             fi
             checked+=("$name")

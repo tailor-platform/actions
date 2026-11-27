@@ -63,7 +63,7 @@ async function runCheck(t, { inputs = {}, values = {}, env = {} } = {}) {
   return { ...result, call, workspace };
 }
 
-const annotations = (stdout) => stdout.split("\n").filter((line) => line.startsWith("::"));
+const annotations = (stdout) => stdout.split(/\r\n|\r|\n/).filter((line) => line.startsWith("::"));
 
 const CLIENT_ID = "TAILOR_PLATFORM_MACHINE_USER_CLIENT_ID";
 const CLIENT_SECRET = "TAILOR_PLATFORM_MACHINE_USER_CLIENT_SECRET";
@@ -83,13 +83,13 @@ test("passes without annotations when every required name is set", async (t) => 
 
 test("fails with one error naming every empty required name and the commands that register them", async (t) => {
   const result = await runCheck(t, {
-    inputs: { environment: "stg", required },
+    inputs: { environment: "Prod/us-east_1.a", required },
     values: { [CLIENT_ID]: "true", [CLIENT_SECRET]: "false", [WORKSPACE_ID]: "false" },
   });
 
   assert.equal(result.status, 1);
   assert.deepEqual(annotations(result.stdout), [
-    `::error title=Missing GitHub variables or secrets::No value for ${CLIENT_SECRET}, ${WORKSPACE_ID} in GitHub Environment "stg", the repository, or the organization. Run \`tailor setup ci env --check --environment stg\` to list what is missing and print the GitHub CLI commands that set it, or \`tailor setup ci env --environment stg\` without write access to the repository.`,
+    `::error title=Missing GitHub variables or secrets::No value for ${CLIENT_SECRET}, ${WORKSPACE_ID} in GitHub Environment "Prod/us-east_1.a", the repository, or the organization. Run \`tailor setup ci env --check --environment Prod/us-east_1.a\` to list what is missing and print the GitHub CLI commands that set it, or \`tailor setup ci env --environment Prod/us-east_1.a\` without write access to the repository.`,
   ]);
   assert.equal(result.call, null);
 });
@@ -157,23 +157,41 @@ for (const name of ["lower_case", "1STARTS_WITH_DIGIT", "HAS-DASH", "ENV_CHECK_E
   });
 }
 
-test("rejects a fail-on-missing value other than true or false", async (t) => {
-  const result = await runCheck(t, { inputs: { environment: "stg", "fail-on-missing": "yes" } });
+test("escapes a rejected name so a carriage return in it cannot start another annotation", async (t) => {
+  const result = await runCheck(t, { inputs: { environment: "stg", required: "FOO%\r::warning::injected" } });
 
   assert.equal(result.status, 1);
-  assert.deepEqual(annotations(result.stdout), ["::error::fail-on-missing must be 'true' or 'false' (received 'yes')"]);
+  assert.deepEqual(annotations(result.stdout), [
+    "::error::Invalid variable or secret name in required: 'FOO%25%0D::warning::injected'",
+  ]);
+});
+
+for (const environment of ["stg\n::warning::injected", "prod env"]) {
+  test(`rejects the environment ${JSON.stringify(environment)} before checking the names`, async (t) => {
+    const result = await runCheck(t, { inputs: { environment, required: CLIENT_ID } });
+
+    assert.equal(result.status, 1);
+    assert.deepEqual(annotations(result.stdout), [
+      `::error::Invalid environment name (expected letters, numbers, ".", "_", "/", and "-")`,
+    ]);
+  });
+}
+
+test("rejects a fail-on-missing value other than true or false", async (t) => {
+  const result = await runCheck(t, { inputs: { environment: "stg", "fail-on-missing": "yes\n::warning::injected" } });
+
+  assert.equal(result.status, 1);
+  assert.deepEqual(annotations(result.stdout), ["::error::fail-on-missing must be 'true' or 'false'"]);
 });
 
 test("rejects an unsupported package-manager", async (t) => {
   const result = await runCheck(t, {
-    inputs: { environment: "stg", required: CLIENT_ID, "package-manager": "deno" },
+    inputs: { environment: "stg", required: CLIENT_ID, "package-manager": "deno\n::warning::injected" },
     values: { [CLIENT_ID]: "false" },
   });
 
   assert.equal(result.status, 1);
-  assert.deepEqual(annotations(result.stdout), [
-    "::error::Unsupported package-manager 'deno' (expected pnpm, npm, yarn, or bun)",
-  ]);
+  assert.deepEqual(annotations(result.stdout), ["::error::Unsupported package-manager (expected pnpm, npm, yarn, or bun)"]);
 });
 
 for (const [packageManager, bin, args] of [
