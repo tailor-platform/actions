@@ -1,5 +1,16 @@
 # tailor-platform-actions
 
+## 2.10.0
+
+### Minor Changes
+
+- 7025639: Add `env-check`, which reports the GitHub variables and secrets a job reads that have no value, names every empty required one in a single annotation, and points to `tailor setup ci env` to register them. It takes only whether each value is set, so the step never sees a secret. The `plan` summary for an empty `workspace-id` now says to create the workspace with `tailor workspace create` and set `TAILOR_PLATFORM_WORKSPACE_ID`, instead of telling you to run deploy first, which fails on an empty workspace ID.
+
+### Patch Changes
+
+- d902bc1: `lockfile-audit-fix`: support pnpm's experimental lockfile format v13 (`lockfile.format: v13` in `pnpm-workspace.yaml`). With a v13 `pnpm-lock.yaml`, `runtime-deps-changed` and `changed-names` always reported no runtime dependency change, and unused overrides were never pruned from `pnpm-workspace.yaml`. Both now work as they do with the default format. When the format differs between the lockfile before and after the fix, every non-private project that has runtime dependencies is reported as changed. A lockfile that follows the env document pnpm writes when `packageManager` or `configDependencies` is set is now read in both formats; before, `runtime-deps-changed` and override pruning ignored it.
+- 23be9db: Run yarn through Corepack in `setup`, so `package-manager: yarn` uses the Yarn version that `packageManager` or `devEngines.packageManager` declares. Projects on Yarn 2 or later without a committed `yarnPath` no longer fail in `setup` and `install` with `However the current global version of Yarn is 1.22.22`, and the action no longer needs Yarn or Corepack preinstalled on the runner. With yarn, the runner now needs access to the npm registry and to `repo.yarnpkg.com` (Yarn 2 and later) or `registry.yarnpkg.com` (Yarn 1).
+
 ## 2.9.0
 
 ### Minor Changes
