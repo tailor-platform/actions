@@ -1,8 +1,9 @@
 name: Post ERD schema preview links for a pull request
 description: >-
-  List this run's uploaded *.html artifacts and post or update a sticky PR
-  comment linking to each one, labeled by artifact name minus the .html
-  extension. Run this once per PR (e.g. in a job that needs: every
+  List this run's uploaded *.html artifacts and post a PR comment linking to
+  each one, labeled by artifact name minus the .html extension. Earlier ERD
+  comments are hidden as outdated, or with sticky set to "true" the newest one
+  is updated in place. Run this once per PR (e.g. in a job that needs: every
   erd-schema-preview matrix leg), after uploading each namespace's
   artifact with a name like "<namespace>.html". A namespace erd-schema-preview
   skipped as irrelevant simply has no matching artifact and is naturally
@@ -34,6 +35,12 @@ inputs:
   github-token:
     description: GitHub token with pull-requests:write and actions:read permission
     required: true
+  sticky:
+    description: >-
+      Set to "true" to update the newest ERD comment in place. Otherwise earlier
+      ones are hidden as outdated and a new comment is posted.
+    required: false
+    default: "false"
   pr-number:
     description: Pull request number. Defaults to the current PR number.
     required: false
@@ -84,11 +91,12 @@ runs:
           echo "$EOF"
         } >>"$GITHUB_OUTPUT"
 
-    - name: Post or update comment
+    - name: Post comment
       id: comment
-      uses: tailor-platform/actions/_internal/erd-comment@ee77773a7d5f7ae8aaef1359a08ef3e6c6d51da1
+      uses: tailor-platform/actions/_internal/erd-comment@98fb3c36619631c973067fea5304af09e6ffb117
       with:
         links: ${{ steps.list.outputs.links }}
         base-ref: ${{ inputs.base-ref }}
         github-token: ${{ inputs.github-token }}
+        sticky: ${{ inputs.sticky }}
         pr-number: ${{ inputs.pr-number }}

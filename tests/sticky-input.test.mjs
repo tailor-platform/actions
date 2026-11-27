@@ -10,7 +10,7 @@ import { parse } from "yaml";
 const execute = promisify(execFile);
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const commentActions = /_internal\/(sticky-comment|erd-comment)@/;
-const forwarding = ["plan", "preview-comment", "preview-cleanup", "_internal/erd-comment"];
+const forwarding = ["plan", "preview-comment", "preview-cleanup", "_internal/erd-comment", "erd-schema-comment"];
 
 const load = async (name) => parse(await readFile(path.join(repositoryRoot, name, "action.yaml"), "utf8"));
 
@@ -35,6 +35,24 @@ test("callers pin the sticky-comment definition that has the sticky input", asyn
       assert.match(sha, /^[0-9a-f]{40}$/, `${name} must pin a full commit SHA`);
       const { stdout } = await execute("git", ["show", `${sha}:_internal/sticky-comment/action.yaml`], { cwd: repositoryRoot });
       assert.deepEqual(parse(stdout), local, `${name} must pin the current sticky-comment`);
+    }
+  }
+});
+
+test("callers pin an erd-comment that takes sticky and forwards it to the comment step", async () => {
+  for (const name of forwarding) {
+    const action = await load(name);
+    for (const step of action.runs.steps.filter((candidate) => /_internal\/erd-comment@/.test(candidate.uses ?? ""))) {
+      const sha = step.uses.split("@")[1];
+      assert.match(sha, /^[0-9a-f]{40}$/, `${name} must pin a full commit SHA`);
+      const { stdout } = await execute("git", ["show", `${sha}:_internal/erd-comment/action.yaml`], { cwd: repositoryRoot });
+      const pinned = parse(stdout);
+      assert.equal(pinned.inputs.sticky?.default, "false", `${name} pins an erd-comment without the sticky input`);
+      const posting = pinned.runs.steps.filter((candidate) => /_internal\/sticky-comment@/.test(candidate.uses ?? ""));
+      assert.ok(posting.length > 0, `${name} pins an erd-comment that has no comment step`);
+      for (const posted of posting) {
+        assert.equal(posted.with.sticky, "${{ inputs.sticky }}", `${name} pins an erd-comment that drops sticky`);
+      }
     }
   }
 });

@@ -10,6 +10,10 @@ SDK's `tailor` CLI. If you're still on the SDK's pre-rename `tailor-sdk` CLI, us
 instead; that line is maintained on the [`maintenance/v1`](https://github.com/tailor-platform/actions/tree/maintenance/v1)
 branch, not `main`.
 
+## ERD schema comment
+
+Each run hides the earlier ERD comments as outdated and posts a new one. Pass `sticky: true` to update the newest ERD comment in place instead.
+
 ## GitHub Enterprise Server
 
 Actions that call the GitHub API, directly or through `gh`, use the API of the host the
