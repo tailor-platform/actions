@@ -119,6 +119,7 @@ runs:
         if [ "${#cli[@]}" -gt 0 ]; then
           echo "::group::$command"
           status=0
+          # tailor setup commands read .github/tailor.lock from the repository root.
           (cd "$GITHUB_WORKSPACE" && env -u TAILOR_JSON_OUTPUT "${checked[@]/#/-u}" TAILOR_GITHUB_ACTIONS_ANNOTATIONS=false "${cli[@]}" "${args[@]}") || status=$?
           echo "::endgroup::"
           if [ "$status" -eq 0 ]; then
