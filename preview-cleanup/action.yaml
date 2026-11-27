@@ -57,8 +57,9 @@ inputs:
     required: true
   github-token:
     description: >-
-      GitHub token for reading the PR comment and updating it after cleanup.
-      Requires pull-requests:write permission.
+      GitHub token for reading the preview comment and posting the cleanup comment
+      (hiding the earlier ones as outdated, or updating the newest in place with
+      sticky). Requires pull-requests:write permission.
     required: true
   sticky:
     description: >-
